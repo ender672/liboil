@@ -1,0 +1,8 @@
+ext/*.so
+ext/*.log
+ext/*.o
+ext/Makefile
+lib/*.so
+*.gem
+*.rbc
+
