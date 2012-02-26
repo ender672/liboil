@@ -123,7 +123,7 @@ advance_scanlines(struct jpeg_decompress_struct *dinfo, JSAMPROW *sl1,
 }
 
 static void
-bilinear2(struct jpeg_compress_struct *cinfo, char *sl1, char *sl2,
+bilinear3(struct jpeg_compress_struct *cinfo, char *sl1, char *sl2,
 	  char *sl_out, double width_ratio_inv, double ty)
 {
     double sample_x, tx, _tx, p00, p10, p01, p11;
@@ -153,23 +153,26 @@ bilinear2(struct jpeg_compress_struct *cinfo, char *sl1, char *sl2,
     }
 }
 
-static void
-bilinear(struct jpeg_compress_struct *cinfo,
-	 struct jpeg_decompress_struct *dinfo)
+static VALUE
+bilinear2(VALUE *args)
 {
+    struct jpeg_compress_struct *cinfo;
+    struct jpeg_decompress_struct *dinfo;
     size_t i, smpy_i, smpy_last=0, sl_len;
     double smpy, ty, inv_scale_y, inv_scale_x;
     JSAMPROW sl1, sl2, sl_out;
-    
+
+    cinfo = (struct jpeg_compress_struct *)args[0];
+    dinfo = (struct jpeg_decompress_struct *)args[1];
+    sl_len = *(size_t *)args[2];
+    sl1 = (JSAMPROW)args[3];
+    sl2 = (JSAMPROW)args[4];
+    sl_out = (JSAMPROW)args[5];
+
     inv_scale_x = dinfo->output_width / (float)cinfo->image_width;
     inv_scale_y = dinfo->output_height / (float)cinfo->image_height;
-    sl_len = (dinfo->output_width + 1) * dinfo->output_components;    
-
-    sl1 = (JSAMPROW)malloc(sl_len);
-    sl2 = (JSAMPROW)malloc(sl_len);
-    sl_out = (JSAMPROW)malloc(cinfo->image_width * cinfo->input_components);
     advance_scanlines(dinfo, &sl1, &sl2, 1);
-    
+
     for (i = 0; i < cinfo->image_height; i++) {
 	smpy = i * inv_scale_y;
 	smpy_i = (int)smpy;
@@ -180,13 +183,42 @@ bilinear(struct jpeg_compress_struct *cinfo,
 
 	sl1[sl_len - 1] = sl1[sl_len - 2];
 	sl2[sl_len - 1] = sl2[sl_len - 2];
-	bilinear2(cinfo, smpy_i ? sl1 : sl2, sl2, sl_out, inv_scale_x, ty);
+	bilinear3(cinfo, smpy_i ? sl1 : sl2, sl2, sl_out, inv_scale_x, ty);
 	jpeg_write_scanlines(cinfo, &sl_out, 1);
     }
 
-    free(sl1);
-    free(sl2);
-    free(sl_out);
+    return Qnil;
+}
+
+static VALUE
+free_sl_bufs(VALUE *args)
+{
+    free((char *)args[3]);
+    free((char *)args[4]);
+    free((char *)args[5]);
+    return Qnil;
+}
+
+static void
+bilinear(struct jpeg_compress_struct *cinfo,
+	 struct jpeg_decompress_struct *dinfo)
+{
+    VALUE ensure_args[6];
+    size_t sl_len;
+    JSAMPROW sl1, sl2, sl_out;
+    
+    sl_len = (dinfo->output_width + 1) * dinfo->output_components;    
+    sl1 = (JSAMPROW)malloc(sl_len);
+    sl2 = (JSAMPROW)malloc(sl_len);
+    sl_out = (JSAMPROW)malloc(cinfo->image_width * cinfo->input_components);
+
+    ensure_args[0] = (VALUE)cinfo;
+    ensure_args[1] = (VALUE)dinfo;
+    ensure_args[2] = (VALUE)&sl_len;
+    ensure_args[3] = (VALUE)sl1;
+    ensure_args[4] = (VALUE)sl2;
+    ensure_args[5] = (VALUE)sl_out;
+    rb_ensure(bilinear2, (VALUE)ensure_args, free_sl_bufs, (VALUE)ensure_args);
 }
 
 static void
@@ -277,10 +309,16 @@ initialize(VALUE self, VALUE io, VALUE width, VALUE height)
     return self;
 }
 
-static void
-each3(VALUE self, struct jpeg_compress_struct *cinfo,
-      struct jpeg_decompress_struct *dinfo)
+static VALUE
+each3(VALUE *args)
 {
+    VALUE self = args[0];
+    struct jpeg_compress_struct *cinfo;
+    struct jpeg_decompress_struct *dinfo;
+
+    cinfo = (struct jpeg_compress_struct *)args[1];
+    dinfo = (struct jpeg_decompress_struct *)args[2];
+
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
     set_header(self, cinfo, dinfo);
@@ -294,16 +332,28 @@ each3(VALUE self, struct jpeg_compress_struct *cinfo,
 
     jpeg_abort_decompress(dinfo);
     jpeg_finish_compress(cinfo);
+
+    return Qnil;
 }
 
-static void
-each2(VALUE self, struct jpeg_compress_struct *cinfo)
+static VALUE
+destroy_dinfo(VALUE dinfo_val)
 {
+    jpeg_destroy_decompress((struct jpeg_decompress_struct *)dinfo_val);
+    return Qnil;
+}
+
+static VALUE
+each2(VALUE *args)
+{
+    VALUE ensure_args[3], self = args[0];
+    struct jpeg_compress_struct *cinfo;
     struct jpeg_src src;
     struct jpeg_decompress_struct dinfo;
     struct thumbdata *data;
     Data_Get_Struct(self, struct thumbdata, data);
 
+    cinfo = (struct jpeg_compress_struct *)args[1];
     memset(&src, 0, sizeof(struct jpeg_src));
 
     src.mgr.init_source = init_source;
@@ -319,9 +369,19 @@ each2(VALUE self, struct jpeg_compress_struct *cinfo)
     jpeg_create_decompress(&dinfo);
     dinfo.src = (struct jpeg_source_mgr *)&src;
 
-    each3(self, cinfo, &dinfo);
-    
-    jpeg_destroy_decompress(&dinfo);
+    ensure_args[0] = self;
+    ensure_args[1] = (VALUE)cinfo;
+    ensure_args[2] = (VALUE)&dinfo;
+    rb_ensure(each3, (VALUE)ensure_args, destroy_dinfo, (VALUE)&dinfo);
+
+    return Qnil;
+}
+
+static VALUE
+destroy_cinfo(VALUE cinfo_val)
+{
+    jpeg_destroy_compress((struct jpeg_compress_struct *)cinfo_val);
+    return Qnil;
 }
 
 /*
@@ -336,6 +396,7 @@ each(VALUE self)
 {
     struct jpeg_dest dest;
     struct jpeg_compress_struct cinfo;
+    VALUE ensure_args[2];
 
     memset(&dest, 0, sizeof(struct jpeg_dest));
 
@@ -351,9 +412,10 @@ each(VALUE self)
     jpeg_create_compress(&cinfo);
     cinfo.dest = (struct jpeg_destination_mgr *)&dest;
 
-    each2(self, &cinfo);
+    ensure_args[0] = self;
+    ensure_args[1] = (VALUE)&cinfo;
+    rb_ensure(each2, (VALUE)ensure_args, destroy_cinfo, (VALUE)&cinfo);
     
-    jpeg_destroy_compress(&cinfo);
     return self;
 }
 
@@ -373,3 +435,4 @@ Init_oil()
     id_read = rb_intern("read");
     id_seek = rb_intern("seek");
 }
+
