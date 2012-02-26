@@ -21,9 +21,8 @@ namespace :clean do
 end
 
 Rake::TestTask.new do |t|
-  t.libs << 'test'
+  t.libs = ['ext']
   t.test_files = FileList['test/test*.rb']
-  t.verbose = true
 end
 
 CLEAN.add('ext/*{.o,.so,.log}', 'ext/Makefile')

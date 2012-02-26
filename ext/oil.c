@@ -1,9 +1,9 @@
 #include <ruby.h>
 #include <jpeglib.h>
 
-#define BUF_LEN 4096
+#define BUF_LEN 8192
 
-static ID id_read;
+static ID id_read, id_seek;
 
 struct thumbdata {
     VALUE io;
@@ -14,12 +14,11 @@ struct thumbdata {
 static struct jpeg_error_mgr jerr;
 
 struct jpeg_dest {
-    struct jpeg_destination_mgr pub;
+    struct jpeg_destination_mgr mgr;
     VALUE buffer;
 };
 
 struct jpeg_src {
-    struct jpeg_decompress_struct dinfo;
     struct jpeg_source_mgr mgr;
     VALUE io;
     VALUE buffer;
@@ -45,23 +44,23 @@ static void init_source(j_decompress_ptr cinfo){};
 static boolean
 fill_input_buffer(j_decompress_ptr cinfo)
 {
-    size_t nbytes = 0;
-    JOCTET *buffer = NULL;
-    VALUE string;
-    struct jpeg_src *src = (struct jpeg_src *)cinfo;
-
-    string = src->buffer;
+    struct jpeg_src *src = (struct jpeg_src *)cinfo->src;
+    VALUE ret, string = src->buffer;
+    long len;
+    char *buf;
     
-    rb_funcall(src->io, id_read, 2, INT2FIX(BUF_LEN), string);
+    ret = rb_funcall(src->io, id_read, 2, INT2FIX(BUF_LEN), string);
+    len = RSTRING_LEN(string);
 
-    if (!NIL_P(string)) {
-	StringValue(string);
-	nbytes = (size_t)RSTRING_LEN(string);
-	buffer = (JOCTET *)RSTRING_PTR(string);
+    if (!len || NIL_P(ret)) {
+	rb_str_resize(string, 2);
+        buf = RSTRING_PTR(string);
+        buf[0] = 0xFF;
+	buf[1] = JPEG_EOI;
+	len = 2;
     }
-
-    src->mgr.next_input_byte = buffer;
-    src->mgr.bytes_in_buffer = nbytes;    
+    src->mgr.next_input_byte = (JOCTET *)RSTRING_PTR(string);
+    src->mgr.bytes_in_buffer = (size_t)len;
 
     return TRUE;
 }
@@ -69,41 +68,29 @@ fill_input_buffer(j_decompress_ptr cinfo)
 static void
 skip_input_data(j_decompress_ptr cinfo, long num_bytes)
 {
-    struct jpeg_source_mgr *src = cinfo->src;
+    struct jpeg_src *src = (struct jpeg_src *)cinfo->src;
 
-    if (num_bytes > 0) {
-	while (num_bytes > (long) src->bytes_in_buffer) {
-	    num_bytes -= (long) src->bytes_in_buffer;
-	    fill_input_buffer(cinfo);
-	}
-	src->next_input_byte += (size_t) num_bytes;
-	src->bytes_in_buffer -= (size_t) num_bytes;
+    if (num_bytes > (long)src->mgr.bytes_in_buffer) {
+	num_bytes -= (long)src->mgr.bytes_in_buffer;
+	rb_funcall(src->io, id_seek, 2, INT2FIX(num_bytes), INT2FIX(SEEK_CUR));
+	src->mgr.bytes_in_buffer = 0;
+    } else {
+	src->mgr.next_input_byte += (size_t)num_bytes;
+	src->mgr.bytes_in_buffer -= (size_t)num_bytes;
     }
 }
 
 /* jpeglib destination callbacks */
 
-static void
-reset_buffer(struct jpeg_dest *dest)
-{
-    dest->pub.next_output_byte = RSTRING_PTR(dest->buffer);
-    dest->pub.free_in_buffer = BUF_LEN;
-}
-
-static void
-init_destination(j_compress_ptr cinfo)
-{
-    struct jpeg_dest *dest = (struct jpeg_dest *)cinfo->dest;
-    dest->buffer = rb_str_new(0, BUF_LEN);
-    reset_buffer(dest);
-}
+static void init_destination(j_compress_ptr cinfo) {}
 
 static boolean
 empty_output_buffer(j_compress_ptr cinfo)
 {
     struct jpeg_dest *dest = (struct jpeg_dest *)cinfo->dest;
     rb_yield(dest->buffer);
-    reset_buffer(dest);
+    dest->mgr.next_output_byte = RSTRING_PTR(dest->buffer);
+    dest->mgr.free_in_buffer = RSTRING_LEN(dest->buffer);
     return TRUE;
 }
 
@@ -111,7 +98,7 @@ static void
 term_destination(j_compress_ptr cinfo)
 {
     struct jpeg_dest *dest = (struct jpeg_dest *)cinfo->dest;
-    size_t len = BUF_LEN - dest->pub.free_in_buffer;
+    size_t len = BUF_LEN - dest->mgr.free_in_buffer;
 
     if (len) {
 	rb_str_resize(dest->buffer, len);
@@ -202,42 +189,42 @@ bilinear(struct jpeg_compress_struct *cinfo,
     free(sl_out);
 }
 
-static double
-fit_scale(VALUE self, struct jpeg_decompress_struct *dinfo)
+static void
+fix_aspect_ratio(struct jpeg_compress_struct *cinfo,
+		 struct jpeg_decompress_struct *dinfo)
 {
     double x, y;
-    struct thumbdata *data;
-    Data_Get_Struct(self, struct thumbdata, data);
 
-    x = data->width / (float)dinfo->output_width;
-    y = data->height / (float)dinfo->output_height;
-
-    return x < y ? x : y;
+    x = cinfo->image_width / (float)dinfo->output_width;
+    y = cinfo->image_height / (float)dinfo->output_height;
+    
+    if (x < y) cinfo->image_height = dinfo->output_height * x;
+    else cinfo->image_width = dinfo->output_width * y;
 }
 
 static void
 set_header(VALUE self, struct jpeg_compress_struct *cinfo,
 	   struct jpeg_decompress_struct *dinfo)
 {
-    double scale = fit_scale(self, dinfo);
-
-    cinfo->image_width = dinfo->output_width * scale;
-    cinfo->image_height = dinfo->output_height * scale;
+    struct thumbdata *data;
+    Data_Get_Struct(self, struct thumbdata, data);
+    
+    cinfo->image_width = data->width;
+    cinfo->image_height = data->height;
     cinfo->input_components = dinfo->output_components;
     cinfo->in_color_space = dinfo->out_color_space;
-
     jpeg_set_defaults(cinfo);
-    jpeg_set_quality(cinfo, 90, TRUE);
 }
 
 static void
-pre_scale(VALUE self, struct jpeg_decompress_struct *dinfo)
+pre_scale(struct jpeg_compress_struct *cinfo,
+	  struct jpeg_decompress_struct *dinfo)
 {
-    int inv_scale_i = 1 / fit_scale(self, dinfo);
+    int inv_scale = dinfo->output_width / cinfo->image_width;
 
-    if (inv_scale_i >= 8) dinfo->scale_denom = 8;
-    else if (inv_scale_i >= 4) dinfo->scale_denom = 4;
-    else if (inv_scale_i >= 2) dinfo->scale_denom = 2;
+    if (inv_scale >= 8) dinfo->scale_denom = 8;
+    else if (inv_scale >= 4) dinfo->scale_denom = 4;
+    else if (inv_scale >= 2) dinfo->scale_denom = 2;
     jpeg_calc_output_dimensions(dinfo);
 }
 
@@ -297,7 +284,8 @@ each3(VALUE self, struct jpeg_compress_struct *cinfo,
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
     set_header(self, cinfo, dinfo);
-    pre_scale(self, dinfo);
+    fix_aspect_ratio(cinfo, dinfo);
+    pre_scale(cinfo, dinfo);
     
     jpeg_start_compress(cinfo, TRUE);
     jpeg_start_decompress(dinfo);
@@ -312,25 +300,28 @@ static void
 each2(VALUE self, struct jpeg_compress_struct *cinfo)
 {
     struct jpeg_src src;
+    struct jpeg_decompress_struct dinfo;
     struct thumbdata *data;
     Data_Get_Struct(self, struct thumbdata, data);
-    
-    memset(&src, 0, sizeof(struct jpeg_src));
-    src.dinfo.err = &jerr;
-    jpeg_create_decompress(&src.dinfo);
 
-    src.dinfo.src = &src.mgr;
+    memset(&src, 0, sizeof(struct jpeg_src));
+
     src.mgr.init_source = init_source;
     src.mgr.fill_input_buffer = fill_input_buffer;
     src.mgr.skip_input_data = skip_input_data;
     src.mgr.resync_to_restart = jpeg_resync_to_restart;
     src.mgr.term_source = term_source;
-    src.io = data->io;
-    src.buffer = rb_str_new(0, BUF_LEN);    
 
-    each3(self, cinfo, &src.dinfo);
+    src.io = data->io;
+    src.buffer = rb_str_new(0, BUF_LEN);
+
+    dinfo.err = &jerr;
+    jpeg_create_decompress(&dinfo);
+    dinfo.src = (struct jpeg_source_mgr *)&src;
+
+    each3(self, cinfo, &dinfo);
     
-    jpeg_destroy_decompress(&src.dinfo);
+    jpeg_destroy_decompress(&dinfo);
 }
 
 /*
@@ -346,14 +337,20 @@ each(VALUE self)
     struct jpeg_dest dest;
     struct jpeg_compress_struct cinfo;
 
-    dest.pub.init_destination = init_destination;
-    dest.pub.empty_output_buffer = empty_output_buffer;
-    dest.pub.term_destination = term_destination;
+    memset(&dest, 0, sizeof(struct jpeg_dest));
+
+    dest.mgr.init_destination = init_destination;
+    dest.mgr.empty_output_buffer = empty_output_buffer;
+    dest.mgr.term_destination = term_destination;
+
+    dest.buffer = rb_str_new(0, BUF_LEN);
+    dest.mgr.next_output_byte = RSTRING_PTR(dest.buffer);
+    dest.mgr.free_in_buffer = BUF_LEN;
 
     cinfo.err = &jerr;
     jpeg_create_compress(&cinfo);
     cinfo.dest = (struct jpeg_destination_mgr *)&dest;
-    
+
     each2(self, &cinfo);
     
     jpeg_destroy_compress(&cinfo);
@@ -374,4 +371,5 @@ Init_oil()
     jerr.output_message = output_message;
 
     id_read = rb_intern("read");
+    id_seek = rb_intern("seek");
 }
