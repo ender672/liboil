@@ -310,14 +310,14 @@ initialize(VALUE self, VALUE io, VALUE width, VALUE height)
 }
 
 static VALUE
-each3(VALUE *args)
+each2(VALUE *args)
 {
     VALUE self = args[0];
-    struct jpeg_compress_struct *cinfo;
     struct jpeg_decompress_struct *dinfo;
+    struct jpeg_compress_struct *cinfo;
 
-    cinfo = (struct jpeg_compress_struct *)args[1];
-    dinfo = (struct jpeg_decompress_struct *)args[2];
+    dinfo = (struct jpeg_decompress_struct *)args[1];
+    cinfo = (struct jpeg_compress_struct *)args[2];
 
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
@@ -337,50 +337,10 @@ each3(VALUE *args)
 }
 
 static VALUE
-destroy_dinfo(VALUE dinfo_val)
+destroy_info(VALUE *args)
 {
-    jpeg_destroy_decompress((struct jpeg_decompress_struct *)dinfo_val);
-    return Qnil;
-}
-
-static VALUE
-each2(VALUE *args)
-{
-    VALUE ensure_args[3], self = args[0];
-    struct jpeg_compress_struct *cinfo;
-    struct jpeg_src src;
-    struct jpeg_decompress_struct dinfo;
-    struct thumbdata *data;
-    Data_Get_Struct(self, struct thumbdata, data);
-
-    cinfo = (struct jpeg_compress_struct *)args[1];
-    memset(&src, 0, sizeof(struct jpeg_src));
-
-    src.mgr.init_source = init_source;
-    src.mgr.fill_input_buffer = fill_input_buffer;
-    src.mgr.skip_input_data = skip_input_data;
-    src.mgr.resync_to_restart = jpeg_resync_to_restart;
-    src.mgr.term_source = term_source;
-
-    src.io = data->io;
-    src.buffer = rb_str_new(0, BUF_LEN);
-
-    dinfo.err = &jerr;
-    jpeg_create_decompress(&dinfo);
-    dinfo.src = (struct jpeg_source_mgr *)&src;
-
-    ensure_args[0] = self;
-    ensure_args[1] = (VALUE)cinfo;
-    ensure_args[2] = (VALUE)&dinfo;
-    rb_ensure(each3, (VALUE)ensure_args, destroy_dinfo, (VALUE)&dinfo);
-
-    return Qnil;
-}
-
-static VALUE
-destroy_cinfo(VALUE cinfo_val)
-{
-    jpeg_destroy_compress((struct jpeg_compress_struct *)cinfo_val);
+    jpeg_destroy_decompress((struct jpeg_decompress_struct *)args[1]);
+    jpeg_destroy_compress((struct jpeg_compress_struct *)args[2]);
     return Qnil;
 }
 
@@ -394,28 +354,43 @@ destroy_cinfo(VALUE cinfo_val)
 static VALUE
 each(VALUE self)
 {
+    VALUE ensure_args[3];
+    struct jpeg_src src;
+    struct jpeg_decompress_struct dinfo;
     struct jpeg_dest dest;
     struct jpeg_compress_struct cinfo;
-    VALUE ensure_args[2];
+    struct thumbdata *data;
+    Data_Get_Struct(self, struct thumbdata, data);
+
+    dinfo.err = cinfo.err = &jerr;
+    jpeg_create_decompress(&dinfo);
+    jpeg_create_compress(&cinfo);
+
+    memset(&src, 0, sizeof(struct jpeg_src));
+    src.mgr.init_source = init_source;
+    src.mgr.fill_input_buffer = fill_input_buffer;
+    src.mgr.skip_input_data = skip_input_data;
+    src.mgr.resync_to_restart = jpeg_resync_to_restart;
+    src.mgr.term_source = term_source;
+    src.io = data->io;
+    src.buffer = rb_str_new(0, BUF_LEN);
 
     memset(&dest, 0, sizeof(struct jpeg_dest));
-
     dest.mgr.init_destination = init_destination;
     dest.mgr.empty_output_buffer = empty_output_buffer;
     dest.mgr.term_destination = term_destination;
-
     dest.buffer = rb_str_new(0, BUF_LEN);
     dest.mgr.next_output_byte = RSTRING_PTR(dest.buffer);
     dest.mgr.free_in_buffer = BUF_LEN;
 
-    cinfo.err = &jerr;
-    jpeg_create_compress(&cinfo);
+    dinfo.src = (struct jpeg_source_mgr *)&src;
     cinfo.dest = (struct jpeg_destination_mgr *)&dest;
 
     ensure_args[0] = self;
-    ensure_args[1] = (VALUE)&cinfo;
-    rb_ensure(each2, (VALUE)ensure_args, destroy_cinfo, (VALUE)&cinfo);
-    
+    ensure_args[1] = (VALUE)&dinfo;
+    ensure_args[2] = (VALUE)&cinfo;
+    rb_ensure(each2, (VALUE)ensure_args, destroy_info, (VALUE)ensure_args);
+
     return self;
 }
 
