@@ -48,7 +48,7 @@ module Oil
     
     def test_io_returns_too_much_data
       proc = Proc.new do |io, size, buf|
-        buf.clear
+        buf.slice!(0,0)
         buf << (io.read(size)[0..-2] * 2)
       end
       assert_raises(RuntimeError) { custom_io proc, JPEG_DATA }
@@ -128,16 +128,14 @@ module Oil
 
     def test_each_shrinks_buffer
       io = StringIO.new(JPEG_DATA)
-      io_out = StringIO.new
-      io_out.set_encoding 'ASCII-8BIT'
+      io_out = binary_stringio
       JPEG.new(io, 200, 200).each { |d| io_out << d; d.slice!(0, 4) }
       validate_jpeg(io_out.string)
     end
     
     def test_each_enlarges_buffer
       io = StringIO.new(JPEG_DATA)
-      io_out = StringIO.new
-      io_out.set_encoding 'ASCII-8BIT'
+      io_out = binary_stringio
       JPEG.new(io, 200, 200).each { |d| io_out << d; d << "foobar" }
       validate_jpeg(io_out.string)
     end
@@ -147,8 +145,7 @@ module Oil
     def io(io, width=nil, height=nil)
       width ||= 100
       height ||= 200
-      out = StringIO.new
-      out.set_encoding 'ASCII-8BIT'
+      out = binary_stringio
       JPEG.new(io, width, height).each{ |d| out << d }
       return out.string
     end
@@ -168,6 +165,12 @@ module Oil
 
     def big_jpeg
       resize_string(JPEG_DATA, 1000, 1000)
+    end
+
+    def binary_stringio
+      io = StringIO.new
+      io.set_encoding 'ASCII-8BIT' if RUBY_VERSION >= '1.9'
+      io
     end
   end
 

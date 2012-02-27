@@ -29,10 +29,9 @@ Installing libjpeg headers (Debian/Ubuntu):
 
   $ sudo apt-get install libjpeg-dev
 
-== BUILDING:
+== INSTALLATION:
 
-  $ rake
-  $ ruby -Iext script.rb
+  $ gem install oil
 
 == LICENSE:
 
