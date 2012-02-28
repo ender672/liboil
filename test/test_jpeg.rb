@@ -44,6 +44,11 @@ module Oil
       end
     end
     
+    def test_alloc_each
+      io = JPEG.allocate
+      assert_raises(NoMethodError){ io.each{ |f| } }
+    end
+    
     # Test io source handler
     
     def test_io_returns_too_much_data
