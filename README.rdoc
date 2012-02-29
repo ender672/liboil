@@ -6,6 +6,10 @@ http://github.com/ender672/oil
 
 Resize JPEG images.
 
+== INSTALLATION:
+
+  $ gem install oil
+
 == SYNOPSIS:
 
   # Resize a JPEG image
@@ -19,7 +23,7 @@ Resize JPEG images.
 
 == REQUIREMENTS:
 
-* IJG JPEG Library Version 6b or later.
+* IJG JPEG Library or libjpeg-turbo.
 
 Installing libjpeg headers (OSX):
 
@@ -29,9 +33,25 @@ Installing libjpeg headers (Debian/Ubuntu):
 
   $ sudo apt-get install libjpeg-dev
 
-== INSTALLATION:
+== COMPILING & TESTING:
 
-  $ gem install oil
+Compile & run unit tests. Should show no warnings and no failing tests:
+  $ rake
+
+Or:
+  $ rake compile
+  $ rake test
+
+Valgrind should not complain (ruby-1.9.3p125, compiled with -O3):
+  $ valgrind /path/to/ruby -Iext test/test_jpeg.rb
+
+Tests should not leak memory:
+  $ ruby -Iext:test -e "require 'test_jpeg.rb'; loop{ MiniTest::Unit.new.run }"
+
+== TODO:
+
+* PNG
+* JRuby
 
 == LICENSE:
 

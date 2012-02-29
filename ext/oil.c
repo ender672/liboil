@@ -153,21 +153,18 @@ bilinear3(j_compress_ptr cinfo, char *sl1, char *sl2, char *sl_out,
 }
 
 static VALUE
-bilinear2(VALUE *args)
+bilinear2(VALUE _args)
 {
-    j_compress_ptr cinfo;
-    j_decompress_ptr dinfo;
+    VALUE *args = (VALUE *)_args;
+    j_compress_ptr cinfo = (j_compress_ptr)args[0];
+    j_decompress_ptr dinfo = (j_decompress_ptr)args[1];
+    JSAMPROW sl1 = (JSAMPROW)args[2];
+    JSAMPROW sl2 = (JSAMPROW)args[3];
+    JSAMPROW sl_out = (JSAMPROW)args[4];
     size_t i, smpy_i, smpy_last=0, sl_len;
     double smpy, ty, inv_scale_y, inv_scale_x;
-    JSAMPROW sl1, sl2, sl_out;
 
-    cinfo = (j_compress_ptr)args[0];
-    dinfo = (j_decompress_ptr)args[1];
-    sl_len = *(size_t *)args[2];
-    sl1 = (JSAMPROW)args[3];
-    sl2 = (JSAMPROW)args[4];
-    sl_out = (JSAMPROW)args[5];
-
+    sl_len = (dinfo->output_width + 1) * dinfo->output_components;
     inv_scale_x = dinfo->output_width / (float)cinfo->image_width;
     inv_scale_y = dinfo->output_height / (float)cinfo->image_height;
     advance_scanlines(dinfo, &sl1, &sl2, 1);
@@ -189,50 +186,31 @@ bilinear2(VALUE *args)
     return Qnil;
 }
 
-static VALUE
-free_sl_bufs(VALUE *args)
-{
-    free((char *)args[3]);
-    free((char *)args[4]);
-    free((char *)args[5]);
-    return Qnil;
-}
-
 static void
 bilinear(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 {
-    VALUE ensure_args[6];
+    int state;
+    VALUE args[5];
     size_t sl_len;
     JSAMPROW sl1, sl2, sl_out;
-    
+ 
     sl_len = (dinfo->output_width + 1) * dinfo->output_components;    
     sl1 = (JSAMPROW)malloc(sl_len);
     sl2 = (JSAMPROW)malloc(sl_len);
     sl_out = (JSAMPROW)malloc(cinfo->image_width * cinfo->input_components);
 
-    ensure_args[0] = (VALUE)cinfo;
-    ensure_args[1] = (VALUE)dinfo;
-    ensure_args[2] = (VALUE)&sl_len;
-    ensure_args[3] = (VALUE)sl1;
-    ensure_args[4] = (VALUE)sl2;
-    ensure_args[5] = (VALUE)sl_out;
-    rb_ensure(bilinear2, (VALUE)ensure_args, free_sl_bufs, (VALUE)ensure_args);
-}
-
-static void
-init_io(struct jpeg_src *src, struct jpeg_dest *dest)
-{
-    memset(src, 0, sizeof(struct jpeg_src));
-    src->mgr.init_source = init_source;
-    src->mgr.fill_input_buffer = fill_input_buffer;
-    src->mgr.skip_input_data = skip_input_data;
-    src->mgr.resync_to_restart = jpeg_resync_to_restart;
-    src->mgr.term_source = term_source;
-
-    memset(dest, 0, sizeof(struct jpeg_dest));
-    dest->mgr.init_destination = init_destination;
-    dest->mgr.empty_output_buffer = empty_output_buffer;
-    dest->mgr.term_destination = term_destination;
+    args[0] = (VALUE)cinfo;
+    args[1] = (VALUE)dinfo;
+    args[2] = (VALUE)sl1;
+    args[3] = (VALUE)sl2;
+    args[4] = (VALUE)sl_out;
+    rb_protect(bilinear2, (VALUE)args, &state);
+    
+    free(sl1);
+    free(sl2);
+    free(sl_out);
+    
+    if (state) rb_jump_tag(state);
 }
 
 static void
@@ -248,11 +226,8 @@ fix_aspect_ratio(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 }
 
 static void
-set_output_header(struct thumbdata *data, j_compress_ptr cinfo,
-		  j_decompress_ptr dinfo)
+set_output_header(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 {
-    cinfo->image_width = data->width;
-    cinfo->image_height = data->height;
     cinfo->input_components = dinfo->output_components;
     cinfo->in_color_space = dinfo->out_color_space;
     jpeg_set_defaults(cinfo);
@@ -270,16 +245,15 @@ pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 }
 
 static VALUE
-each2(VALUE _args)
+each3(VALUE _args)
 {
     VALUE *args = (VALUE *)_args;
-    struct thumbdata *data = (struct thumbdata *)args[0];
-    j_decompress_ptr dinfo = (j_decompress_ptr)args[1];
-    j_compress_ptr cinfo = (j_compress_ptr)args[2];
+    j_decompress_ptr dinfo = (j_decompress_ptr)args[0];
+    j_compress_ptr cinfo = (j_compress_ptr)args[1];
 
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
-    set_output_header(data, cinfo, dinfo);
+    set_output_header(cinfo, dinfo);
     fix_aspect_ratio(cinfo, dinfo);
     pre_scale(cinfo, dinfo);
 
@@ -292,6 +266,34 @@ each2(VALUE _args)
     jpeg_finish_compress(cinfo);
 
     return Qnil;
+}
+
+static void
+each2(struct thumbdata *data, struct jpeg_src *src, struct jpeg_dest *dest)
+{
+    int state;
+    VALUE args[2];
+    struct jpeg_decompress_struct dinfo;
+    struct jpeg_compress_struct cinfo;
+
+    dinfo.err = cinfo.err = &jerr;
+
+    jpeg_create_compress(&cinfo);
+    cinfo.dest = &dest->mgr;
+    cinfo.image_width = data->width;
+    cinfo.image_height = data->height;
+
+    jpeg_create_decompress(&dinfo);
+    dinfo.src = &src->mgr;
+
+    args[0] = (VALUE)&dinfo;
+    args[1] = (VALUE)&cinfo;
+    rb_protect(each3, (VALUE)args, &state);
+
+    jpeg_destroy_decompress(&dinfo);
+    jpeg_destroy_compress(&cinfo);
+
+    if (state) rb_jump_tag(state);
 }
 
 /* Ruby allocator, deallocator, mark, and methods */
@@ -353,39 +355,30 @@ initialize(VALUE self, VALUE io, VALUE width, VALUE height)
 static VALUE
 each(VALUE self)
 {
-    int state;
-    VALUE args[3];
     struct jpeg_src src;
-    struct jpeg_decompress_struct dinfo;
     struct jpeg_dest dest;
-    struct jpeg_compress_struct cinfo;
     struct thumbdata *data;
     Data_Get_Struct(self, struct thumbdata, data);
 
-    dinfo.err = cinfo.err = &jerr;
-    init_io(&src, &dest);
-
-    jpeg_create_compress(&cinfo);
-    jpeg_create_decompress(&dinfo);
-
+    memset(&src, 0, sizeof(struct jpeg_src));
     src.io = data->io;
     src.buffer = rb_str_new(0, 0);
-    cinfo.dest = &dest.mgr;
+    src.mgr.init_source = init_source;
+    src.mgr.fill_input_buffer = fill_input_buffer;
+    src.mgr.skip_input_data = skip_input_data;
+    src.mgr.resync_to_restart = jpeg_resync_to_restart;
+    src.mgr.term_source = term_source;
 
-    dest.buffer = rb_str_new(0, BUF_LEN);
+    memset(&dest, 0, sizeof(struct jpeg_dest));
+    dest.buffer = rb_str_new(0, BUF_LEN);    
     dest.mgr.next_output_byte = RSTRING_PTR(dest.buffer);
     dest.mgr.free_in_buffer = BUF_LEN;
-    dinfo.src = &src.mgr;
+    dest.mgr.init_destination = init_destination;
+    dest.mgr.empty_output_buffer = empty_output_buffer;
+    dest.mgr.term_destination = term_destination;
 
-    args[0] = (VALUE)data;
-    args[1] = (VALUE)&dinfo;
-    args[2] = (VALUE)&cinfo;
-    rb_protect(each2, (VALUE)args, &state);
+    each2(data, &src, &dest);
 
-    jpeg_destroy_decompress(&dinfo);
-    jpeg_destroy_compress(&cinfo);
-
-    if (state) rb_jump_tag(state);
     return self;
 }
 
@@ -405,3 +398,4 @@ Init_oil()
     id_read = rb_intern("read");
     id_seek = rb_intern("seek");
 }
+
