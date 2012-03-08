@@ -1,5 +1,6 @@
 #include <ruby.h>
 #include <jpeglib.h>
+#include <png.h>
 
 #define BUF_LEN 8192
 
@@ -22,6 +23,22 @@ struct jpeg_src {
     struct jpeg_source_mgr mgr;
     VALUE io;
     VALUE buffer;
+};
+
+struct png_src {
+    VALUE io;
+    VALUE buffer;
+};
+
+struct interpolation {
+  long sw;
+  long sh;
+  long dw;
+  long dh;
+  int cmp;
+  void (*read)(char *, void *);
+  void (*write)(char *, void *);
+  void *data;
 };
 
 /* jpeglib error callbacks */
@@ -48,7 +65,7 @@ fill_input_buffer(j_decompress_ptr cinfo)
     VALUE ret, string = src->buffer;
     long len;
     char *buf;
-    
+
     ret = rb_funcall(src->io, id_read, 2, INT2FIX(BUF_LEN), string);
     len = RSTRING_LEN(string);
 
@@ -106,49 +123,118 @@ term_destination(j_compress_ptr cinfo)
     }
 }
 
-/* Helper functions */
+/* libpng error callbacks */
+
+static void png_warning_fn(png_structp png_ptr, png_const_charp message) {}
 
 static void
-advance_scanlines(j_decompress_ptr dinfo, JSAMPROW *sl1, JSAMPROW *sl2, int n)
+png_error_fn(png_structp png_ptr, png_const_charp message)
 {
-    int i;
-    JSAMPROW tmp;
-    for (i = 0; i < n; i++) {
-	tmp = *sl1;
-	*sl1 = *sl2;
-	*sl2 = tmp;
-	jpeg_read_scanlines(dinfo, sl2, 1);
-    }
+    rb_raise(rb_eRuntimeError, "pnglib: %s", message);
+}
+
+/* libpng io callbacks */
+
+void png_flush_data(png_structp png_ptr){}
+
+void
+png_write_data(png_structp png_ptr, png_bytep data, png_size_t length)
+{
+    if (!png_ptr) return;
+    rb_yield(rb_str_new(data, length));
+}
+
+void
+png_read_data(png_structp png_ptr, png_bytep data, png_size_t length)
+{
+    VALUE string;
+    png_size_t rlen;
+    struct png_src *io_ptr;
+
+    if (!png_ptr) return;
+    io_ptr = (struct png_src *)png_get_io_ptr(png_ptr);
+    string = io_ptr->buffer;
+    rb_funcall(io_ptr->io, id_read, 2, INT2FIX(length), string);
+    rlen = RSTRING_LEN(string);
+    if (rlen > length) rb_raise(rb_eRuntimeError, "IO return buffer is too big.");
+    memcpy(data, RSTRING_PTR(string), RSTRING_LEN(string));
+}
+
+/* png read/write callbacks */
+
+static void
+png_read(char *sl, void *data)
+{
+    void **data_ary = (void **)data;
+    png_read_row((png_structp)data_ary[2], (png_bytep)sl, (png_bytep)NULL);
 }
 
 static void
-bilinear3(j_compress_ptr cinfo, char *sl1, char *sl2, char *sl_out,
-	  double width_ratio_inv, double ty)
+png_write(char *sl, void *data)
 {
-    double sample_x, tx, _tx, p00, p10, p01, p11;
-    unsigned char *c00, *c10, *c01, *c11;
-    size_t sample_x_i, i, j, cmp = cinfo->input_components;
-    
-    for (i = 0; i < cinfo->image_width; i++) {
-	sample_x = i * width_ratio_inv;
-	sample_x_i = (int)sample_x;
+    void **data_ary = (void **)data;
+    png_write_row((png_structp)*data_ary, (png_bytep)sl);
+}
 
-	tx = sample_x - sample_x_i;
+/* Bilinear Interpolation */
+
+static void
+bilinear_get_scanlines(struct interpolation *bi, char **sl1, char **sl2,
+		       size_t *next, double ysmp)
+{
+    int i, j, n, len=bi->cmp * bi->sw - 1;
+    int line=ysmp;
+    char *tmp;
+
+    n = line + 1 - *next;
+    if (line < bi->sh - 1) n++;
+    *next += n;
+    
+    for (i=0; i<n; i++) {
+	tmp = *sl1;
+	*sl1 = *sl2;
+	*sl2 = tmp;
+	bi->read(*sl2, bi->data);
+
+	for (j=0; j<bi->cmp; j++)
+	    sl2[0][len + bi->cmp - j] = sl2[0][len - j];
+    }
+
+    if (line >= bi->sh - 1) *sl1 = *sl2;
+}
+
+static void
+bilinear3(char *sl1, char *sl2, char *sl_out, size_t sw, size_t dw, int cmp,
+	  double ysmp)
+{
+    double xsmp, tx, _tx, p1, p2, p3, p4;
+    unsigned char *c1, *c2, *c3, *c4;
+    size_t xsmp_i, i, j;
+    double xscale_inv, xscale_ctr, ty;
+    
+    xscale_inv = sw / (float)dw;
+    xscale_ctr = (xscale_inv - 1) / 2;
+    ty = ysmp - (int)ysmp;
+
+    for (i = 0; i < dw; i++) {
+	xsmp = i * xscale_inv + xscale_ctr;
+	xsmp_i = (int)xsmp;
+
+	tx = xsmp - xsmp_i;
 	_tx = 1 - tx;
 
-	p11 =  tx * ty;
-	p01 = _tx * ty;
-	p10 =  tx - p11;
-	p00 = _tx - p01;
+	p4 =  tx * ty;
+	p3 = _tx * ty;
+	p2 =  tx - p4;
+	p1 = _tx - p3;
 
-	c00 = sl1 + sample_x_i * cmp;
-	c10 = c00 + cmp;
-	c01 = sl2 + sample_x_i * cmp;
-	c11 = c01 + cmp;
+	c1 = sl1 + xsmp_i * cmp;
+	c2 = c1 + cmp;
+	c3 = sl2 + xsmp_i * cmp;
+	c4 = c3 + cmp;
 
 	for (j = 0; j < cmp; j++)
-	    *sl_out++ = p00 * c00[j] + p10 * c10[j] + p01 * c01[j] +
-			 p11 * c11[j];
+	    *sl_out++ = p1 * c1[j] + p2 * c2[j] + p3 * c3[j] + p4 * c4[j];
     }
 }
 
@@ -156,65 +242,54 @@ static VALUE
 bilinear2(VALUE _args)
 {
     VALUE *args = (VALUE *)_args;
-    j_compress_ptr cinfo = (j_compress_ptr)args[0];
-    j_decompress_ptr dinfo = (j_decompress_ptr)args[1];
-    JSAMPROW sl1 = (JSAMPROW)args[2];
-    JSAMPROW sl2 = (JSAMPROW)args[3];
-    JSAMPROW sl_out = (JSAMPROW)args[4];
-    size_t i, smpy_i, smpy_last=0, sl_len;
-    double smpy, ty, inv_scale_y, inv_scale_x;
+    struct interpolation *bi=(struct interpolation *)args[0];
+    char *sl1=(char *)args[1], *sl2=(char *)args[2], *sl_out=(char *)args[3];
+    size_t i, line=0;
+    double ysmp, yscale_inv, yscale_ctr;
 
-    sl_len = (dinfo->output_width + 1) * dinfo->output_components;
-    inv_scale_x = dinfo->output_width / (float)cinfo->image_width;
-    inv_scale_y = dinfo->output_height / (float)cinfo->image_height;
-    advance_scanlines(dinfo, &sl1, &sl2, 1);
+    yscale_inv = bi->sh / (float)bi->dh;
+    yscale_ctr = (yscale_inv - 1) / 2;
 
-    for (i = 0; i < cinfo->image_height; i++) {
-	smpy = i * inv_scale_y;
-	smpy_i = (int)smpy;
-	ty = smpy - smpy_i;
-	
-	advance_scanlines(dinfo, &sl1, &sl2, smpy_i - smpy_last);
-	smpy_last = smpy_i;
+    for (i = 0; i<bi->dh; i++) {
+	ysmp = i * yscale_inv + yscale_ctr;
 
-	sl1[sl_len - 1] = sl1[sl_len - 2];
-	sl2[sl_len - 1] = sl2[sl_len - 2];
-	bilinear3(cinfo, smpy_i ? sl1 : sl2, sl2, sl_out, inv_scale_x, ty);
-	jpeg_write_scanlines(cinfo, &sl_out, 1);
+	bilinear_get_scanlines(bi, &sl1, &sl2, &line, ysmp);
+	bilinear3(sl1, sl2, sl_out, bi->sw, bi->dw, bi->cmp, ysmp);
+	bi->write(sl_out, bi->data);
     }
 
     return Qnil;
 }
 
 static void
-bilinear(j_compress_ptr cinfo, j_decompress_ptr dinfo)
+bilinear(struct interpolation *bi)
 {
-    int state;
-    VALUE args[5];
-    size_t sl_len;
-    JSAMPROW sl1, sl2, sl_out;
- 
-    sl_len = (dinfo->output_width + 1) * dinfo->output_components;    
-    sl1 = (JSAMPROW)malloc(sl_len);
-    sl2 = (JSAMPROW)malloc(sl_len);
-    sl_out = (JSAMPROW)malloc(cinfo->image_width * cinfo->input_components);
+    VALUE args[4];
+    int state, in_len;
+    char *sl1, *sl2, *sl_out;
 
-    args[0] = (VALUE)cinfo;
-    args[1] = (VALUE)dinfo;
-    args[2] = (VALUE)sl1;
-    args[3] = (VALUE)sl2;
-    args[4] = (VALUE)sl_out;
+    in_len = (bi->sw + 1) * bi->cmp;
+    sl1 = malloc(in_len);
+    sl2 = malloc(in_len);
+    sl_out = malloc(bi->dw * bi->cmp);
+
+    args[0] = (VALUE)bi;
+    args[1] = (VALUE)sl1;
+    args[2] = (VALUE)sl2;
+    args[3] = (VALUE)sl_out;
     rb_protect(bilinear2, (VALUE)args, &state);
-    
+
     free(sl1);
     free(sl2);
     free(sl_out);
-    
+ 
     if (state) rb_jump_tag(state);
 }
 
+/* JPEG helper functions */
+
 static void
-fix_aspect_ratio(j_compress_ptr cinfo, j_decompress_ptr dinfo)
+jpeg_fix_aspect_ratio(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 {
     double x, y;
 
@@ -226,7 +301,7 @@ fix_aspect_ratio(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 }
 
 static void
-set_output_header(j_compress_ptr cinfo, j_decompress_ptr dinfo)
+jpeg_set_output_header(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 {
     cinfo->input_components = dinfo->output_components;
     cinfo->in_color_space = dinfo->out_color_space;
@@ -234,7 +309,7 @@ set_output_header(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 }
 
 static void
-pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
+jpeg_pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 {
     int inv_scale = dinfo->output_width / cinfo->image_width;
 
@@ -244,23 +319,51 @@ pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
     jpeg_calc_output_dimensions(dinfo);
 }
 
+static void
+jpeg_read(char *sl, void *data)
+{
+    void **data_ary = (void **)data;
+    jpeg_read_scanlines((j_decompress_ptr)*data_ary, (JSAMPROW *)&sl, 1);
+}
+
+static void
+jpeg_write(char *sl, void *data)
+{
+    void **data_ary = (void **)data;
+    jpeg_write_scanlines((j_compress_ptr)data_ary[1], (JSAMPROW *)&sl, 1);
+}
+
 static VALUE
-each3(VALUE _args)
+jpeg_each3(VALUE _args)
 {
     VALUE *args = (VALUE *)_args;
     j_decompress_ptr dinfo = (j_decompress_ptr)args[0];
     j_compress_ptr cinfo = (j_compress_ptr)args[1];
+    struct interpolation intrp;
+    void *data[2];
 
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
-    set_output_header(cinfo, dinfo);
-    fix_aspect_ratio(cinfo, dinfo);
-    pre_scale(cinfo, dinfo);
+    jpeg_set_output_header(cinfo, dinfo);
+    jpeg_fix_aspect_ratio(cinfo, dinfo);
+    jpeg_pre_scale(cinfo, dinfo);
 
     jpeg_start_compress(cinfo, TRUE);
     jpeg_start_decompress(dinfo);
 
-    bilinear(cinfo, dinfo);
+    intrp.sw = dinfo->output_width;
+    intrp.sh = dinfo->output_height;
+    intrp.dw = cinfo->image_width;
+    intrp.dh = cinfo->image_height;
+    intrp.cmp = dinfo->output_components;
+    intrp.read = jpeg_read;
+    intrp.write = jpeg_write;
+    data[0] = dinfo;
+    data[1] = cinfo;
+    intrp.data = (void *)data;
+
+    bilinear(&intrp);
+    //nearest(&intrp);
 
     jpeg_abort_decompress(dinfo);
     jpeg_finish_compress(cinfo);
@@ -269,7 +372,7 @@ each3(VALUE _args)
 }
 
 static void
-each2(struct thumbdata *data, struct jpeg_src *src, struct jpeg_dest *dest)
+jpeg_each2(struct thumbdata *data, struct jpeg_src *src, struct jpeg_dest *dest)
 {
     int state;
     VALUE args[2];
@@ -288,7 +391,7 @@ each2(struct thumbdata *data, struct jpeg_src *src, struct jpeg_dest *dest)
 
     args[0] = (VALUE)&dinfo;
     args[1] = (VALUE)&cinfo;
-    rb_protect(each3, (VALUE)args, &state);
+    rb_protect(jpeg_each3, (VALUE)args, &state);
 
     jpeg_destroy_decompress(&dinfo);
     jpeg_destroy_compress(&cinfo);
@@ -320,40 +423,40 @@ allocate(VALUE klass)
 
 /*
  *  call-seq:
- *     JPEGThumb.new(io, width, height) -> jpeg_thumb
+ *     Class.new(io, width, height) -> obj
  *
- *  Creates a new JPEG thumbnailer. +io_in+ must be an IO-like object that
- *  responds to #read(size).
+ *  Creates a new resizer. +io_in+ must be an IO-like object that responds to
+ *  #read(size, buffer) and #seek(size).
  * 
  *  The resulting image will be scaled to fit in the box given by +width+ and
- *  +height+ while preserving the aspect ratio.
- * 
- *  If both box dimensions are larger than the source image, then the image will
- *  be unchanged. The thumbnailer will not enlarge images.
+ *  +height+ while preserving the original aspect ratio.
  */
 
 static VALUE
-initialize(VALUE self, VALUE io, VALUE width, VALUE height)
+initialize(VALUE self, VALUE io, VALUE rb_width, VALUE rb_height)
 {
+    int width=FIX2INT(rb_width), height=FIX2INT(rb_height);
     struct thumbdata *data;
+    
+    if (width<1 || height<1) rb_raise(rb_eArgError, "Dimensions must be > 0");
 
     Data_Get_Struct(self, struct thumbdata, data);
     data->io = io;
-    data->width = FIX2INT(width);
-    data->height = FIX2INT(height);
+    data->width = width;
+    data->height = height;
 
     return self;
 }
 
 /*
  *  call-seq:
- *     resized_jpeg.each(&block) -> self
+ *     jpeg.each(&block) -> self
  *
  *  Yields a series of binary strings that make up the resized JPEG image.
  */
 
 static VALUE
-each(VALUE self)
+jpeg_each(VALUE self)
 {
     struct jpeg_src src;
     struct jpeg_dest dest;
@@ -377,8 +480,94 @@ each(VALUE self)
     dest.mgr.empty_output_buffer = empty_output_buffer;
     dest.mgr.term_destination = term_destination;
 
-    each2(data, &src, &dest);
+    jpeg_each2(data, &src, &dest);
 
+    return self;
+}
+
+static VALUE
+png_each2(VALUE _args)
+{
+    VALUE *args = (VALUE *)_args;
+    png_structp write_ptr=(png_structp)args[0];
+    png_infop write_i_ptr=(png_infop)args[1];
+    png_structp read_ptr=(png_structp)args[2];
+    png_infop read_i_ptr=(png_infop)args[3];
+    struct thumbdata *thumb=(struct thumbdata *)args[4];
+    void *data[4];
+    struct interpolation intrp;
+
+    png_read_info(read_ptr, read_i_ptr);
+    png_set_IHDR(write_ptr, write_i_ptr, thumb->width, thumb->height, 8,
+		 PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
+		 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(write_ptr, write_i_ptr);
+
+    intrp.sw = png_get_image_width(read_ptr, read_i_ptr);
+    intrp.sh = png_get_image_height(read_ptr, read_i_ptr);
+    intrp.dw = thumb->width;
+    intrp.dh = thumb->height;
+    intrp.cmp = 3;
+    intrp.read = png_read;
+    intrp.write = png_write;
+    data[0] = write_ptr;
+    data[1] = write_i_ptr;
+    data[2] = read_ptr;
+    data[3] = read_i_ptr;
+    intrp.data = (void *)data;
+
+    bilinear(&intrp);
+    
+    png_read_end(read_ptr, (png_infop)NULL);
+    png_write_end(write_ptr, write_i_ptr);
+    
+    return Qnil;
+}
+
+/*
+ *  call-seq:
+ *     png.each(&block) -> self
+ *
+ *  Yields a series of binary strings that make up the resized PNG image.
+ */
+
+static VALUE
+png_each(VALUE self)
+{
+    int state;
+    VALUE args[5];
+    png_structp read_ptr, write_ptr;
+    png_infop read_i_ptr, write_i_ptr;
+    struct png_src src;
+    struct thumbdata *thumb;
+    Data_Get_Struct(self, struct thumbdata, thumb);
+
+    write_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
+				      (png_error_ptr)png_error_fn,
+				      (png_error_ptr)png_warning_fn);
+    write_i_ptr = png_create_info_struct(write_ptr);
+    png_set_write_fn(write_ptr, NULL, png_write_data, png_flush_data);
+
+    src.io = thumb->io;
+    src.buffer = rb_str_new(0, 0);    
+
+    read_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
+				     (png_error_ptr)png_error_fn,
+				     (png_error_ptr)png_warning_fn);
+    read_i_ptr = png_create_info_struct(read_ptr);
+    png_set_read_fn(read_ptr, (void *)&src, png_read_data);
+
+    args[0] = (VALUE)write_ptr;
+    args[1] = (VALUE)write_i_ptr;
+    args[2] = (VALUE)read_ptr;
+    args[3] = (VALUE)read_i_ptr;
+    args[4] = (VALUE)thumb;
+    rb_protect(png_each2, (VALUE)args, &state);
+
+    png_destroy_read_struct(&read_ptr, &read_i_ptr, (png_info **)NULL);
+    png_destroy_write_struct(&write_ptr, &write_i_ptr);
+
+    if (state) rb_jump_tag(state);
     return self;
 }
 
@@ -386,10 +575,16 @@ void
 Init_oil()
 {
     VALUE mOil = rb_define_module("Oil");
+
     VALUE cJPEG = rb_define_class_under(mOil, "JPEG", rb_cObject);
     rb_define_alloc_func(cJPEG, allocate);
     rb_define_method(cJPEG, "initialize", initialize, 3);
-    rb_define_method(cJPEG, "each", each, 0);
+    rb_define_method(cJPEG, "each", jpeg_each, 0);
+    
+    VALUE cPNG = rb_define_class_under(mOil, "PNG", rb_cObject);
+    rb_define_alloc_func(cPNG, allocate);
+    rb_define_method(cPNG, "initialize", initialize, 3);
+    rb_define_method(cPNG, "each", png_each, 0);
 
     jpeg_std_error(&jerr);
     jerr.error_exit = error_exit;
@@ -398,4 +593,3 @@ Init_oil()
     id_read = rb_intern("read");
     id_seek = rb_intern("seek");
 }
-

@@ -1,0 +1,88 @@
+# zlib-related suppressions. libpng uses zlib.
+# http://www.zlib.net/zlib_faq.html#faq36
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Cond
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_row
+   fun:png_write
+   fun:bilinear2
+   fun:rb_protect
+   fun:bilinear
+   fun:png_each2
+   fun:rb_protect
+   fun:png_each
+   fun:call_cfunc
+   fun:vm_call_method
+   fun:vm_exec_core
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Cond
+   fun:memcpy
+   obj:/lib/libz.so.1.2.3.3
+   obj:/lib/libz.so.1.2.3.3
+   fun:deflate
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_row
+   fun:png_write
+   fun:bilinear2
+   fun:rb_protect
+   fun:bilinear
+   fun:png_each2
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Value8
+   fun:memcpy
+   obj:/lib/libz.so.1.2.3.3
+   obj:/lib/libz.so.1.2.3.3
+   fun:deflate
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_row
+   fun:png_write
+   fun:bilinear2
+   fun:rb_protect
+   fun:bilinear
+   fun:png_each2
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Cond
+   fun:deflate
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_row
+   fun:png_write
+   fun:bilinear2
+   fun:rb_protect
+   fun:bilinear
+   fun:png_each2
+   fun:rb_protect
+   fun:png_each
+}
+
+{
+   <insert_a_suppression_name_here>
+   Memcheck:Value8
+   fun:crc32
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_chunk
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   obj:/lib/libpng12.so.0.42.0
+   fun:png_write_row
+   fun:png_write
+   fun:bilinear2
+   fun:rb_protect
+   fun:bilinear
+}
+

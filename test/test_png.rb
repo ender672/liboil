@@ -4,59 +4,57 @@ require 'oil'
 require 'stringio'
 
 module Oil
-  class TestJPEG < MiniTest::Unit::TestCase
-    # http://www.techsupportteam.org/forum/digital-imaging-photography/1892-worlds-smallest-valid-jpeg.html
-    JPEG_DATA = "\
-\xFF\xD8\xFF\xE0\x00\x10\x4A\x46\x49\x46\x00\x01\x01\x01\x00\x48\x00\x48\x00\
-\x00\xFF\xDB\x00\x43\x00\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\
-\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\
-\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\
-\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xC2\x00\x0B\x08\x00\
-\x01\x00\x01\x01\x01\x11\x00\xFF\xC4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\
-\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xDA\x00\x08\x01\x01\x00\x01\x3F\
-\x10\xFF\xD9"
+  class TestPNG < MiniTest::Unit::TestCase
+    # http://garethrees.org/2007/11/14/pngcrush/
+    PNG_DATA = "\
+\x89\x50\x4E\x47\x0D\x0A\x1A\x0A\x00\x00\x00\x0D\x49\x48\x44\x52\x00\x00\x00\
+\x01\x00\x00\x00\x01\x01\x00\x00\x00\x00\x37\x6E\xF9\x24\x00\x00\x00\x10\x49\
+\x44\x41\x54\x78\x9C\x62\x60\x01\x00\x00\x00\xFF\xFF\x03\x00\x00\x06\x00\x05\
+\x57\xBF\xAB\xD4\x00\x00\x00\x00\x49\x45\x4E\x44\xAE\x42\x60\x82"
 
     def test_valid
-      validate_jpeg resize_string(JPEG_DATA)
+      validate_png resize_string(PNG_DATA)
     end
 
-    def test_missing_eof
-      validate_jpeg resize_string(JPEG_DATA[0..-2])
-    end
-
-    def test_bogus_header_marker
-      str = JPEG_DATA.dup
-      str[3] = "\x10"
+    def test_bogus_header_chunk
+      str = PNG_DATA.dup
+      str[15] = "\x10"
       assert_raises(RuntimeError) { resize_string(str) }
     end
 
-    def test_bogus_body_marker
-      str = JPEG_DATA.dup
-      str[-1] = "\x10"
+    def test_bogus_body_chunk
+      str = PNG_DATA.dup
+      str[37] = "\x10"
       assert_raises(RuntimeError) { resize_string(str) }
+    end
+
+    def test_bogus_end_chunk
+      str = PNG_DATA.dup
+      str[-6] = "\x10"
+      assert_raises(RuntimeError) { resize_string(str) }      
     end
 
     def test_calls_each_during_yield
-      io = StringIO.new(JPEG_DATA)
-      j = JPEG.new(io, 600, 600)
+      io = StringIO.new(PNG_DATA)
+      j = PNG.new(io, 600, 600)
       assert_raises(RuntimeError) do
         j.each{ |d| j.each { |e| j.each { |f| } } }
       end
     end
     
     def test_alloc_each
-      io = JPEG.allocate
+      io = PNG.allocate
       assert_raises(NoMethodError){ io.each{ |f| } }
     end
-    
+
     # Test dimensions
     
     def test_zero_dim
-      assert_raises(ArgumentError){ resize_string(JPEG_DATA, 0, 0) }
+      assert_raises(ArgumentError){ resize_string(PNG_DATA, 0, 0) }
     end
     
     def test_neg_dim
-      assert_raises(ArgumentError){ resize_string(JPEG_DATA, -1231, -123) }
+      assert_raises(ArgumentError){ resize_string(PNG_DATA, -1231, -123) }
     end
     
     # Test io source handler
@@ -66,7 +64,7 @@ module Oil
         buf.slice!(0,0)
         buf << (io.read(size)[0..-2] * 2)
       end
-      assert_raises(RuntimeError) { custom_io proc, JPEG_DATA }
+      assert_raises(RuntimeError) { custom_io proc, PNG_DATA }
     end
     
     def test_io_does_nothing
@@ -90,7 +88,7 @@ module Oil
         flag = true
         parent.read(size, buf)
       end
-      assert_raises(CustomError) { custom_io proc, big_jpeg }
+      assert_raises(CustomError) { custom_io proc, big_png }
     end
 
     def test_io_throws_in_body
@@ -100,7 +98,7 @@ module Oil
         flag = true
         parent.read(size, buf)
       end
-      catch(:foo){ custom_io proc, big_jpeg }
+      catch(:foo){ custom_io proc, big_png }
     end
 
     def test_io_shrinks_buffer
@@ -108,7 +106,7 @@ module Oil
         parent.read(size, buf)
         buf.slice!(0, 10)
       end
-      assert_raises(RuntimeError) { custom_io(proc, big_jpeg) }
+      assert_raises(RuntimeError) { custom_io(proc, big_png) }
     end
 
     def test_io_enlarges_buffer
@@ -116,42 +114,37 @@ module Oil
         res = parent.read(size, buf)
         buf << res
       end
-      validate_jpeg custom_io(proc, big_jpeg) # how is this okay?
-    end
-
-    def test_io_seek
-      # Craft a JPEG with header content that will be skipped.
-      # Make sure an actual seek happens, and it doesn't just skip buffer.
+      assert_raises(RuntimeError) { validate_jpeg custom_io(proc, big_png) }
     end
 
     # Test yielding
 
     def test_raise_in_each
       assert_raises(CustomError) do
-        io = StringIO.new(JPEG_DATA)
-        JPEG.new(io, 200, 200).each { raise CustomError }
+        io = StringIO.new(PNG_DATA)
+        PNG.new(io, 200, 200).each { raise CustomError }
       end
     end
 
     def test_throw_in_each
       catch(:foo) do
-        io = StringIO.new(JPEG_DATA)
-        JPEG.new(io, 200, 200).each { throw :foo }
+        io = StringIO.new(PNG_DATA)
+        PNG.new(io, 200, 200).each { throw :foo }
       end
     end
 
     def test_each_shrinks_buffer
-      io = StringIO.new(JPEG_DATA)
+      io = StringIO.new(PNG_DATA)
       io_out = binary_stringio
-      JPEG.new(io, 200, 200).each { |d| io_out << d; d.slice!(0, 4) }
-      validate_jpeg(io_out.string)
+      PNG.new(io, 200, 200).each { |d| io_out << d; d.slice!(0, 4) }
+      validate_png(io_out.string)
     end
     
     def test_each_enlarges_buffer
-      io = StringIO.new(JPEG_DATA)
+      io = StringIO.new(PNG_DATA)
       io_out = binary_stringio
-      JPEG.new(io, 200, 200).each { |d| io_out << d; d << "foobar" }
-      validate_jpeg(io_out.string)
+      PNG.new(io, 200, 200).each { |d| io_out << d; d << "foobar" }
+      validate_png(io_out.string)
     end
 
     private
@@ -160,7 +153,7 @@ module Oil
       width ||= 100
       height ||= 200
       out = binary_stringio
-      JPEG.new(io, width, height).each{ |d| out << d }
+      PNG.new(io, width, height).each{ |d| out << d }
       return out.string
     end
 
@@ -172,13 +165,13 @@ module Oil
       io(StringIO.new(str), width, height)
     end
     
-    def validate_jpeg(data)
-      assert_equal "\xFF\xD8", data[0,2]
-      assert_equal "\xFF\xD9", data[-2, 2]
+    def validate_png(data)
+      assert_equal "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A", data[0,8]
+      assert_equal "\x49\x45\x4E\x44\xAE\x42\x60\x82", data[-8, 8]
     end
 
-    def big_jpeg
-      resize_string(JPEG_DATA, 1000, 1000)
+    def big_png
+      resize_string(PNG_DATA, 200, 200)
     end
 
     def binary_stringio

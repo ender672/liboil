@@ -4,7 +4,7 @@ http://github.com/ender672/oil
 
 == DESCRIPTION:
 
-Resize JPEG images.
+Oil resizes JPEG and PNG images.
 
 == INSTALLATION:
 
@@ -12,45 +12,50 @@ Resize JPEG images.
 
 == SYNOPSIS:
 
-  # Resize a JPEG image
   require 'oil'
-
   io = File.open('image.jpg', 'rb')
+
+  # prepare to resize JPEG to fit in a 200x300 box, preserving aspect ratio
   jpeg = Oil::JPEG.new(io, 200, 300)
-  jpeg.each do |data|
-    # yields successive parts of the jpeg file
-  end
+
+  # yield successive parts of the resized and compressed JPEG file
+  jpeg.each { |data| }
 
 == REQUIREMENTS:
 
 * IJG JPEG Library or libjpeg-turbo.
+* libpng
 
 Installing libjpeg headers (OSX):
 
   $ brew install libjpeg # requires homebrew (http://mxcl.github.com/homebrew/)
 
-Installing libjpeg headers (Debian/Ubuntu):
+Installing libjpeg and libpng headers (Debian/Ubuntu):
 
-  $ sudo apt-get install libjpeg-dev
+  $ sudo apt-get install libjpeg-dev libpng-dev
 
 == COMPILING & TESTING:
 
 Compile & run unit tests. Should show no warnings and no failing tests:
-  $ rake
 
-Or:
   $ rake compile
   $ rake test
 
 Valgrind should not complain (ruby-1.9.3p125, compiled with -O3):
+
   $ valgrind /path/to/ruby -Iext test/test_jpeg.rb
+  $ valgrind --suppressions=test/valgrind_suppressions.txt /path/to/ruby -Iext test/test_png.rb
 
 Tests should not leak memory:
-  $ ruby -Iext:test -e "require 'test_jpeg.rb'; loop{ MiniTest::Unit.new.run }"
+
+  $ ruby -Iext:test -e "require 'test_jpeg.rb'; require 'test_png.rb'; loop{ MiniTest::Unit.new.run }"
+
+Changes to the interpolator should be analyzed using ResampleScope:
+
+  https://github.com/jsummers/resamplescope
 
 == TODO:
 
-* PNG
 * JRuby
 
 == LICENSE:
