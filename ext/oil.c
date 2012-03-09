@@ -8,8 +8,8 @@ static ID id_read, id_seek;
 
 struct thumbdata {
     VALUE io;
-    long width;
-    long height;
+    unsigned int width;
+    unsigned int height;
 };
 
 static struct jpeg_error_mgr jerr;
@@ -286,19 +286,19 @@ bilinear(struct interpolation *bi)
     if (state) rb_jump_tag(state);
 }
 
-/* JPEG helper functions */
+/* helper functions */
 
 static void
-jpeg_fix_aspect_ratio(j_compress_ptr cinfo, j_decompress_ptr dinfo)
+fix_ratio(unsigned int sw, unsigned int sh, unsigned int *dw, unsigned int *dh)
 {
     double x, y;
-
-    x = cinfo->image_width / (float)dinfo->output_width;
-    y = cinfo->image_height / (float)dinfo->output_height;
-    
-    if (x < y) cinfo->image_height = dinfo->output_height * x;
-    else cinfo->image_width = dinfo->output_width * y;
+    x = *dw / (float)sw;
+    y = *dh / (float)sh;
+    if (x<y) *dh = sh * x;
+    else *dw = sw * y;
 }
+
+/* jpeg helper functions */
 
 static void
 jpeg_set_output_header(j_compress_ptr cinfo, j_decompress_ptr dinfo)
@@ -345,7 +345,8 @@ jpeg_each3(VALUE _args)
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
     jpeg_set_output_header(cinfo, dinfo);
-    jpeg_fix_aspect_ratio(cinfo, dinfo);
+    fix_ratio(dinfo->output_width, dinfo->output_height, &cinfo->image_width,
+	      &cinfo->image_height);
     jpeg_pre_scale(cinfo, dinfo);
 
     jpeg_start_compress(cinfo, TRUE);
@@ -498,13 +499,14 @@ png_each2(VALUE _args)
     struct interpolation intrp;
 
     png_read_info(read_ptr, read_i_ptr);
+    intrp.sw = png_get_image_width(read_ptr, read_i_ptr);
+    intrp.sh = png_get_image_height(read_ptr, read_i_ptr);
+    fix_ratio(intrp.sw, intrp.sh, &thumb->width, &thumb->height);
     png_set_IHDR(write_ptr, write_i_ptr, thumb->width, thumb->height, 8,
 		 PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
 		 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_write_info(write_ptr, write_i_ptr);
 
-    intrp.sw = png_get_image_width(read_ptr, read_i_ptr);
-    intrp.sh = png_get_image_height(read_ptr, read_i_ptr);
     intrp.dw = thumb->width;
     intrp.dh = thumb->height;
     intrp.cmp = 3;

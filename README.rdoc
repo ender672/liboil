@@ -4,7 +4,8 @@ http://github.com/ender672/oil
 
 == DESCRIPTION:
 
-Oil resizes JPEG and PNG images.
+Oil resizes JPEG and PNG images. It aims for fast performance and low memory
+use.
 
 == INSTALLATION:
 
@@ -22,6 +23,8 @@ Oil resizes JPEG and PNG images.
   jpeg.each { |data| }
 
 == REQUIREMENTS:
+
+These requirements do not apply to the JRuby gem.
 
 * IJG JPEG Library or libjpeg-turbo.
 * libpng
@@ -43,8 +46,8 @@ Compile & run unit tests. Should show no warnings and no failing tests:
 
 Valgrind should not complain (ruby-1.9.3p125, compiled with -O3):
 
-  $ valgrind /path/to/ruby -Iext test/test_jpeg.rb
-  $ valgrind --suppressions=test/valgrind_suppressions.txt /path/to/ruby -Iext test/test_png.rb
+  $ valgrind /path/to/ruby -Iext:test test/test_jpeg.rb
+  $ valgrind --suppressions=test/valgrind_suppressions.txt /path/to/ruby -Iext:test test/test_png.rb
 
 Tests should not leak memory:
 
@@ -56,7 +59,7 @@ Changes to the interpolator should be analyzed using ResampleScope:
 
 == TODO:
 
-* JRuby
+* Windows
 
 == LICENSE:
 

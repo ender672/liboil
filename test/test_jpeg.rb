@@ -2,6 +2,7 @@ require 'rubygems'
 require 'minitest/autorun'
 require 'oil'
 require 'stringio'
+require 'helper'
 
 module Oil
   class TestJPEG < MiniTest::Unit::TestCase
@@ -63,8 +64,14 @@ module Oil
     
     def test_io_returns_too_much_data
       proc = Proc.new do |io, size, buf|
-        buf.slice!(0,0)
-        buf << (io.read(size)[0..-2] * 2)
+        str = io.read(size)
+        str = str[0..-2] * 2 if str
+        if buf
+          buf.slice!(0,0) # this empties the buffer
+          buf << str
+        else
+          str
+        end
       end
       assert_raises(RuntimeError) { custom_io proc, JPEG_DATA }
     end
@@ -88,7 +95,11 @@ module Oil
       proc = Proc.new do |parent, size, buf|
         raise CustomError if flag
         flag = true
-        parent.read(size, buf)
+        if buf
+          parent.read(size, buf)
+        else
+          parent.read(size)
+        end
       end
       assert_raises(CustomError) { custom_io proc, big_jpeg }
     end
@@ -98,25 +109,44 @@ module Oil
       proc = Proc.new do |parent, size, buf|
         throw :foo if flag
         flag = true
-        parent.read(size, buf)
+        if buf
+          parent.read(size, buf)
+        else
+          parent.read(size)
+        end
       end
       catch(:foo){ custom_io proc, big_jpeg }
     end
 
     def test_io_shrinks_buffer
       proc = Proc.new do |parent, size, buf|
-        parent.read(size, buf)
-        buf.slice!(0, 10)
+        if buf
+          parent.read(size, buf)
+          buf.slice!(0, 10)
+        else
+          res = parent.read(size)
+          res[10, -1]
+        end
       end
       assert_raises(RuntimeError) { custom_io(proc, big_jpeg) }
     end
 
-    def test_io_enlarges_buffer
+    def test_io_enlarges_buffer_with_eof
       proc = Proc.new do |parent, size, buf|
-        res = parent.read(size, buf)
-        buf << res
+        if buf
+          parent.read(size, buf)
+          buf << buf
+        else
+          str = parent.read(size)
+          str * 2
+        end
       end
-      validate_jpeg custom_io(proc, big_jpeg) # how is this okay?
+      
+      if(RUBY_PLATFORM =~ /java/)
+        assert_raises(RuntimeError) { custom_io(proc, big_jpeg) }
+      else
+        validate_jpeg custom_io(proc, big_jpeg) # libjpeg stops when reaches eof
+      end
     end
 
     def test_io_seek
@@ -187,18 +217,4 @@ module Oil
       io
     end
   end
-
-  class CustomError < RuntimeError; end
-
-  class CustomIO
-    def initialize(proc, *args)
-      @parent = StringIO.new(*args)
-      @proc = proc
-    end
-
-    def read(size, buf)
-      @proc.call(@parent, size, buf) if @proc
-    end
-  end
 end
-

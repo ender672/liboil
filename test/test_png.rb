@@ -2,6 +2,7 @@ require 'rubygems'
 require 'minitest/autorun'
 require 'oil'
 require 'stringio'
+require 'helper'
 
 module Oil
   class TestPNG < MiniTest::Unit::TestCase
@@ -31,7 +32,11 @@ module Oil
     def test_bogus_end_chunk
       str = PNG_DATA.dup
       str[-6] = "\x10"
-      assert_raises(RuntimeError) { resize_string(str) }      
+      if(RUBY_PLATFORM =~ /java/)
+        validate_png resize_string(str) # java is fine with a bogus end chunk
+      else
+        assert_raises(RuntimeError) { resize_string(str) }
+      end
     end
 
     def test_calls_each_during_yield
@@ -61,8 +66,14 @@ module Oil
     
     def test_io_returns_too_much_data
       proc = Proc.new do |io, size, buf|
-        buf.slice!(0,0)
-        buf << (io.read(size)[0..-2] * 2)
+        str = io.read(size)
+        str = str[0..-2] * 2 if str
+        if buf
+          buf.slice!(0,0) # this empties the buffer
+          buf << str
+        else
+          str
+        end
       end
       assert_raises(RuntimeError) { custom_io proc, PNG_DATA }
     end
@@ -86,7 +97,11 @@ module Oil
       proc = Proc.new do |parent, size, buf|
         raise CustomError if flag
         flag = true
-        parent.read(size, buf)
+        if buf
+          parent.read(size, buf)
+        else
+          parent.read(size)
+        end
       end
       assert_raises(CustomError) { custom_io proc, big_png }
     end
@@ -96,25 +111,40 @@ module Oil
       proc = Proc.new do |parent, size, buf|
         throw :foo if flag
         flag = true
-        parent.read(size, buf)
+        if buf
+          parent.read(size, buf)
+        else
+          parent.read(size)
+        end
       end
       catch(:foo){ custom_io proc, big_png }
     end
 
     def test_io_shrinks_buffer
       proc = Proc.new do |parent, size, buf|
-        parent.read(size, buf)
-        buf.slice!(0, 10)
+        if buf
+          parent.read(size, buf)
+          buf.slice!(0, 10)
+        else
+          res = parent.read(size)
+          res[10, -1]
+        end
       end
       assert_raises(RuntimeError) { custom_io(proc, big_png) }
     end
 
-    def test_io_enlarges_buffer
+    def test_io_enlarges_buffer_with_eof
       proc = Proc.new do |parent, size, buf|
-        res = parent.read(size, buf)
-        buf << res
+        if buf
+          parent.read(size, buf)
+          buf << buf
+        else
+          str = parent.read(size)
+          str * 2
+        end
       end
-      assert_raises(RuntimeError) { validate_jpeg custom_io(proc, big_png) }
+      
+      assert_raises(RuntimeError) { custom_io(proc, big_png) }
     end
 
     # Test yielding
@@ -180,18 +210,4 @@ module Oil
       io
     end
   end
-
-  class CustomError < RuntimeError; end
-
-  class CustomIO
-    def initialize(proc, *args)
-      @parent = StringIO.new(*args)
-      @proc = proc
-    end
-
-    def read(size, buf)
-      @proc.call(@parent, size, buf) if @proc
-    end
-  end
 end
-
