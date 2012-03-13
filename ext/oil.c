@@ -147,17 +147,19 @@ png_write_data(png_structp png_ptr, png_bytep data, png_size_t length)
 void
 png_read_data(png_structp png_ptr, png_bytep data, png_size_t length)
 {
-    VALUE string;
+    VALUE ret, buf;
     png_size_t rlen;
     struct png_src *io_ptr;
 
     if (!png_ptr) return;
     io_ptr = (struct png_src *)png_get_io_ptr(png_ptr);
-    string = io_ptr->buffer;
-    rb_funcall(io_ptr->io, id_read, 2, INT2FIX(length), string);
-    rlen = RSTRING_LEN(string);
-    if (rlen > length) rb_raise(rb_eRuntimeError, "IO return buffer is too big.");
-    memcpy(data, RSTRING_PTR(string), RSTRING_LEN(string));
+    buf = io_ptr->buffer;
+    ret = rb_funcall(io_ptr->io, id_read, 2, INT2FIX(length), buf);
+
+    rlen = RSTRING_LEN(buf);
+    if (rlen > length)
+	rb_raise(rb_eRuntimeError, "IO return buffer is too big.");
+    if (!NIL_P(ret)) memcpy(data, RSTRING_PTR(buf), rlen);
 }
 
 /* png read/write callbacks */
@@ -364,7 +366,6 @@ jpeg_each3(VALUE _args)
     intrp.data = (void *)data;
 
     bilinear(&intrp);
-    //nearest(&intrp);
 
     jpeg_abort_decompress(dinfo);
     jpeg_finish_compress(cinfo);
@@ -486,6 +487,38 @@ jpeg_each(VALUE self)
     return self;
 }
 
+static void
+png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
+{
+    png_byte ctype;
+    int i, bit_depth, number_of_passes;
+
+    bit_depth = png_get_bit_depth(read_ptr, read_i_ptr);
+    ctype = png_get_color_type(read_ptr, read_i_ptr);
+
+    if (ctype == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+      png_set_gray_1_2_4_to_8(read_ptr);
+
+    if (bit_depth < 8)
+       png_set_packing(read_ptr);
+    else if (bit_depth == 16)
+#if PNG_LIBPNG_VER >= 10504
+	png_set_scale_16(read_ptr);
+#else
+	png_set_strip_16(read_ptr);
+#endif
+
+    if (png_get_valid(read_ptr, read_i_ptr, PNG_INFO_tRNS))
+	png_set_tRNS_to_alpha(read_ptr);
+    
+    if (ctype == PNG_COLOR_TYPE_PALETTE)
+        png_set_palette_to_rgb(read_ptr);
+
+    number_of_passes = png_set_interlace_handling(read_ptr);
+
+    png_read_update_info(read_ptr, read_i_ptr);
+}
+
 static VALUE
 png_each2(VALUE _args)
 {
@@ -497,19 +530,30 @@ png_each2(VALUE _args)
     struct thumbdata *thumb=(struct thumbdata *)args[4];
     void *data[4];
     struct interpolation intrp;
+    png_byte ctype;
 
     png_read_info(read_ptr, read_i_ptr);
+    png_normalize_input(read_ptr, read_i_ptr);
+    ctype = png_get_color_type(read_ptr, read_i_ptr);
+    
     intrp.sw = png_get_image_width(read_ptr, read_i_ptr);
     intrp.sh = png_get_image_height(read_ptr, read_i_ptr);
     fix_ratio(intrp.sw, intrp.sh, &thumb->width, &thumb->height);
     png_set_IHDR(write_ptr, write_i_ptr, thumb->width, thumb->height, 8,
-		 PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
-		 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+		 ctype, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+		 PNG_FILTER_TYPE_DEFAULT);
     png_write_info(write_ptr, write_i_ptr);
+
+    switch (ctype) {
+      case PNG_COLOR_TYPE_GRAY: intrp.cmp = 1; break;
+      case PNG_COLOR_TYPE_GRAY_ALPHA: intrp.cmp = 2; break;
+      case PNG_COLOR_TYPE_RGB: intrp.cmp = 3; break;
+      case PNG_COLOR_TYPE_RGB_ALPHA: intrp.cmp = 4; break;
+      default: rb_raise(rb_eRuntimeError, "png color type not supported");
+    }
 
     intrp.dw = thumb->width;
     intrp.dh = thumb->height;
-    intrp.cmp = 3;
     intrp.read = png_read;
     intrp.write = png_write;
     data[0] = write_ptr;
@@ -520,7 +564,6 @@ png_each2(VALUE _args)
 
     bilinear(&intrp);
     
-    png_read_end(read_ptr, (png_infop)NULL);
     png_write_end(write_ptr, write_i_ptr);
     
     return Qnil;
@@ -545,17 +588,17 @@ png_each(VALUE self)
     Data_Get_Struct(self, struct thumbdata, thumb);
 
     write_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
-				      (png_error_ptr)png_error_fn,
-				      (png_error_ptr)png_warning_fn);
+					(png_error_ptr)png_error_fn,
+					(png_error_ptr)png_warning_fn);
     write_i_ptr = png_create_info_struct(write_ptr);
     png_set_write_fn(write_ptr, NULL, png_write_data, png_flush_data);
 
     src.io = thumb->io;
-    src.buffer = rb_str_new(0, 0);    
+    src.buffer = rb_str_new(0, 0);
 
     read_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
-				     (png_error_ptr)png_error_fn,
-				     (png_error_ptr)png_warning_fn);
+				      (png_error_ptr)png_error_fn,
+				      (png_error_ptr)png_warning_fn);
     read_i_ptr = png_create_info_struct(read_ptr);
     png_set_read_fn(read_ptr, (void *)&src, png_read_data);
 
@@ -574,7 +617,7 @@ png_each(VALUE self)
 }
 
 void
-Init_oil()
+Init_oil(void)
 {
     VALUE mOil = rb_define_module("Oil");
 

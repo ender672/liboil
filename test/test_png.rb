@@ -32,11 +32,7 @@ module Oil
     def test_bogus_end_chunk
       str = PNG_DATA.dup
       str[-6] = "\x10"
-      if(RUBY_PLATFORM =~ /java/)
-        validate_png resize_string(str) # java is fine with a bogus end chunk
-      else
-        assert_raises(RuntimeError) { resize_string(str) }
-      end
+      validate_png resize_string(str)
     end
 
     def test_calls_each_during_yield
