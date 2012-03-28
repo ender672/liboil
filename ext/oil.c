@@ -532,13 +532,19 @@ png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
     png_read_update_info(read_ptr, read_i_ptr);
 }
 
+static VALUE
+png_interlaced2(VALUE arg)
+{
+    bilinear((struct interpolation *)arg);
+}
+
 static void
 png_interlaced(png_structp rpng, struct interpolation *intrp)
 {
     struct bitmap b;
     png_bytep *rows;
     char *data;
-    int i;
+    int i, state;
 
     b.rowlen = intrp->sw * intrp->cmp;
     data = malloc(b.rowlen * intrp->sh);
@@ -552,10 +558,13 @@ png_interlaced(png_structp rpng, struct interpolation *intrp)
 
     intrp->read = bitmap_read;
     intrp->read_data = (void *)&b;
-    bilinear(intrp);
+
+    rb_protect(png_interlaced2, (VALUE)intrp, &state);
 
     free(rows);
     free(data);
+
+    if (state) rb_jump_tag(state);
 }
 
 static VALUE
