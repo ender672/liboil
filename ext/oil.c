@@ -298,6 +298,8 @@ fix_ratio(unsigned int sw, unsigned int sh, unsigned int *dw, unsigned int *dh)
     y = *dh / (float)sh;
     if (x<y) *dh = sh * x;
     else *dw = sw * y;
+    if (!*dh) *dh = 1;
+    if (!*dw) *dw = 1;
 }
 
 /* jpeg helper functions */
