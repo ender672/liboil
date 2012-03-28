@@ -31,15 +31,31 @@ struct png_src {
 };
 
 struct interpolation {
-  long sw;
-  long sh;
-  long dw;
-  long dh;
-  int cmp;
-  void (*read)(char *, void *);
-  void (*write)(char *, void *);
-  void *data;
+    long sw;
+    long sh;
+    long dw;
+    long dh;
+    int cmp;
+    void (*read)(char *, void *);
+    void (*write)(char *, void *);
+    void *read_data;
+    void *write_data;
 };
+
+struct bitmap {
+    long rowlen;
+    char *cur;
+};
+
+/* bitmap source callback */
+
+static void
+bitmap_read(char *sl, void *data)
+{
+    struct bitmap *b = (struct bitmap *)data;
+    memcpy(sl, b->cur, b->rowlen);
+    b->cur += b->rowlen;
+}
 
 /* jpeglib error callbacks */
 
@@ -167,15 +183,13 @@ png_read_data(png_structp png_ptr, png_bytep data, png_size_t length)
 static void
 png_read(char *sl, void *data)
 {
-    void **data_ary = (void **)data;
-    png_read_row((png_structp)data_ary[2], (png_bytep)sl, (png_bytep)NULL);
+    png_read_row((png_structp)data, (png_bytep)sl, (png_bytep)NULL);
 }
 
 static void
 png_write(char *sl, void *data)
 {
-    void **data_ary = (void **)data;
-    png_write_row((png_structp)*data_ary, (png_bytep)sl);
+    png_write_row((png_structp)data, (png_bytep)sl);
 }
 
 /* Bilinear Interpolation */
@@ -196,7 +210,7 @@ bilinear_get_scanlines(struct interpolation *bi, char **sl1, char **sl2,
 	tmp = *sl1;
 	*sl1 = *sl2;
 	*sl2 = tmp;
-	bi->read(*sl2, bi->data);
+	bi->read(*sl2, bi->read_data);
 
 	for (j=0; j<bi->cmp; j++)
 	    sl2[0][len + bi->cmp - j] = sl2[0][len - j];
@@ -257,7 +271,7 @@ bilinear2(VALUE _args)
 
 	bilinear_get_scanlines(bi, &sl1, &sl2, &line, ysmp);
 	bilinear3(sl1, sl2, sl_out, bi->sw, bi->dw, bi->cmp, ysmp);
-	bi->write(sl_out, bi->data);
+	bi->write(sl_out, bi->write_data);
     }
 
     return Qnil;
@@ -326,15 +340,13 @@ jpeg_pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 static void
 jpeg_read(char *sl, void *data)
 {
-    void **data_ary = (void **)data;
-    jpeg_read_scanlines((j_decompress_ptr)*data_ary, (JSAMPROW *)&sl, 1);
+    jpeg_read_scanlines((j_decompress_ptr)data, (JSAMPROW *)&sl, 1);
 }
 
 static void
 jpeg_write(char *sl, void *data)
 {
-    void **data_ary = (void **)data;
-    jpeg_write_scanlines((j_compress_ptr)data_ary[1], (JSAMPROW *)&sl, 1);
+    jpeg_write_scanlines((j_compress_ptr)data, (JSAMPROW *)&sl, 1);
 }
 
 static VALUE
@@ -344,7 +356,6 @@ jpeg_each3(VALUE _args)
     j_decompress_ptr dinfo = (j_decompress_ptr)args[0];
     j_compress_ptr cinfo = (j_compress_ptr)args[1];
     struct interpolation intrp;
-    void *data[2];
 
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
@@ -363,9 +374,8 @@ jpeg_each3(VALUE _args)
     intrp.cmp = dinfo->output_components;
     intrp.read = jpeg_read;
     intrp.write = jpeg_write;
-    data[0] = dinfo;
-    data[1] = cinfo;
-    intrp.data = (void *)data;
+    intrp.read_data = dinfo;
+    intrp.write_data = cinfo;
 
     bilinear(&intrp);
 
@@ -493,7 +503,7 @@ static void
 png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
 {
     png_byte ctype;
-    int i, bit_depth, number_of_passes;
+    int bit_depth;
 
     bit_depth = png_get_bit_depth(read_ptr, read_i_ptr);
     ctype = png_get_color_type(read_ptr, read_i_ptr);
@@ -516,9 +526,33 @@ png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
     if (ctype == PNG_COLOR_TYPE_PALETTE)
         png_set_palette_to_rgb(read_ptr);
 
-    number_of_passes = png_set_interlace_handling(read_ptr);
-
     png_read_update_info(read_ptr, read_i_ptr);
+}
+
+static void
+png_interlaced(png_structp rpng, struct interpolation *intrp)
+{
+    struct bitmap b;
+    png_bytep *rows;
+    char *data;
+    int i;
+
+    b.rowlen = intrp->sw * intrp->cmp;
+    data = malloc(b.rowlen * intrp->sh);
+    b.cur = data;
+
+    rows = malloc(intrp->sh * sizeof(png_bytep));
+    for (i=0; i<intrp->sh; i++)
+	rows[i] = data + (i * b.rowlen);
+
+    png_read_image(rpng, rows);
+
+    intrp->read = bitmap_read;
+    intrp->read_data = (void *)&b;
+    bilinear(intrp);
+
+    free(rows);
+    free(data);
 }
 
 static VALUE
@@ -530,7 +564,6 @@ png_each2(VALUE _args)
     png_structp read_ptr=(png_structp)args[2];
     png_infop read_i_ptr=(png_infop)args[3];
     struct thumbdata *thumb=(struct thumbdata *)args[4];
-    void *data[4];
     struct interpolation intrp;
     png_byte ctype;
 
@@ -551,23 +584,28 @@ png_each2(VALUE _args)
       case PNG_COLOR_TYPE_GRAY_ALPHA: intrp.cmp = 2; break;
       case PNG_COLOR_TYPE_RGB: intrp.cmp = 3; break;
       case PNG_COLOR_TYPE_RGB_ALPHA: intrp.cmp = 4; break;
-      default: rb_raise(rb_eRuntimeError, "png color type not supported");
+      default: rb_raise(rb_eRuntimeError, "png color type not supported.");
     }
 
     intrp.dw = thumb->width;
     intrp.dh = thumb->height;
-    intrp.read = png_read;
     intrp.write = png_write;
-    data[0] = write_ptr;
-    data[1] = write_i_ptr;
-    data[2] = read_ptr;
-    data[3] = read_i_ptr;
-    intrp.data = (void *)data;
+    intrp.write_data = write_ptr;
+    
+    switch (png_get_interlace_type(read_ptr, read_i_ptr)) {
+      case PNG_INTERLACE_NONE:
+	intrp.read = png_read;
+	intrp.read_data = read_ptr;
+	bilinear(&intrp);
+	break;
+      case PNG_INTERLACE_ADAM7:
+	png_interlaced(read_ptr, &intrp);
+	break;
+      default: rb_raise(rb_eRuntimeError, "png interlace type not supported.");
+    }
 
-    bilinear(&intrp);
-    
     png_write_end(write_ptr, write_i_ptr);
-    
+
     return Qnil;
 }
 
