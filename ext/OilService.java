@@ -60,6 +60,8 @@ public class OilService implements BasicLibraryService {
                 double y = (double)height / reader.getHeight(0);
                 if (x < y) height = (int)(reader.getHeight(0) * x);
                 else width = (int)(reader.getWidth(0) * y);
+                if (height < 1) height = 1;
+                if (width < 1) width = 1;
                 
                 newImg = reader.read(0).getScaledInstance(width, height, Image.SCALE_SMOOTH);
                 BufferedImage bim = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
