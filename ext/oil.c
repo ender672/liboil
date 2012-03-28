@@ -205,7 +205,7 @@ bilinear_get_scanlines(struct interpolation *bi, char **sl1, char **sl2,
     n = line + 1 - *next;
     if (line < bi->sh - 1) n++;
     *next += n;
-    
+
     for (i=0; i<n; i++) {
 	tmp = *sl1;
 	*sl1 = *sl2;
@@ -228,12 +228,15 @@ bilinear3(char *sl1, char *sl2, char *sl_out, size_t sw, size_t dw, int cmp,
     size_t xsmp_i, i, j;
     double xscale_inv, xscale_ctr, ty;
     
+    if (ysmp < 0) ysmp = 0;
+
     xscale_inv = sw / (float)dw;
     xscale_ctr = (xscale_inv - 1) / 2;
     ty = ysmp - (int)ysmp;
 
     for (i = 0; i < dw; i++) {
 	xsmp = i * xscale_inv + xscale_ctr;
+	if (xsmp < 0) xsmp = 0;
 	xsmp_i = (int)xsmp;
 
 	tx = xsmp - xsmp_i;
