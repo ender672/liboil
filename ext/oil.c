@@ -4,6 +4,9 @@
 
 #define BUF_LEN 8192
 
+/* Map from discreet dest coordinate to scaled continuous source coordinate */
+#define MAP(i, scale) (i + 0.5) / scale - 0.5;
+
 static ID id_read, id_seek;
 
 struct thumbdata {
@@ -36,6 +39,7 @@ struct interpolation {
     long dw;
     long dh;
     int cmp;
+    long source_line;
     void (*read)(char *, void *);
     void (*write)(char *, void *);
     void *read_data;
@@ -196,15 +200,14 @@ png_write(char *sl, void *data)
 
 static void
 bilinear_get_scanlines(struct interpolation *bi, char **sl1, char **sl2,
-		       size_t *next, double ysmp)
+		       int line)
 {
     int i, j, n, len=bi->cmp * bi->sw - 1;
-    int line=ysmp;
     char *tmp;
 
-    n = line + 1 - *next;
+    n = line + 1 - bi->source_line;
     if (line < bi->sh - 1) n++;
-    *next += n;
+    bi->source_line += n;
 
     for (i=0; i<n; i++) {
 	tmp = *sl1;
@@ -220,32 +223,23 @@ bilinear_get_scanlines(struct interpolation *bi, char **sl1, char **sl2,
 }
 
 static void
-bilinear3(char *sl1, char *sl2, char *sl_out, size_t sw, size_t dw, int cmp,
-	  double ysmp)
+bilinear3(char *sl1, char *sl2, char *sl_out, double scale, size_t dw, int cmp,
+	  double ty)
 {
-    double xsmp, tx, _tx, p1, p2, p3, p4;
+    double xsmp, tx, p1, p2, p3, p4;
     unsigned char *c1, *c2, *c3, *c4;
     size_t xsmp_i, i, j;
-    double xscale_inv, xscale_ctr, ty;
-    
-    if (ysmp < 0) ysmp = 0;
-
-    xscale_inv = sw / (float)dw;
-    xscale_ctr = (xscale_inv - 1) / 2;
-    ty = ysmp - (int)ysmp;
 
     for (i = 0; i < dw; i++) {
-	xsmp = i * xscale_inv + xscale_ctr;
+	xsmp = MAP(i, scale);
 	if (xsmp < 0) xsmp = 0;
 	xsmp_i = (int)xsmp;
-
 	tx = xsmp - xsmp_i;
-	_tx = 1 - tx;
 
 	p4 =  tx * ty;
-	p3 = _tx * ty;
+	p3 = (1 - tx) * ty;
 	p2 =  tx - p4;
-	p1 = _tx - p3;
+	p1 = (1 - tx) - p3;
 
 	c1 = sl1 + xsmp_i * cmp;
 	c2 = c1 + cmp;
@@ -263,17 +257,21 @@ bilinear2(VALUE _args)
     VALUE *args = (VALUE *)_args;
     struct interpolation *bi=(struct interpolation *)args[0];
     char *sl1=(char *)args[1], *sl2=(char *)args[2], *sl_out=(char *)args[3];
-    size_t i, line=0;
-    double ysmp, yscale_inv, yscale_ctr;
+    size_t ysmp_i, i;
+    double ysmp, xscale, yscale, ty;
 
-    yscale_inv = bi->sh / (float)bi->dh;
-    yscale_ctr = (yscale_inv - 1) / 2;
+    yscale = bi->dh / (float)bi->sh;
+    xscale = bi->dw / (float)bi->sw;
+    bi->source_line = 0;
 
     for (i = 0; i<bi->dh; i++) {
-	ysmp = i * yscale_inv + yscale_ctr;
+	ysmp = MAP(i, yscale);
+	if (ysmp < 0) ysmp = 0;
+	ysmp_i = (int)ysmp;
+	ty = ysmp - ysmp_i;
 
-	bilinear_get_scanlines(bi, &sl1, &sl2, &line, ysmp);
-	bilinear3(sl1, sl2, sl_out, bi->sw, bi->dw, bi->cmp, ysmp);
+	bilinear_get_scanlines(bi, &sl1, &sl2, ysmp_i);
+	bilinear3(sl1, sl2, sl_out, xscale, bi->dw, bi->cmp, ty);
 	bi->write(sl_out, bi->write_data);
     }
 
