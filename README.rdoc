@@ -17,7 +17,7 @@ use.
   io = File.open('image.jpg', 'rb')
 
   # prepare to resize JPEG to fit in a 200x300 box, preserving aspect ratio
-  jpeg = Oil::JPEG.new(io, 200, 300)
+  jpeg = Oil.new(io, 200, 300)
 
   # yield successive parts of the resized and compressed JPEG file
   jpeg.each { |data| }

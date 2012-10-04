@@ -4,8 +4,15 @@
 
 #define BUF_LEN 8192
 
+/* Number of bytes we read to detect the file signature */
+#define SIG_LEN 2
+
 /* Map from discreet dest coordinate to scaled continuous source coordinate */
 #define MAP(i, scale) (i + 0.5) / scale - 0.5;
+
+/* jpeg signatures */
+static unsigned char jpeg_sig[SIG_LEN];
+static unsigned char jpeg_eof[2];
 
 static ID id_read, id_seek;
 
@@ -76,28 +83,29 @@ error_exit(j_common_ptr cinfo)
 /* jpeglib source callbacks */
 
 static void term_source(j_decompress_ptr cinfo){};
-static void init_source(j_decompress_ptr cinfo){};
+
+static void init_source(j_decompress_ptr cinfo)
+{
+    struct jpeg_src *src = (struct jpeg_src *)cinfo->src;
+    src->mgr.next_input_byte = jpeg_sig;
+    src->mgr.bytes_in_buffer = 2;
+};
 
 static boolean
 fill_input_buffer(j_decompress_ptr cinfo)
 {
     struct jpeg_src *src = (struct jpeg_src *)cinfo->src;
     VALUE ret, string = src->buffer;
-    long len;
     char *buf;
 
     ret = rb_funcall(src->io, id_read, 2, INT2FIX(BUF_LEN), string);
-    len = RSTRING_LEN(string);
-
-    if (!len || NIL_P(ret)) {
-	rb_str_resize(string, 2);
-        buf = RSTRING_PTR(string);
-        buf[0] = 0xFF;
-	buf[1] = JPEG_EOI;
-	len = 2;
-    }
+    src->mgr.bytes_in_buffer = RSTRING_LEN(string);
     src->mgr.next_input_byte = (JOCTET *)RSTRING_PTR(string);
-    src->mgr.bytes_in_buffer = (size_t)len;
+
+    if (!src->mgr.bytes_in_buffer || NIL_P(ret)) {
+	src->mgr.next_input_byte = jpeg_eof;
+	src->mgr.bytes_in_buffer = 2;
+    }
 
     return TRUE;
 }
@@ -438,9 +446,9 @@ allocate(VALUE klass)
 
 /*
  *  call-seq:
- *     Class.new(io, width, height) -> obj
+ *     Oil.new(io, width, height) -> obj
  *
- *  Creates a new resizer. +io_in+ must be an IO-like object that responds to
+ *  Creates a new resizer. +io+ must be an IO-like object that responds to
  *  #read(size, buffer) and #seek(size).
  * 
  *  The resulting image will be scaled to fit in the box given by +width+ and
@@ -463,20 +471,11 @@ initialize(VALUE self, VALUE io, VALUE rb_width, VALUE rb_height)
     return self;
 }
 
-/*
- *  call-seq:
- *     jpeg.each(&block) -> self
- *
- *  Yields a series of binary strings that make up the resized JPEG image.
- */
-
-static VALUE
-jpeg_each(VALUE self)
+static void
+jpeg_each(struct thumbdata *data)
 {
     struct jpeg_src src;
     struct jpeg_dest dest;
-    struct thumbdata *data;
-    Data_Get_Struct(self, struct thumbdata, data);
 
     memset(&src, 0, sizeof(struct jpeg_src));
     src.io = data->io;
@@ -496,8 +495,6 @@ jpeg_each(VALUE self)
     dest.mgr.term_destination = term_destination;
 
     jpeg_each2(data, &src, &dest);
-
-    return self;
 }
 
 static void
@@ -619,23 +616,14 @@ png_each2(VALUE _args)
     return Qnil;
 }
 
-/*
- *  call-seq:
- *     png.each(&block) -> self
- *
- *  Yields a series of binary strings that make up the resized PNG image.
- */
-
-static VALUE
-png_each(VALUE self)
+static void
+png_each(struct thumbdata *thumb)
 {
     int state;
     VALUE args[5];
     png_structp read_ptr, write_ptr;
     png_infop read_i_ptr, write_i_ptr;
     struct png_src src;
-    struct thumbdata *thumb;
-    Data_Get_Struct(self, struct thumbdata, thumb);
 
     write_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
 					(png_error_ptr)png_error_fn,
@@ -651,6 +639,7 @@ png_each(VALUE self)
 				      (png_error_ptr)png_warning_fn);
     read_i_ptr = png_create_info_struct(read_ptr);
     png_set_read_fn(read_ptr, (void *)&src, png_read_data);
+    png_set_sig_bytes(read_ptr, SIG_LEN);
 
     args[0] = (VALUE)write_ptr;
     args[1] = (VALUE)write_i_ptr;
@@ -663,23 +652,51 @@ png_each(VALUE self)
     png_destroy_write_struct(&write_ptr, &write_i_ptr);
 
     if (state) rb_jump_tag(state);
+}
+
+/*
+ *  call-seq:
+ *     oil.each(&block) -> self
+ *
+ *  Yields a series of binary strings that make up the resized image data.
+ */
+
+static VALUE
+oil_each(VALUE self)
+{
+    struct thumbdata *thumb;
+    VALUE string;
+    unsigned char *cstr;
+
+    Data_Get_Struct(self, struct thumbdata, thumb);
+    string = rb_funcall(thumb->io, id_read, 1, INT2FIX(SIG_LEN));
+
+    if (NIL_P(string) || RSTRING_LEN(string) != 2)
+	rb_raise(rb_eRuntimeError, "Unable to read image signature.");
+
+    cstr = RSTRING_PTR(string);
+
+    if (!memcmp(cstr, jpeg_sig, SIG_LEN))
+	jpeg_each(thumb);
+    else if (!png_sig_cmp(cstr, 0, 2))
+	png_each(thumb);
+    else
+	rb_raise(rb_eRuntimeError, "Unable to determine image type.");
+
     return self;
 }
 
 void
-Init_oil(void)
+Init_oil()
 {
-    VALUE mOil = rb_define_module("Oil");
+    VALUE cOil = rb_define_class("Oil", rb_cObject);
+    rb_define_alloc_func(cOil, allocate);
+    rb_define_method(cOil, "initialize", initialize, 3);
+    rb_define_method(cOil, "each", oil_each, 0);
 
-    VALUE cJPEG = rb_define_class_under(mOil, "JPEG", rb_cObject);
-    rb_define_alloc_func(cJPEG, allocate);
-    rb_define_method(cJPEG, "initialize", initialize, 3);
-    rb_define_method(cJPEG, "each", jpeg_each, 0);
-    
-    VALUE cPNG = rb_define_class_under(mOil, "PNG", rb_cObject);
-    rb_define_alloc_func(cPNG, allocate);
-    rb_define_method(cPNG, "initialize", initialize, 3);
-    rb_define_method(cPNG, "each", png_each, 0);
+    /* These are here for backward compatibility */
+    rb_define_const(cOil, "JPEG", cOil);
+    rb_define_const(cOil, "PNG", cOil);
 
     jpeg_std_error(&jerr);
     jerr.error_exit = error_exit;
@@ -687,4 +704,10 @@ Init_oil(void)
 
     id_read = rb_intern("read");
     id_seek = rb_intern("seek");
+
+    jpeg_sig[0] = 0xFF;
+    jpeg_sig[1] = 0xD8;
+
+    jpeg_eof[0] = 0xFF;
+    jpeg_eof[1] = JPEG_EOI;
 }

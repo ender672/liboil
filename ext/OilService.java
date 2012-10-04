@@ -18,13 +18,11 @@ import org.jruby.util.IOInputStream;
 public class OilService implements BasicLibraryService {
     public static class OilImage extends RubyObject {
         private IRubyObject io;
-        private String type;
         private int width, height;
 
-        public OilImage(Ruby runtime, RubyClass klass, String _type) {
+        public OilImage(Ruby runtime, RubyClass klass) {
             super(runtime, klass);
             io = runtime.getNil();
-            type = _type;
         }
 
         @JRubyMethod
@@ -49,11 +47,13 @@ public class OilService implements BasicLibraryService {
             if (io.isNil())
                 throw getRuntime().newNoMethodError("each Called before initializing", null, context.getRuntime().getNil());
 
-            readers = ImageIO.getImageReadersByFormatName(type);
-            reader = (ImageReader)readers.next();
-
             try {
                 iis = ImageIO.createImageInputStream(new IOInputStream(io));
+                readers = ImageIO.getImageReaders(iis);
+                if (!readers.hasNext()) {
+                    throw getRuntime().newRuntimeError("Image type not recognized.");
+                }
+                reader = (ImageReader)readers.next();
                 reader.setInput(iis, true);
 
                 double x = (double)width / reader.getWidth(0);
@@ -62,13 +62,13 @@ public class OilService implements BasicLibraryService {
                 else width = (int)(reader.getWidth(0) * y);
                 if (height < 1) height = 1;
                 if (width < 1) width = 1;
-                
+
                 newImg = reader.read(0).getScaledInstance(width, height, Image.SCALE_SMOOTH);
                 BufferedImage bim = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
                 bim.createGraphics().drawImage(newImg, 0, 0, null);
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(bim, type, baos);
+                ImageIO.write(bim, reader.getFormatName(), baos);
 
                 block.yield(context, new RubyString(getRuntime(), getRuntime().getString(), baos.toByteArray()));
             }
@@ -83,24 +83,17 @@ public class OilService implements BasicLibraryService {
         }
     }
 
-    private static ObjectAllocator JPEG_ALLOCATOR = new ObjectAllocator() {
+    private static ObjectAllocator OIL_ALLOCATOR = new ObjectAllocator() {
         public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new OilImage(runtime, klass, "jpeg");
+            return new OilImage(runtime, klass);
         }
     };
-    
-    private static ObjectAllocator PNG_ALLOCATOR = new ObjectAllocator() {
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new OilImage(runtime, klass, "png");
-        }
-    };
-    
+
     public boolean basicLoad(Ruby runtime) {
-        RubyModule oil = runtime.defineModule("Oil");
-        RubyClass jpeg = oil.defineClassUnder("JPEG", runtime.getObject(), JPEG_ALLOCATOR);
-        RubyClass png = oil.defineClassUnder("PNG", runtime.getObject(), PNG_ALLOCATOR);
-        jpeg.defineAnnotatedMethods(OilImage.class);
-        png.defineAnnotatedMethods(OilImage.class);
+        RubyClass oil = runtime.defineClass("Oil", runtime.getObject(), OIL_ALLOCATOR);
+        oil.setConstant("JPEG", oil);
+        oil.setConstant("PNG", oil);
+        oil.defineAnnotatedMethods(OilImage.class);
         return true;
     }
 }
