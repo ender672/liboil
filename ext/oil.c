@@ -47,21 +47,21 @@ struct png_src {
 
 struct bitmap {
     long rowlen;
-    char *cur;
+    unsigned char *cur;
 };
 
 struct reader {
     long width;
     long height;
     int cmp;
-    void (*read)(char *, void *);
+    void (*read)(unsigned char *, void *);
     void *data;
 };
 
 struct writer {
     long width;
     long height;
-    void (*write)(char *, void *);
+    void (*write)(unsigned char *, void *);
     void *data;
 };
 
@@ -81,7 +81,7 @@ enum {
 /* bitmap source callback */
 
 static void
-bitmap_read(char *sl, void *data)
+bitmap_read(unsigned char *sl, void *data)
 {
     struct bitmap *b = (struct bitmap *)data;
     memcpy(sl, b->cur, b->rowlen);
@@ -116,7 +116,6 @@ fill_input_buffer(j_decompress_ptr cinfo)
 {
     struct jpeg_src *src = (struct jpeg_src *)cinfo->src;
     VALUE ret, string = src->buffer;
-    char *buf;
 
     ret = rb_funcall(src->io, id_read, 2, INT2FIX(BUF_LEN), string);
     src->mgr.bytes_in_buffer = RSTRING_LEN(string);
@@ -154,7 +153,7 @@ empty_output_buffer(j_compress_ptr cinfo)
 {
     struct jpeg_dest *dest = (struct jpeg_dest *)cinfo->dest;
     rb_yield(dest->buffer);
-    dest->mgr.next_output_byte = RSTRING_PTR(dest->buffer);
+    dest->mgr.next_output_byte = (JOCTET *)RSTRING_PTR(dest->buffer);
     dest->mgr.free_in_buffer = RSTRING_LEN(dest->buffer);
     return TRUE;
 }
@@ -189,7 +188,7 @@ void
 png_write_data(png_structp png_ptr, png_bytep data, png_size_t length)
 {
     if (!png_ptr) return;
-    rb_yield(rb_str_new(data, length));
+    rb_yield(rb_str_new((char *)data, length));
 }
 
 void
@@ -213,13 +212,13 @@ png_read_data(png_structp png_ptr, png_bytep data, png_size_t length)
 /* png read/write callbacks */
 
 static void
-png_read(char *sl, void *data)
+png_read(unsigned char *sl, void *data)
 {
     png_read_row((png_structp)data, (png_bytep)sl, (png_bytep)NULL);
 }
 
 static void
-png_write(char *sl, void *data)
+png_write(unsigned char *sl, void *data)
 {
     png_write_row((png_structp)data, (png_bytep)sl);
 }
@@ -306,7 +305,7 @@ static void
 bicubic_x(double *in, unsigned char *out, long sw, long dw, int cmp)
 {
     double scale, xsmp, tx, p1, p2, p3, p4, result, *c1, *c2, *c3, *c4, *right;
-    long xsmp_i, o1, o2, o3, o4, i, j;
+    long xsmp_i, i, j;
 
     scale = dw / (double)sw;
 
@@ -367,14 +366,12 @@ bicubic2(VALUE _args)
     struct writer *writer=(struct writer *)args[1];
     double *sl_tmp=(double *)args[2];
     unsigned char *sl_out=(unsigned char *)args[3];
-    unsigned char *sl_virt[4];
     struct reader *reader;
     double ysmp, yscale;
-    long i, in_sl_width;
+    long i;
 
     reader = strip->reader;
     yscale = writer->height / (double)reader->height;
-    in_sl_width = reader->width * reader->cmp;
 
     for (i = 0; i<writer->height; i++) {
 	ysmp = MAP(i, yscale);
@@ -463,7 +460,7 @@ bilinear2(VALUE _args)
     VALUE *args = (VALUE *)_args;
     struct strip *strip=(struct strip *)args[0];
     struct writer *writer=(struct writer *)args[1];
-    unsigned char *sl_out=(char *)args[2];
+    unsigned char *sl_out=(unsigned char *)args[2];
     long i;
     double ysmp, yscale;
 
@@ -547,13 +544,13 @@ jpeg_pre_scale(j_compress_ptr cinfo, j_decompress_ptr dinfo)
 }
 
 static void
-jpeg_read(char *sl, void *data)
+jpeg_read(unsigned char *sl, void *data)
 {
     jpeg_read_scanlines((j_decompress_ptr)data, (JSAMPROW *)&sl, 1);
 }
 
 static void
-jpeg_write(char *sl, void *data)
+jpeg_write(unsigned char *sl, void *data)
 {
     jpeg_write_scanlines((j_compress_ptr)data, (JSAMPROW *)&sl, 1);
 }
@@ -649,7 +646,7 @@ jpeg_each(struct thumbdata *data)
 
     memset(&dest, 0, sizeof(struct jpeg_dest));
     dest.buffer = rb_str_new(0, BUF_LEN);    
-    dest.mgr.next_output_byte = RSTRING_PTR(dest.buffer);
+    dest.mgr.next_output_byte = (JOCTET *)RSTRING_PTR(dest.buffer);
     dest.mgr.free_in_buffer = BUF_LEN;
     dest.mgr.init_destination = init_destination;
     dest.mgr.empty_output_buffer = empty_output_buffer;
@@ -698,6 +695,7 @@ png_interlaced2(VALUE _args)
     struct writer *writer = (struct writer *)args[1];
     struct thumbdata *thumb = (struct thumbdata *)args[2];
     resize(reader, writer, thumb->precision);
+    return Qnil;
 }
 
 static void
@@ -706,7 +704,7 @@ png_interlaced(png_structp rpng, struct reader *reader, struct writer *writer,
 {
     struct bitmap b;
     png_bytep *rows;
-    char *data;
+    unsigned char *data;
     long i;
     int state;
     VALUE args[3];
@@ -870,7 +868,6 @@ initialize(int argc, VALUE *argv, VALUE self)
 {
     VALUE io, rb_width, rb_height, options;
     long width, height;
-    int precision;
     struct thumbdata *data;
 
     rb_scan_args(argc, argv, "31", &io, &rb_width, &rb_height, &options);
@@ -912,7 +909,7 @@ oil_each(VALUE self)
     if (NIL_P(string) || RSTRING_LEN(string) != 2)
 	rb_raise(rb_eRuntimeError, "Unable to read image signature.");
 
-    cstr = RSTRING_PTR(string);
+    cstr = (unsigned char *)RSTRING_PTR(string);
 
     if (!memcmp(cstr, jpeg_sig, SIG_LEN))
 	jpeg_each(thumb);
