@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
   s.version = '0.0.3'
   s.test_files = %w{test/helper.rb test/test_jpeg.rb test/test_png.rb}
-  s.files = %w{Rakefile README.rdoc ext/oil.c ext/extconf.rb ext/oil.jar} + s.test_files
+  s.files = %w{Rakefile README.rdoc ext/oil.c ext/oilrb.c ext/png.c ext/ppm.c ext/extconf.rb ext/oil.jar} + s.test_files
   s.name = 'oil'
   s.platform = Gem::Platform::RUBY
   s.require_path = 'ext'

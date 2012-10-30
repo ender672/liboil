@@ -15,7 +15,8 @@ file 'ext/Makefile' do
   end
 end
 
-file 'ext/oil.so' => FileList.new('ext/Makefile', 'ext/oil.c') do
+file 'ext/oil.so' => FileList.new('ext/Makefile', 'ext/oil.c', 'ext/ppm.c',
+  'ext/jpeg.c', 'ext/oilrb.c', 'ext/png.c') do
   cd 'ext' do
     sh 'make'
   end
