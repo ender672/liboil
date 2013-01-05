@@ -19,7 +19,9 @@ class CustomIO < StringIO
 end
 
 class GrowIO < CustomIO
-  def read(size, buf=nil)
+  def read(*args)
+    size = args[0]
+    buf = args[1]
     return super unless countdown(size)
     str = super(size)
     str = str[0..-2] * 3 if str
@@ -34,7 +36,8 @@ class GrowIO < CustomIO
 end
 
 class ShrinkIO < CustomIO
-  def read(size, buf=nil)
+  def read(*args)
+    size = args[0]
     return super unless countdown(size)
     res = super(size)
     new_size = res.size / 2

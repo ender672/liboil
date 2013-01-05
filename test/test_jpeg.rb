@@ -62,7 +62,7 @@ class TestJPEG < MiniTest::Unit::TestCase
 
   def iotest(io_class)
     IO_OFFSETS.each do |i|
-      yield io_class.new(BIG_JPEG, byte_count: i)
+      yield io_class.new(BIG_JPEG, :byte_count => i)
     end
   end
 
