@@ -17,35 +17,40 @@ import org.jruby.util.IOInputStream;
 
 public class OilService implements BasicLibraryService {
     public static class OilImage extends RubyObject {
-        private IRubyObject io;
-        private int width, height;
+        private int in_width, in_height, out_width, out_height;
+        private ImageReader reader;
+        private boolean each_called;
 
         public OilImage(Ruby runtime, RubyClass klass) {
             super(runtime, klass);
-            io = runtime.getNil();
+            reader = null;
+            in_width = in_height = out_width = out_height = 0;
+            each_called = false;
         }
 
         @JRubyMethod
-        public IRubyObject initialize(IRubyObject rb_io, IRubyObject rb_width, IRubyObject rb_height) {
-            io = rb_io;
-            width = RubyFixnum.num2int(rb_width);
-            height = RubyFixnum.num2int(rb_height);
-
-            if (width < 1 || height < 1)
-                throw getRuntime().newArgumentError("dimensions must be > 0");
-
-            return this;
+        public RubyFixnum width(ThreadContext context) {
+            Ruby runtime = context.runtime;
+            return runtime.newFixnum(in_width);
         }
 
         @JRubyMethod
-        public IRubyObject each(ThreadContext context, Block block) {
-            Iterator readers;
-            Image newImg;
-            ImageReader reader;
+        public RubyFixnum height(ThreadContext context) {
+            Ruby runtime = context.runtime;
+            return runtime.newFixnum(in_height);
+        }
+
+        @JRubyMethod
+        public IRubyObject initialize(IRubyObject io, IRubyObject rb_width, IRubyObject rb_height) {
             ImageInputStream iis;
+            Iterator readers;
 
-            if (io.isNil())
-                throw getRuntime().newNoMethodError("each Called before initializing", null, context.getRuntime().getNil());
+            each_called = false;
+            out_width = RubyFixnum.num2int(rb_width);
+            out_height = RubyFixnum.num2int(rb_height);
+
+            if (out_width < 1 || out_height < 1)
+                throw getRuntime().newArgumentError("dimensions must be > 0");
 
             try {
                 iis = ImageIO.createImageInputStream(new IOInputStream(io));
@@ -56,15 +61,40 @@ public class OilService implements BasicLibraryService {
                 reader = (ImageReader)readers.next();
                 reader.setInput(iis, true);
 
-                double x = (double)width / reader.getWidth(0);
-                double y = (double)height / reader.getHeight(0);
-                if (x < y) height = (int)(reader.getHeight(0) * x);
-                else width = (int)(reader.getWidth(0) * y);
-                if (height < 1) height = 1;
-                if (width < 1) width = 1;
+                in_width = reader.getWidth(0);
+                in_height = reader.getHeight(0);
+            }
+            catch(IOException ioe) {
+                throw getRuntime().newRuntimeError("error");
+            }
+            catch(ArrayIndexOutOfBoundsException iob) {
+                throw getRuntime().newRuntimeError("error");
+            }
 
-                newImg = reader.read(0).getScaledInstance(width, height, Image.SCALE_SMOOTH);
-                BufferedImage bim = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            return this;
+        }
+
+        @JRubyMethod
+        public IRubyObject each(ThreadContext context, Block block) {
+            Image newImg;
+
+            if (reader == null)
+                throw getRuntime().newNoMethodError("each Called before initializing", null, context.getRuntime().getNil());
+
+            if (each_called)
+                throw getRuntime().newRuntimeError("each called twice.");
+            each_called = true;
+
+            try {
+                double x = (double)out_width / in_width;
+                double y = (double)out_height / in_height;
+                if (x < y) out_height = (int)(in_height * x);
+                else out_width = (int)(in_width * y);
+                if (out_height < 1) out_height = 1;
+                if (out_width < 1) out_width = 1;
+
+                newImg = reader.read(0).getScaledInstance(out_width, out_height, Image.SCALE_SMOOTH);
+                BufferedImage bim = new BufferedImage(out_width, out_height, BufferedImage.TYPE_INT_RGB);
                 bim.createGraphics().drawImage(newImg, 0, 0, null);
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();

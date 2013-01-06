@@ -40,6 +40,7 @@ class ShrinkIO < CustomIO
     size = args[0]
     return super unless countdown(size)
     res = super(size)
+    raise RuntimeError unless res
     new_size = res.size / 2
     res[-1 * new_size, new_size]
   end

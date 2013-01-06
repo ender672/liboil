@@ -101,7 +101,7 @@ class TestPNG < MiniTest::Unit::TestCase
 
   def test_not_string_io
     iotest(NotStringIO) do |io|
-      assert_raises(RuntimeError) { resize(io) }
+      assert_raises(TypeError) { resize(io) }
     end
   end
 

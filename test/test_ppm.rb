@@ -5,6 +5,11 @@ require 'stringio'
 require 'helper'
 
 class TestPPM < MiniTest::Unit::TestCase
+
+  def setup
+    skip if RUBY_PLATFORM =~ /java/
+  end
+
   # Header Tests
 
   def test_invalid_dimensions
@@ -164,7 +169,7 @@ class TestPPM < MiniTest::Unit::TestCase
 
   def test_not_string_io
     iotest(NotStringIO) do |io|
-      assert_raises(RuntimeError) { resize(io) }
+      assert_raises(TypeError) { resize(io) }
     end
   end
 

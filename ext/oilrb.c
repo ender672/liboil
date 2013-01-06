@@ -28,10 +28,13 @@ rb_read_fn(void *io, size_t len, unsigned char *buf, size_t *read_len)
     VALUE string;
 
     string = rb_funcall((VALUE)io, id_read, 1, INT2FIX(len));
-    if (NIL_P(string) || TYPE(string) != T_STRING) {
+    if (NIL_P(string)) {
 	*read_len = 0;
 	return 0;
     }
+
+    if (TYPE(string) != T_STRING)
+	rb_raise(rb_eTypeError, "IO returned something that is not a string.");
 
     strl = RSTRING_LEN(string);
     *read_len = (size_t)strl;
