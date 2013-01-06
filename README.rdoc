@@ -14,13 +14,14 @@ use.
 == SYNOPSIS:
 
   require 'oil'
-  io = File.open('image.jpg', 'rb')
 
-  # prepare to resize JPEG to fit in a 200x300 box, preserving aspect ratio
-  jpeg = Oil.new(io, 200, 300)
+  # Simple resize to fit in a 200x300 box
+  io_in = File.open('image.jpg', 'rb')
+  jpeg = Oil.new(io_in, 200, 300)
 
-  # yield successive parts of the resized and compressed JPEG file
-  jpeg.each { |data| }
+  # Write resized image to disk
+  io_out = File.open('image_resized.jpg', 'w')
+  jpeg.each { |data| io_out << data }
 
 == REQUIREMENTS:
 

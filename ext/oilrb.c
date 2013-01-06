@@ -2,8 +2,8 @@
 #include "oil.h"
 
 static ID id_read;
-static VALUE sym_exact, sym_interpolation, sym_preserve_aspect_ratio, sym_point,
-    sym_linear, sym_cubic;
+static VALUE sym_interpolation, sym_preserve_aspect_ratio, sym_point,
+       sym_linear, sym_cubic;
 
 struct thumbdata {
     struct image *reader;
@@ -214,16 +214,12 @@ oil_scale(int argc, VALUE *argv, VALUE self)
  *  call-seq:
  *     Oil.new(io)                             -> obj
  *     Oil.new(io, width, height)              -> obj
- *     Oil.new(io, width, height, exact: true) -> obj
  *
  *  Creates a new resizer. +io+ must be an IO-like object that responds to
  *  #read(size, buffer).
  *
  *  The resulting image will be scaled to fit in the box given by +width+ and
  *  +height+ while preserving the original aspect ratio.
- *
- *  The optional +exact+ argument instructs the resizer to use a slower and more
- *  precise resizing algorithm.
  */
 
 static VALUE
@@ -237,9 +233,6 @@ initialize(int argc, VALUE *argv, VALUE self)
 
     data->io = io;
     data->interp = sym_point;
-
-    if (TYPE(options) == T_HASH && RTEST(rb_hash_aref(options, sym_exact)))
-	data->interp = sym_cubic;
 
     free_reader(data);
     init_reader(data);
@@ -384,7 +377,6 @@ Init_oil()
     rb_define_const(cOil, "PNG", cOil);
 
     id_read = rb_intern("read");
-    sym_exact = ID2SYM(rb_intern("exact"));
     sym_interpolation = ID2SYM(rb_intern("interpolation"));
     sym_preserve_aspect_ratio = ID2SYM(rb_intern("preserve_aspect_ratio"));
     sym_point = ID2SYM(rb_intern("point"));
