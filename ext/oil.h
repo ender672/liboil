@@ -90,12 +90,9 @@ enum image_type {
 
 int oil_image_init(struct image *i, read_fn_t read, void *ctx, enum image_type *type);
 
-void bilinearx_init(struct image *i, struct image *src, long width);
-void bilineary_init(struct image *i, struct image *src, long height);
 void point_init(struct image *i, struct image *src, long width, long height);
-
-void bicubicx_init(struct image *i, struct image *src, long width);
-void bicubicy_init(struct image *i, struct image *src, long height);
+void linear_init(struct image *i, struct image *src, long width, long height);
+void cubic_init(struct image *i, struct image *src, long width, long height);
 
 int ppm_init(struct image *i, read_fn_t read, void *ctx, int sig_bytes);
 void ppm_writer_init(struct writer *w, write_fn_t write, void *ctx, struct image *src);

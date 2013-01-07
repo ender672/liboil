@@ -285,7 +285,7 @@ init_equivalent_writer(struct writer *writer, enum image_type type,
 static VALUE
 oil_each(VALUE self)
 {
-    struct image scalex, scaley;
+    struct image scale;
     struct writer writer;
     struct thumbdata *thumb;
     int state;
@@ -300,23 +300,17 @@ oil_each(VALUE self)
     h = thumb->out_height;
 
     if (thumb->interp == sym_point)
-	point_init(&scaley, thumb->reader, w, h);
-    else if (thumb->interp == sym_linear) {
-	bilinearx_init(&scalex, thumb->reader, w);
-	bilineary_init(&scaley, &scalex, h);
-    } else { // cubic
-	bicubicx_init(&scalex, thumb->reader, w);
-	bicubicy_init(&scaley, &scalex, h);
-    }
+	point_init(&scale, thumb->reader, w, h);
+    else if (thumb->interp == sym_linear)
+	linear_init(&scale, thumb->reader, w, h);
+    else
+	cubic_init(&scale, thumb->reader, w, h);
 
-    init_equivalent_writer(&writer, thumb->out_type, &scaley);
+    init_equivalent_writer(&writer, thumb->out_type, &scale);
     rb_protect(yield_resize, (VALUE)&writer, &state);
 
     writer.free(&writer);
-    scaley.free(&scaley);
-
-    if (thumb->interp != sym_point)
-	scalex.free(&scalex);
+    scale.free(&scale);
 
     thumb->in_progress = 0;
     if (state)

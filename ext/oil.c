@@ -38,6 +38,11 @@ struct point {
     long src_ypos;
 };
 
+struct multi {
+    struct image *ops;
+    int num;
+};
+
 /* Map from a discreet dest coordinate to a continuous source coordinate.
  * The resulting coordinate can range from -0.5 to the maximum of the
  * destination image dimension.
@@ -121,6 +126,51 @@ strip_free(struct strip *strip)
 	free(strip->sl[i]);
     free(strip->sl);
     free(strip->virt);
+}
+
+/* Wrapper around multiple scalers */
+
+static void
+multi_free(struct image *im)
+{
+    int i;
+    struct multi *m;
+    struct image *op;
+
+    m = (struct multi *)im->data;
+    for (i=0; i<m->num; i++) {
+	op = m->ops + i;
+	if (op->free)
+	    op->free(op);
+    }
+    free(m->ops);
+    free(m);
+}
+
+static int
+multi_get_scanline(struct image *i, unsigned char *sl_out)
+{
+    struct multi *m;
+    struct image *op;
+
+    m = (struct multi *)i->data;
+    op = m->ops + m->num - 1;
+    return (op->get_scanline(op, sl_out));
+}
+
+static void
+multi_init(struct image *i, int num, struct image **ops) {
+    struct multi *m;
+
+    m = malloc(sizeof(struct multi));
+    m->ops = malloc(num * sizeof(struct image));
+    memset(m->ops, 0, num * sizeof(struct image));
+
+    m->num = num;
+    i->data = (void *)m;
+    i->free = multi_free;
+    i->get_scanline = multi_get_scanline;
+    *ops = m->ops;
 }
 
 /* x scaling helpers */
@@ -297,15 +347,14 @@ catrom(double x)
 }
 
 void
-bicubicx_init(struct image *i, struct image *src, long width)
-{
-    scalex_init(i, src, width, 4, catrom);
-}
-
-void
-bicubicy_init(struct image *i, struct image *src, long height)
-{
-    scaley_init(i, src, height, 4, catrom);
+cubic_init(struct image *i, struct image *src, long width, long height) {
+    struct image *ops;
+    multi_init(i, 2, &ops);
+    scaley_init(ops, src, height, 4, catrom);
+    scalex_init(ops + 1, ops, width, 4, catrom);
+    i->width = width;
+    i->height = height;
+    i->cmp = src->cmp;
 }
 
 /* bilinear resizing */
@@ -317,15 +366,14 @@ bilinear_intrp(double ty)
 }
 
 void
-bilinearx_init(struct image *i, struct image *src, long width)
-{
-    scalex_init(i, src, width, 2, bilinear_intrp);
-}
-
-void
-bilineary_init(struct image *i, struct image *src, long height)
-{
-    scaley_init(i, src, height, 2, bilinear_intrp);
+linear_init(struct image *i, struct image *src, long width, long height) {
+    struct image *ops;
+    multi_init(i, 2, &ops);
+    scalex_init(ops, src, width, 2, bilinear_intrp);
+    scaley_init(ops + 1, ops, width, 2, bilinear_intrp);
+    i->width = width;
+    i->height = height;
+    i->cmp = src->cmp;
 }
 
 /* point resizing */
