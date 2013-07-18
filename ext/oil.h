@@ -1,3 +1,4 @@
+#include "resample.h"
 #include <stddef.h>
 
 /* Callback to read image data.
@@ -50,7 +51,7 @@ typedef int (*write_fn_t)(void *ctx, unsigned char *buf, size_t len);
 struct image {
     long width;
     long height;
-    int cmp;
+    enum sample_fmt fmt;
     int (*get_scanline)(struct image *image, unsigned char *buffer);
     void (*free)(struct image *image);
     void *data;
@@ -73,8 +74,8 @@ struct writer {
     struct image *src;
     int (*write)(struct writer *writer);
     void (*free)(struct writer *writer);
-    write_fn_t write_cb; // TODO: deprecate
-    void *ctx; // TODO: deprecate
+    write_fn_t write_cb;
+    void *ctx;
     void *data;
 };
 
@@ -89,17 +90,18 @@ enum image_type {
 };
 
 int oil_image_init(struct image *i, read_fn_t read, void *ctx, enum image_type *type);
-
-void point_init(struct image *i, struct image *src, long width, long height);
-void linear_init(struct image *i, struct image *src, long width, long height);
-void cubic_init(struct image *i, struct image *src, long width, long height);
+int ext_to_image_type(char *ext, enum image_type *type);
+void yscaler_init(struct image *i, struct image *src, long height);
+void xscaler_init(struct image *i, struct image *src, long width);
+void random_init(struct image *im, enum sample_fmt fmt, long width, long height);
 
 int ppm_init(struct image *i, read_fn_t read, void *ctx, int sig_bytes);
-void ppm_writer_init(struct writer *w, write_fn_t write, void *ctx, struct image *src);
+int ppm_writer_init(struct writer *w, write_fn_t write, void *ctx, struct image *src);
 
-void jpeg_appinit(); // TODO: lazy init. Needs to be threadsafe.
+void jpeg_appinit();
 int jpeg_init(struct image *i, read_fn_t read, void *ctx, int sig_bytes);
 void jpeg_set_scale_denom(struct image *i, int denom);
+void jpeg_set_rgbx(struct image *i);
 void jpeg_writer_init(struct writer *w, write_fn_t write, void *ctx, struct image *src);
 
 int png_init(struct image *i, read_fn_t read, void *ctx, int sig_bytes);

@@ -39,7 +39,7 @@ ppm_get_scanline(struct image *image, unsigned char *sl)
     size_t n, read_len;
 
     ppm = (struct ppm *)image->data;
-    n = image->width * image->cmp;
+    n = image->width * sample_size(image->fmt);
 
     if (ppm->buflen >= n) {
 	memcpy(sl, ppm->cur, n);
@@ -126,7 +126,7 @@ ppm_init(struct image *image, read_fn_t read, void *ctx, int sig_bytes)
 	return -1;
 
     ppm->cur[ppm->buflen] = 0;
-    image->cmp = 3;
+    image->fmt = SAMPLE_RGB;
     image->get_scanline = ppm_get_scanline;
 
     if (ppm_parse_header(ppm, &image->width, &image->height, &max, sig_bytes))
@@ -164,31 +164,33 @@ ppm_writer_write(struct writer *writer)
     src = writer->src;
 
     header_len = snprintf((char *)buf, PPM_BUFSIZE, "P6 %ld %ld 255 ",
-	  src->width, src->height);
+                          src->width, src->height);
     if (header_len < 0)
-	return -1;
+        return -1;
 
     if (writer->write_cb(writer->ctx, buf, (size_t)header_len))
 	return -1;
 
     sl_len = src->width * 3;
     for (i=0; i<src->height; i++) {
-	if (src->get_scanline(src, buf))
-	    return -1;
+        if (src->get_scanline(src, buf))
+            return -1;
 
-	if (writer->write_cb(writer->ctx, buf, sl_len))
-	    return -1;
+        if (writer->write_cb(writer->ctx, buf, sl_len))
+            return -1;
     }
     return 0;
 }
 
-void
+int
 ppm_writer_init(struct writer *writer, write_fn_t write_fn, void *ctx,
 		struct image *src)
 {
     long sl_width;
 
-    // TODO: fail when src->cmp is something other than 3
+    if (sample_size(src->fmt) != 3)
+        return -1;
+
     sl_width = src->width * 3;
     writer->src = src;
     writer->data = malloc(PPM_BUFSIZE > sl_width ? PPM_BUFSIZE : sl_width);
@@ -196,4 +198,6 @@ ppm_writer_init(struct writer *writer, write_fn_t write_fn, void *ctx,
     writer->free = ppm_writer_free;
     writer->write_cb = write_fn;
     writer->ctx = ctx;
+
+    return 0;
 }

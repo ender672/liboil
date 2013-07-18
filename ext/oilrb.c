@@ -205,7 +205,8 @@ oil_scale(int argc, VALUE *argv, VALUE self)
     data->out_width = w;
     data->out_height = h;
 
-    pre_scale(data);
+    if (data->in_type == JPEG)
+        jpeg_set_rgbx(data->reader);
 
     return self;
 }
@@ -285,7 +286,7 @@ init_equivalent_writer(struct writer *writer, enum image_type type,
 static VALUE
 oil_each(VALUE self)
 {
-    struct image scale;
+    struct image yscale, xscale;
     struct writer writer;
     struct thumbdata *thumb;
     int state;
@@ -296,21 +297,20 @@ oil_each(VALUE self)
     check_in_progress(thumb);
     thumb->in_progress = 1;
 
+    pre_scale(thumb);
+
     w = thumb->out_width;
     h = thumb->out_height;
 
-    if (thumb->interp == sym_point)
-	point_init(&scale, thumb->reader, w, h);
-    else if (thumb->interp == sym_linear)
-	linear_init(&scale, thumb->reader, w, h);
-    else
-	cubic_init(&scale, thumb->reader, w, h);
+    yscaler_init(&yscale, thumb->reader, h);
+    xscaler_init(&xscale, &yscale, w);
 
-    init_equivalent_writer(&writer, thumb->out_type, &scale);
+    init_equivalent_writer(&writer, thumb->out_type, &xscale);
     rb_protect(yield_resize, (VALUE)&writer, &state);
 
     writer.free(&writer);
-    scale.free(&scale);
+    xscale.free(&xscale);
+    yscale.free(&yscale);
 
     thumb->in_progress = 0;
     if (state)

@@ -4,7 +4,7 @@ require 'oil'
 require 'stringio'
 require 'helper'
 
-class TestPPM < MiniTest::Unit::TestCase
+class TestPPM < MiniTest::Test
 
   def setup
     skip if RUBY_PLATFORM =~ /java/

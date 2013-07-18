@@ -4,7 +4,7 @@ require 'oil'
 require 'stringio'
 require 'helper'
 
-class TestJPEG < MiniTest::Unit::TestCase
+class TestJPEG < MiniTest::Test
   # http://stackoverflow.com/a/2349470
   JPEG_DATA = "\
 \xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x01\x00\x48\x00\x48\x00\
@@ -95,6 +95,8 @@ class TestJPEG < MiniTest::Unit::TestCase
     end
   end
 
+  # This causes valgrind errors, but I'm pretty sure that the libjpeg is
+  # returning uninitialized memory because the source jpeg is corrupt.
   def test_io_shrinks_buffer
     iotest(ShrinkIO) do |io|
       resize(io) rescue nil

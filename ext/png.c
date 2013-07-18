@@ -90,18 +90,23 @@ png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
 
     if (bit_depth < 8)
        png_set_packing(read_ptr);
-    else if (bit_depth == 16)
+    else if (bit_depth == 16) {
 #if PNG_LIBPNG_VER >= 10504
 	png_set_scale_16(read_ptr);
 #else
 	png_set_strip_16(read_ptr);
 #endif
+    }
 
     if (png_get_valid(read_ptr, read_i_ptr, PNG_INFO_tRNS))
 	png_set_tRNS_to_alpha(read_ptr);
 
-    if (ctype == PNG_COLOR_TYPE_PALETTE)
+    switch (ctype) {
+    case PNG_COLOR_TYPE_PALETTE:
         png_set_palette_to_rgb(read_ptr);
+    case PNG_COLOR_TYPE_RGB: /* fallthrough - both types need filler */
+        png_set_filler(read_ptr, 0, PNG_FILLER_AFTER);
+    }
 
     png_read_update_info(read_ptr, read_i_ptr);
 }
@@ -122,49 +127,53 @@ static int
 get_scanline_interlaced(struct image *image, unsigned char *sl)
 {
     struct png_pair *pair;
+    int cmp;
 
+    cmp = sample_size(image->fmt);
     pair = (struct png_pair *)image->data;
-    memcpy(sl, pair->scanlines[pair->ypos], image->width * image->cmp);
+    memcpy(sl, pair->scanlines[pair->ypos], image->width * cmp);
     pair->ypos++;
-    // TODO: could free buffers as we go along
+    /* TODO: could free buffers as we go along */
     return 0;
 }
 
-static int
-ctype_to_int(png_byte ctype)
+static enum sample_fmt
+ctype_to_fmt(png_byte ctype)
 {
     switch (ctype) {
-      case PNG_COLOR_TYPE_GRAY:
-	return 1;
-      case PNG_COLOR_TYPE_GRAY_ALPHA:
-	return 2;
-      case PNG_COLOR_TYPE_RGB:
-	return 3;
-      case PNG_COLOR_TYPE_RGB_ALPHA:
-	return 4;
+    case PNG_COLOR_TYPE_GRAY:
+        return SAMPLE_GREYSCALE;
+    case PNG_COLOR_TYPE_GRAY_ALPHA:
+        return SAMPLE_GREYSCALE_ALPHA;
+    case PNG_COLOR_TYPE_PALETTE: /* Palette images are converted to RGB */
+    case PNG_COLOR_TYPE_RGB:
+        return SAMPLE_RGBX;
+    case PNG_COLOR_TYPE_RGB_ALPHA:
+        return SAMPLE_RGBA;
     }
 
-    return -1;
+    return SAMPLE_UNKNOWN;
 }
 
 static int
-int_to_ctype(int cmp, png_byte *ctype)
+fmt_to_ctype(enum sample_fmt fmt, png_byte *ctype)
 {
-    switch (cmp) {
-      case 1:
-	*ctype = PNG_COLOR_TYPE_GRAY;
-	break;
-      case 2:
-	*ctype = PNG_COLOR_TYPE_GRAY_ALPHA;
-	break;
-      case 3:
-	*ctype = PNG_COLOR_TYPE_RGB;
-	break;
-      case 4:
-	*ctype = PNG_COLOR_TYPE_RGB_ALPHA;
-	break;
-      default:
-	return -1;
+    switch (fmt) {
+    case SAMPLE_GREYSCALE:
+        *ctype = PNG_COLOR_TYPE_GRAY;
+        break;
+    case SAMPLE_GREYSCALE_ALPHA:
+        *ctype = PNG_COLOR_TYPE_GRAY_ALPHA;
+        break;
+    case SAMPLE_RGB:
+    case SAMPLE_RGBX:
+        *ctype = PNG_COLOR_TYPE_RGB;
+        break;
+    case SAMPLE_RGBA:
+        *ctype = PNG_COLOR_TYPE_RGB_ALPHA;
+        break;
+    default:
+        return -1;
     }
 
     return 0;
@@ -204,8 +213,8 @@ png_init(struct image *image, read_fn_t read_cb, void *ctx, int sig_bytes)
     png_normalize_input(pair->png, pair->info);
 
     ctype = png_get_color_type(pair->png, pair->info);
-    image->cmp = ctype_to_int(ctype);
-    if (image->cmp < 0)
+    image->fmt = ctype_to_fmt(ctype);
+    if (image->fmt == SAMPLE_UNKNOWN)
 	return -1;
 
     image->width = png_get_image_width(pair->png, pair->info);
@@ -218,7 +227,7 @@ png_init(struct image *image, read_fn_t read_cb, void *ctx, int sig_bytes)
       case PNG_INTERLACE_ADAM7:
 	pair->scanlines = malloc(image->height * sizeof(png_bytep));
 	for (i=0; i<image->height; i++)
-	    pair->scanlines[i] = malloc(image->width * image->cmp);
+	    pair->scanlines[i] = malloc(image->width * sample_size(image->fmt));
 	png_read_image(pair->png, pair->scanlines);
 	image->get_scanline = get_scanline_interlaced;
 	pair->ypos = 0;
@@ -259,6 +268,9 @@ png_writer_write(struct writer *w)
 
     png_write_info(pair->png, pair->info);
 
+    if (src->fmt == SAMPLE_RGBX)
+        png_set_filler(pair->png, 0, PNG_FILLER_AFTER);
+
     for (i=0; i<src->height; i++) {
 	if (src->get_scanline(src, pair->sl_buf))
 	    return -1;
@@ -283,7 +295,7 @@ png_writer_init(struct writer *w, write_fn_t write_cb, void *ctx,
     w->src = src;
 
     pair = malloc(sizeof(struct png_pair));
-    pair->sl_buf = malloc(src->width * src->cmp);
+    pair->sl_buf = malloc(src->width * sample_size(src->fmt));
     w->data = pair;
 
     pair->png = png_create_write_struct(PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
@@ -297,7 +309,7 @@ png_writer_init(struct writer *w, write_fn_t write_cb, void *ctx,
 
     png_set_write_fn(pair->png, dest, write_data, png_flush_data);
 
-    if (int_to_ctype(src->cmp, &ctype))
+    if (fmt_to_ctype(src->fmt, &ctype))
 	return;
 
     png_set_IHDR(pair->png, pair->info, src->width, src->height, 8, ctype,

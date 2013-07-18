@@ -11,8 +11,7 @@
 
 /* extend jpeg structs
  *
- * Placing longjmp buffers in the per-image structs so that concurrent threads
- * can use jpeglib error handling.
+ * Placing longjmp buffers in the wrapper structs.
  */
 
 struct oil_decompress {
@@ -41,7 +40,7 @@ error_exit(j_common_ptr info)
     longjmp(info->is_decompressor ? dinfo->jmp : cinfo->jmp, 1);
 }
 
-static void output_message(j_common_ptr info) {}
+static void output_message(j_common_ptr info) { }
 
 /* jpeglib input callbacks */
 
@@ -70,7 +69,7 @@ fill_input_buffer(j_decompress_ptr cinfo)
 	strcpy(cinfo->err->msg_parm.s, "IO Failed");
 	cinfo->err->error_exit((j_common_ptr)cinfo);
     } else if (!out_len) {
-	// TODO: add warning that input ended prematurely
+	/* TODO: add warning that input ended prematurely */
 	src->mgr.next_input_byte = jpeg_eof;
 	src->mgr.bytes_in_buffer = 2;
     } else {
@@ -173,6 +172,29 @@ jpeg_free(struct image *image)
     free(dinfo);
 }
 
+static enum sample_fmt
+jpeg_color_space_to_fmt(J_COLOR_SPACE jcs)
+{
+    if (jcs == JCS_GRAYSCALE)
+        return SAMPLE_GREYSCALE;
+    return SAMPLE_RGB;
+}
+
+static J_COLOR_SPACE
+fmt_to_jpeg_color_space(enum sample_fmt fmt)
+{
+    switch (fmt) {
+    case SAMPLE_GREYSCALE:
+        return JCS_GRAYSCALE;
+    case SAMPLE_RGB:
+        return JCS_RGB;
+    case SAMPLE_RGBX:
+        return JCS_EXT_RGBX;
+    default:
+        return JCS_UNKNOWN;
+    }
+}
+
 int
 jpeg_init(struct image *image, read_fn_t read, void *ctx, int sig_bytes)
 {
@@ -208,15 +230,26 @@ jpeg_init(struct image *image, read_fn_t read, void *ctx, int sig_bytes)
 
     if (setjmp(oil_dinfo->jmp))
 	return -1;
+
     jpeg_read_header(dinfo, TRUE);
     jpeg_calc_output_dimensions(dinfo);
 
     image->get_scanline = jpeg_get_scanline;
     image->width = dinfo->output_width;
     image->height = dinfo->output_height;
-    image->cmp = dinfo->output_components;
+    image->fmt = jpeg_color_space_to_fmt(dinfo->output_components);
 
     return 0;
+}
+
+void
+jpeg_set_rgbx(struct image *im)
+{
+    j_decompress_ptr dinfo;
+    dinfo = (j_decompress_ptr)im->data;
+    dinfo->out_color_space = JCS_EXT_RGBX;
+    jpeg_calc_output_dimensions(dinfo);
+    im->fmt = SAMPLE_RGBX;
 }
 
 void
@@ -306,14 +339,14 @@ jpeg_writer_init(struct writer *writer, write_fn_t write_fn, void *ctx,
     cinfo->dest = (struct jpeg_destination_mgr *)dest;
     cinfo->image_width = src->width;
     cinfo->image_height = src->height;
-    cinfo->input_components = src->cmp;
-    // TODO: Fail if alpha
-    cinfo->in_color_space = src->cmp == 3 ? JCS_RGB : JCS_GRAYSCALE;
+    cinfo->input_components = sample_size(src->fmt);
+    cinfo->in_color_space = fmt_to_jpeg_color_space(src->fmt);
 
     oil_cinfo = (struct oil_compress *)cinfo;
-    oil_cinfo->in_buf = malloc(src->width * src->cmp);
+    oil_cinfo->in_buf = malloc(src->width * sample_size(src->fmt));
 
     jpeg_set_defaults(cinfo);
+    jpeg_set_quality(cinfo, 90, TRUE);
 
     writer->src = src;
     writer->data = cinfo;
