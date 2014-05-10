@@ -1,10 +1,4 @@
-ext/*.so
-ext/*.log
-ext/*.o
-ext/*.class
-ext/*.jar
-ext/Makefile
-lib/*.so
-*.gem
-*.rbc
-.rbx
+*.jpg
+*.o
+*.a
+resize
