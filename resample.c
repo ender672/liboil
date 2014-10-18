@@ -2,579 +2,429 @@
 #include <stdint.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
-#ifdef __SSE4_1__
-#include <emmintrin.h>
-#include <smmintrin.h>
-#endif
 
 #define TAPS 4
 
-static long
-gcd (long a, long b)
+/**
+ * 64-bit type that uses 1 bit for signedness, 33 bits for the integer, and 30
+ * bits for the fraction.
+ *
+ * 0-29: fraction, 30-62: integer, 63: sign.
+ *
+ * Useful for storing the product of a fix1_30 type and an unsigned char.
+ */
+typedef int64_t fix33_30;
+
+/**
+ * We add this to a fix33_30 value in order to bump up rounding errors.
+ *
+ * The best possible value was determined by comparing to a reference
+ * implementation and comparing values for the minimal number of errors.
+ */
+#define TOPOFF 4096
+
+/**
+ * Signed type that uses 1 bit for signedness, 1 bit for the integer, and 30
+ * bits for the fraction.
+ *
+ * 0-29: fraction, 30: integer, 31: sign.
+ *
+ * Useful for storing coefficients.
+ */
+typedef int32_t fix1_30;
+#define ONE_FIX1_30 (1<<30)
+
+/**
+ * Calculate the greatest common denominator between a and b.
+ */
+static long gcd (long a, long b)
 {
-    long c;
-    while (a != 0) {
-        c = a;
-        a = b%a;
-        b = c;
-    }
-    return b;
+	long c;
+	while (a != 0) {
+		c = a;
+		a = b%a;
+		b = c;
+	}
+	return b;
 }
 
-static int32_t
-clamp(int32_t x)
+/**
+ * Round and clamp a fix33_30 value between 0 and 255. Returns an unsigned char.
+ */
+static unsigned char clamp(fix33_30 x)
 {
-    if (x < 0)
-        return 0;
+	if (x < 0) {
+		return 0;
+	}
 
-    x += 800; /* arbitrary small number to bump up rounding errors */
+	/* bump up rounding errors before truncating */
+	x += TOPOFF;
 
-    if (x & 0x40000000)
-        return 0x3FC00000;
+	/* This is safe because we have the < 0 check above and a sample can't
+	 * end up with a value over 512 */
+	if (x & (1l<<38)) {
+		return 255;
+	}
 
-    return x;
+	return x >> 30;
 }
 
-/* Map from a discreet dest coordinate to a continuous source coordinate.
+/**
+ * Map from a discreet dest coordinate to a continuous source coordinate.
  * The resulting coordinate can range from -0.5 to the maximum of the
  * destination image dimension.
  */
-static float
-map(long pos, float scale)
+static double map(long pos, double scale)
 {
-    return (pos + 0.5) / scale - 0.5;
+	return (pos + 0.5) / scale - 0.5;
 }
 
-static long
-calc_mapping_split(long dim_in, long dim_out, long pos, float *rest)
+/**
+ * Given input and output dimensions and an output position, return the
+ * corresponding input position and put the sub-pixel remainder in rest.
+ */
+long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
+	float *rest)
 {
-    float scale, smp;
-    long smp_i;
+	double scale, smp;
+	long smp_i;
 
-    scale = dim_out / (float)dim_in;
-    smp = map(pos, scale);
-    smp_i = smp < 0 ? -1 : smp;
-    *rest = smp - smp_i;
-    return smp_i;
+	scale = dim_out / (double)dim_in;
+	smp = map(pos, scale);
+	smp_i = smp < 0 ? -1 : smp;
+	*rest = smp - smp_i;
+	return smp_i;
 }
 
-static long
-calc_tap_mult(long dim_in, long dim_out)
+/**
+ * When we reduce an image by a factor of two, we need to scale our resampling
+ * function by two as well in order to avoid aliasing.
+ *
+ * Calculate the resampling scalar given input and output dimensions.
+ */
+static long calc_tap_mult(long dim_in, long dim_out)
 {
-    if (dim_out > dim_in)
-        return 1;
-    return dim_in / dim_out;
+	if (dim_out > dim_in) {
+		return 1;
+	}
+	return dim_in / dim_out;
 }
 
-static long
-calc_taps(long dim_in, long dim_out)
+/**
+ * Given input and output dimension, calculate the total number of taps that
+ * will be needed to calculate an output sample.
+ */
+long calc_taps(long dim_in, long dim_out)
 {
-    return calc_tap_mult(dim_in, dim_out) * TAPS;
+	return calc_tap_mult(dim_in, dim_out) * TAPS;
 }
 
-int
-sample_size(enum sample_fmt fmt)
+/**
+ * Return the sample size in bytes for the given sample format.
+ */
+int sample_size(enum oil_fmt fmt)
 {
-    switch (fmt) {
-    case SAMPLE_GREYSCALE:
-        return 1;
-        break;
-    case SAMPLE_GREYSCALE_ALPHA:
-        return 2;
-        break;
-    case SAMPLE_RGB:
-        return 3;
-    default:
-        return 4;
-    }
+	switch (fmt) {
+	case OIL_GREYSCALE:
+		return 1;
+	case OIL_GREYSCALE_ALPHA:
+		return 2;
+	case OIL_RGB:
+		return 3;
+	case OIL_RGBX:
+	case OIL_RGBA:
+		return 4;
+	default:
+		return 0;
+	}
 }
 
+/**
+ * Helper macros to extract byte components from an int32_t holding rgba.
+ */
 #define rgba_r(x) ((x) & 0x000000FF)
 #define rgba_g(x) (((x) & 0x0000FF00) >> 8)
 #define rgba_b(x) (((x) & 0x00FF0000) >> 16)
 #define rgba_a(x) (((x) & 0xFF000000) >> 24)
 
-static uint32_t
-fixed_9_22_to_rgbx(int32_t r, int32_t g, int32_t b)
+/**
+ * Convert rgb values in fix33_30 types to a uint32_t.
+ */
+static uint32_t fix33_30_to_rgbx(fix33_30 r, fix33_30 g, fix33_30 b)
 {
-    return (clamp(r) >> 22) +
-           ((clamp(g) >> 14) & 0x0000FF00) +
-           ((clamp(b) >> 6) & 0x00FF0000);
-}
-
-static uint32_t
-fixed_9_22_to_rgba(int32_t r, int32_t g, int32_t b, int32_t a)
-{
-    return fixed_9_22_to_rgbx(r, g, b) + ((clamp(a) << 2) & 0xFF000000);
-}
-
-static float
-catrom(float x)
-{
-    if (x<1)
-        return (3*x*x*x - 5*x*x + 2) / 2;
-    return (-1*x*x*x + 5*x*x - 8*x + 4) / 2;
-}
-
-static float
-mitchell(float x)
-{
-    if (x<1)
-        return (7*x*x*x - 12*x*x + 5 + 1/3.0) / 6;
-    return (-7/3.0*x*x*x + 12*x*x - 20*x + 10 + 2/3.0) / 6;
-}
-
-static float
-linear(float x)
-{
-    return 1 - x;
-}
-
-static int32_t
-f_to_fixed_9_22(float x)
-{
-    return  x * 4194304;
-}
-
-static void
-calc_coeffs(int32_t *coeffs, float tx, long tap_mult)
-{
-    long i, taps;
-    float tmp;
-
-    taps = tap_mult * TAPS;
-    tx = 1 - tx - taps / 2;
-
-    for (i=0; i<taps; i++) {
-        tmp = catrom(fabs(tx) / tap_mult) / tap_mult;
-        coeffs[i] = f_to_fixed_9_22(tmp);
-        tx += 1;
-    }
-}
-
-/* Strip */
-
-static long
-strip_height(struct strip *st)
-{
-    return calc_taps(st->in_height, st->out_height);
-}
-
-static long
-strip_line_len(struct strip *st)
-{
-    return sample_size(st->fmt) * st->width;
-}
-
-void
-strip_init(struct strip *st, long in_height, long out_height, long width,
-           enum sample_fmt fmt)
-{
-    long i, line_ary_size, st_height, line_len;
-
-    st->in_height = in_height;
-    st->out_height = out_height;
-
-    st_height = strip_height(st);
-    line_ary_size = st_height * sizeof(void*);
-
-    st->sl = malloc(line_ary_size);
-    st->virt = malloc(line_ary_size);
-    st->in_lineno = 0;
-    st->out_lineno = 0;
-    st->width = width;
-    st->fmt = fmt;
-
-    line_len = strip_line_len(st);
-
-    for (i=0; i<st_height; i++) {
-        st->sl[i] = malloc(line_len);
-        st->virt[i] = st->sl[0];
-    }
-}
-
-void
-strip_free(struct strip *st)
-{
-    long st_height, i;
-
-    st_height = strip_height(st);
-
-    for (i=0; i<st_height; i++)
-        free(st->sl[i]);
-    free(st->sl);
-    free(st->virt);
-}
-
-static void
-strip_set_coeffs(struct strip *st, int32_t *coeffs)
-{
-    float ty;
-    long tap_mult;
-
-    calc_mapping_split(st->in_height, st->out_height, st->out_lineno, &ty);
-    tap_mult = calc_tap_mult(st->in_height, st->out_height);
-    calc_coeffs(coeffs, ty, tap_mult);
-}
-
-static void
-strip_scale_gen(long len, long height, int32_t *coeffs, unsigned char **sl_in,
-                unsigned char *sl_out)
-{
-    long i, j;
-    float result;
-
-    for (i=0; i<len; i++) {
-        result = 0;
-        for (j=0; j<height; j++)
-            result += coeffs[j] * sl_in[j][i];
-        sl_out[i] = clamp(result) >> 22;
-    }
-}
-
-static void
-strip_scale_rgba(long width, long height, int32_t *coeffs, uint32_t **sl_in,
-                 uint32_t *sl_out)
-{
-    long i, j;
-    float r, g, b, a, coeff;
-    uint32_t sample;
-
-    for (i=0; i<width; i++) {
-        r = g = b = a = 0;
-        for (j=0; j<height; j++) {
-            coeff = coeffs[j];
-            sample = sl_in[j][i];
-            r += coeff * rgba_r(sample);
-            g += coeff * rgba_g(sample);
-            b += coeff * rgba_b(sample);
-            a += coeff * rgba_a(sample);
-        }
-        sl_out[i] = fixed_9_22_to_rgba(r, g, b, a);
-    }
-}
-
-static void
-strip_scale_rgbx(long width, long height, int32_t *coeffs, uint32_t **sl_in,
-                 uint32_t *sl_out)
-{
-    long i, j;
-    int32_t coeff, r, g, b;
-    uint32_t sample;
-
-    for (i=0; i<width; i++) {
-        r = g = b = 0;
-        for (j=0; j<height; j++) {
-            coeff = coeffs[j];
-            sample = sl_in[j][i];
-            r += coeff * rgba_r(sample);
-            g += coeff * rgba_g(sample);
-            b += coeff * rgba_b(sample);
-        }
-        sl_out[i] = fixed_9_22_to_rgbx(r, g, b);
-    }
-}
-
-#ifdef __SSE4_1__
-static void
-strip_scale_sse(long width, long height, int32_t *coeffs, uint32_t **sl_in,
-                     uint32_t *sl_out)
-{
-    long i, j;
-    __m128i sum, pixel, mask, topoff, sample_max;
-
-    topoff = _mm_set1_epi32(800);
-    sample_max = _mm_set1_epi32(0x3FC00000);
-    mask = _mm_set_epi8(1,1,1,1,1,1,1,1,1,1,1,1,12,8,4,0);
-
-    for (i=0; i<width; i++) {
-        sum = _mm_setzero_si128();
-        for (j=0; j<height; j++) {
-            pixel = _mm_cvtsi32_si128(sl_in[j][i]);
-            pixel = _mm_cvtepu8_epi32(pixel);
-            pixel = _mm_mullo_epi32(pixel, _mm_set1_epi32(coeffs[j]));
-            sum = _mm_add_epi32(pixel, sum);
-        }
-
-        sum = _mm_add_epi32(sum, topoff);
-        sum = _mm_max_epi32(sum, _mm_setzero_si128());
-        sum = _mm_min_epi32(sum, sample_max);
-        sum = _mm_srli_epi32(sum, 22);
-        sum = _mm_shuffle_epi8(sum, mask);
-        sl_out[i] = _mm_cvtsi128_si32(sum);
-    }
-}
-#endif
-
-void
-strip_scale(struct strip *st, void *sl_out)
-{
-    long height;
-    int32_t *coeffs;
-    void **sl;
-
-    height = strip_height(st);
-    coeffs = malloc(height * sizeof(int32_t));
-    strip_set_coeffs(st, coeffs);
-
-    sl = st->virt;
-
-    switch (st->fmt) {
-#ifdef __SSE4_1__
-    case SAMPLE_RGBA:
-    case SAMPLE_RGBX:
-        strip_scale_sse(st->width, height, coeffs, (uint32_t **)sl,
-                        (uint32_t *)sl_out);
-        break;
-#else
-    case SAMPLE_RGBA:
-        strip_scale_rgba(st->width, height, coeffs, (uint32_t **)sl,
-                         (uint32_t *)sl_out);
-        break;
-    case SAMPLE_RGBX:
-        strip_scale_rgbx(st->width, height, coeffs, (uint32_t **)sl,
-                         (uint32_t *)sl_out);
-        break;
-#endif
-    default:
-        strip_scale_gen(strip_line_len(st), height, coeffs, (unsigned char **)sl,
-                        (unsigned char *)sl_out);
-        break;
-    }
-
-    st->out_lineno++;
-    free(coeffs);
+	return clamp(r) + ((uint32_t)clamp(g) << 8) +
+		((uint32_t)clamp(b) << 16);
 }
 
 /**
- * Advance the strip. Once we hit max_line, we only advance the virtual pointers
- * which basically extends the source image infinitely.
- * Returns a pointer to the bottom scanline in the strip if another line is
- * needed. If we are at the bottom, we return NULL.
+ * Convert rgba values in fix33_30 types to a uint32_t.
  */
-static unsigned char*
-strip_next(struct strip *st)
+static uint32_t fix33_30_to_rgba(fix33_30 r, fix33_30 g, fix33_30 b, fix33_30 a)
 {
-    long i, cur_pos, st_height;
-    void *cur, **virt;
-
-    st_height = strip_height(st);
-    virt = st->virt;
-
-    for (i=1; i<st_height; i++)
-        virt[i - 1] = virt[i];
-
-    if (st->in_lineno < st->in_height) {
-        cur_pos = st->in_lineno%st_height;
-        cur = st->sl[cur_pos];
-        st->virt[st_height - 1] = cur;
-        return cur;
-    }
-
-    return NULL;
+	return fix33_30_to_rgbx(r, g, b) + ((uint32_t)clamp(a) << 24);
 }
 
-static long
-strip_target_pos(struct strip *st)
+/**
+ * Catmull-Rom interpolator.
+ */
+static float catrom(float x)
 {
-    float smp, _;
-    long st_height, smp_i;
-
-    smp = calc_mapping_split(st->in_height, st->out_height, st->out_lineno, &_);
-    smp_i = smp < 0 ? -1 : smp;
-    st_height = strip_height(st);
-    return smp_i + st_height / 2 + 1;
+	if (x<1)
+		return (3*x*x*x - 5*x*x + 2) / 2;
+	return (-1*x*x*x + 5*x*x - 8*x + 4) / 2;
 }
 
-void*
-strip_next_inbuf(struct strip *st)
+/**
+ * Mitchell interpolator.
+ */
+static float mitchell(float x)
 {
-    long target_pos;
-    unsigned char *ybuf;
+	if (x<1)
+		return (7*x*x*x - 12*x*x + 5 + 1/3.0) / 6;
+	return (-7/3.0*x*x*x + 12*x*x - 20*x + 10 + 2/3.0) / 6;
+}
 
-    target_pos = strip_target_pos(st);
+/**
+ * Linear interpolator.
+ */
+static float linear(float x)
+{
+	return 1 - x;
+}
 
-    while (st->in_lineno < target_pos) {
-        ybuf = strip_next(st);
-        st->in_lineno++;
-        if (ybuf)
-            return ybuf;
-    }
+/**
+ * Convert a single-precision float to a fix1_30 fixed point int. x must be
+ * between 0 and 1.
+ */
+static fix1_30 f_to_fix1_30(float x)
+{
+	return x * ONE_FIX1_30;
+}
 
-    return NULL;
+/**
+ * Given an offset tx, calculate TAPS * tap_mult coefficients.
+ *
+ * The coefficients are stored as fix1_30 fixed point ints in coeffs.
+ */
+static void calc_coeffs(fix1_30 *coeffs, float tx, long tap_mult)
+{
+	long i, taps, total;
+	float tmp;
+	fix1_30 tmp_fixed;
+
+	total = 0;
+
+	taps = tap_mult * TAPS;
+	tx = 1 - tx - taps / 2;
+
+	for (i=0; i<taps-1; i++) {
+		tmp = catrom(fabs(tx) / tap_mult) / tap_mult;
+		tmp_fixed = f_to_fix1_30(tmp);
+		coeffs[i] = tmp_fixed;
+		total += tmp_fixed;
+		tx += 1;
+	}
+
+	coeffs[taps-1] = ONE_FIX1_30 - total;
+}
+
+/**
+ * Generic yscaler, operates on arbitrary sized samples.
+ */
+static void yscale_gen(long len, long height, fix1_30 *coeffs,
+	unsigned char **in, unsigned char *out)
+{
+	long i, j;
+	fix33_30 coeff, total;
+
+	for (i=0; i<len; i++) {
+		total = 0;
+		for (j=0; j<height; j++) {
+			coeff = coeffs[j];
+			total += coeff * in[j][i];
+		}
+		out[i] = clamp(total);
+	}
+}
+
+/**
+ * RGBA yscaler, fetches 32-bytes at a time from memory to improve mem read
+ * performance.
+ */
+static void yscale_rgba(long width, long height, fix1_30 *coeffs,
+	uint32_t **sl_in, uint32_t *sl_out)
+{
+	long i, j;
+	fix33_30 r, g, b, a, coeff;
+	uint32_t sample;
+
+	for (i=0; i<width; i++) {
+		r = g = b = a = 0;
+		for (j=0; j<height; j++) {
+			coeff = coeffs[j];
+			sample = sl_in[j][i];
+			r += coeff * rgba_r(sample);
+			g += coeff * rgba_g(sample);
+			b += coeff * rgba_b(sample);
+			a += coeff * rgba_a(sample);
+		}
+		sl_out[i] = fix33_30_to_rgba(r, g, b, a);
+	}
+}
+
+/**
+ * RGBX yscaler, fetches 32-bytes at a time from memory to improve mem read
+ * performance and ignores the last value.
+ */
+static void yscale_rgbx(long width, long height, fix1_30 *coeffs,
+	uint32_t **sl_in, uint32_t *sl_out)
+{
+	long i, j;
+	fix33_30 r, g, b, coeff;
+	uint32_t sample;
+
+	for (i=0; i<width; i++) {
+		r = g = b = 0;
+		for (j=0; j<height; j++) {
+			coeff = coeffs[j];
+			sample = sl_in[j][i];
+			r += coeff * rgba_r(sample);
+			g += coeff * rgba_g(sample);
+			b += coeff * rgba_b(sample);
+		}
+		sl_out[i] = fix33_30_to_rgbx(r, g, b);
+	}
+}
+
+void strip_scale(void **in, long strip_height, long width, void *out,
+	enum oil_fmt fmt, float ty)
+{
+	fix1_30 *coeffs;
+	long tap_mult;
+
+	tap_mult = strip_height / TAPS;
+	coeffs = malloc(strip_height * sizeof(fix1_30));
+	calc_coeffs(coeffs, ty, tap_mult);
+
+	switch (fmt) {
+	case OIL_RGBA:
+		yscale_rgba(width, strip_height, coeffs, (uint32_t **)in,
+			(uint32_t *)out);
+		break;
+	case OIL_RGBX:
+		yscale_rgbx(width, strip_height, coeffs, (uint32_t **)in,
+			(uint32_t *)out);
+		break;
+	default:
+		yscale_gen(sample_size(fmt) * width, strip_height, coeffs,
+			(unsigned char **)in, (unsigned char *)out);
+		break;
+	}
+
+	free(coeffs);
 }
 
 /* Bicubic x scaler */
 
-static void
-sample_generic(int cmp, long taps, int32_t *coeffs, unsigned char *in,
-               unsigned char *out)
+static void sample_generic(int cmp, long taps, fix1_30 *coeffs,
+	unsigned char *in, unsigned char *out)
 {
-    int i;
-    long j;
-    int32_t result;
+	int i;
+	long j;
+	fix33_30 total, coeff;
 
-    for (i=0; i<cmp; i++) {
-        result = 0;
-        for (j=0; j<taps; j++)
-            result += coeffs[j] * in[j * cmp + i];
-        out[i] = clamp(result) >> 22;
-    }
+	for (i=0; i<cmp; i++) {
+		total = 0;
+		for (j=0; j<taps; j++){
+			coeff = coeffs[j];
+			total += coeff * in[j * cmp + i];
+		}
+		out[i] = clamp(total);
+	}
 }
 
-static uint32_t
-sample_rgba(long taps, int32_t *coeffs, uint32_t *in)
+static uint32_t sample_rgba(long taps, fix1_30 *coeffs, uint32_t *in)
 {
-    long i;
-    float r, g, b, a, coeff;
-    uint32_t sample;
+	long i;
+	fix33_30 r, g, b, a, coeff;
+	uint32_t sample;
 
-    r = g = b = a = 0;
-    for (i=0; i<taps; i++) {
-        coeff = coeffs[i];
-        sample = in[i];
-        r += coeff * rgba_r(sample);
-        g += coeff * rgba_g(sample);
-        b += coeff * rgba_b(sample);
-        a += coeff * rgba_a(sample);
-    }
-    return fixed_9_22_to_rgba(r, g, b, a);
+	r = g = b = a = 0;
+	for (i=0; i<taps; i++) {
+		coeff = coeffs[i];
+		sample = in[i];
+		r += coeff * rgba_r(sample);
+		g += coeff * rgba_g(sample);
+		b += coeff * rgba_b(sample);
+		a += coeff * rgba_a(sample);
+	}
+	return fix33_30_to_rgba(r, g, b, a);
 }
 
-static uint32_t
-sample_rgbx(long taps, int32_t *coeffs, uint32_t *in)
+static uint32_t sample_rgbx(long taps, fix1_30 *coeffs, uint32_t *in)
 {
-    long i;
-    int32_t r, g, b, coeff;
-    uint32_t sample;
+	long i;
+	fix33_30 r, g, b, coeff;
+	uint32_t sample;
 
-    r = g = b = 0;
-    for (i=0; i<taps; i++) {
-        coeff = coeffs[i];
-        sample = in[i];
-        r += coeff * rgba_r(sample);
-        g += coeff * rgba_g(sample);
-        b += coeff * rgba_b(sample);
-    }
-    return fixed_9_22_to_rgbx(r, g, b);
+	r = g = b = 0;
+	for (i=0; i<taps; i++) {
+		coeff = coeffs[i];
+		sample = in[i];
+		r += coeff * rgba_r(sample);
+		g += coeff * rgba_g(sample);
+		b += coeff * rgba_b(sample);
+	}
+	return fix33_30_to_rgbx(r, g, b);
 }
 
-#ifdef __SSE4_1__
-static uint32_t
-sample_sse(long taps, int32_t *coeffs, uint32_t *in)
+static void xscale_set_sample(enum oil_fmt fmt, long taps, fix1_30 *coeffs,
+	void *in, void *out)
 {
-    long i;
-    __m128i sum, pixel, mask;
-
-    sum = _mm_setzero_si128();
-    for (i=0; i<taps; i++) {
-        pixel = _mm_cvtsi32_si128(in[i]);
-        pixel = _mm_cvtepu8_epi32(pixel);
-        pixel = _mm_mullo_epi32(pixel, _mm_set1_epi32(coeffs[i]));
-        sum = _mm_add_epi32(pixel, sum);
-    }
-
-    sum = _mm_add_epi32(sum, _mm_set1_epi32(800));
-    sum = _mm_max_epi32(sum, _mm_setzero_si128());
-    sum = _mm_min_epi32(sum, _mm_set1_epi32(0x3FC00000));
-    sum = _mm_srli_epi32(sum, 22);
-    mask = _mm_set_epi8(1,1,1,1,1,1,1,1,1,1,1,1,12,8,4,0);
-    sum = _mm_shuffle_epi8(sum, mask);
-    return _mm_cvtsi128_si32(sum);
-}
-#endif
-
-static void
-xscale_set_sample(enum sample_fmt fmt, long taps, int32_t *coeffs, void *in,
-                  void *out)
-{
-    switch (fmt) {
-#ifdef __SSE4_1__
-    case SAMPLE_RGBA:
-    case SAMPLE_RGBX:
-        *(uint32_t *)out = sample_sse(taps, coeffs, (uint32_t *)in);
-        break;
-#else
-    case SAMPLE_RGBA:
-        *(uint32_t *)out = sample_rgba(taps, coeffs, (uint32_t *)in);
-        break;
-    case SAMPLE_RGBX:
-        *(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
-        break;
-#endif
-    default:
-        sample_generic(sample_size(fmt), taps, coeffs, in, out);
-        break;
-    }
-}
-
-static void
-xscale_gcd(void *in, long in_width, void *out, long out_width,
-           enum sample_fmt fmt) {
-    float tx;
-    int32_t *coeffs;
-    long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps, tap_mult;
-    char *in_pos, *out_pos;
-    int cmp;
-
-    tap_mult = calc_tap_mult(in_width, out_width);
-    taps = tap_mult * TAPS;
-    coeffs = malloc(taps * sizeof(int32_t));
-
-    scale_gcd = gcd(in_width, out_width);
-    in_chunk = in_width / scale_gcd;
-    out_chunk = out_width / scale_gcd;
-    cmp = sample_size(fmt);
-
-    for (i=0; i<out_chunk; i++) {
-        xsmp_i = calc_mapping_split(in_width, out_width, i, &tx);
-        calc_coeffs(coeffs, tx, tap_mult);
-
-        in_pos = (char *)in + (xsmp_i + 1 - taps / 2) * cmp;
-        out_pos = (char *)out + i * cmp;
-
-        for (j=0; j<scale_gcd; j++) {
-            xscale_set_sample(fmt, taps, coeffs, in_pos, out_pos);
-            in_pos += in_chunk * cmp;
-            out_pos += out_chunk * cmp;
-        }
-    }
-
-    free(coeffs);
+	switch (fmt) {
+	case OIL_RGBA:
+		*(uint32_t *)out = sample_rgba(taps, coeffs, (uint32_t *)in);
+		break;
+	case OIL_RGBX:
+		*(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
+		break;
+	default:
+		sample_generic(sample_size(fmt), taps, coeffs, in, out);
+		break;
+	}
 }
 
 /* padded scanline */
 
-static long
-padded_sl_padwidth(struct padded_sl *psl)
+/**
+ * Scanline with extra space at the beginning and end. This allows us to extend
+ * a scanline to the left and right. This in turn allows resizing functions
+ * to operate past the edges of the scanline without having to check for
+ * boundaries.
+ */
+struct padded_sl {
+	unsigned char *buf;
+	unsigned char *pad_left;
+	long inner_width;
+	long pad_width;
+	int cmp;
+};
+
+void padded_sl_init(struct padded_sl *psl, long inner_width, long pad_width,
+	int cmp)
 {
-    return calc_taps(psl->in_width, psl->out_width) + 1;
+	psl->inner_width = inner_width;
+	psl->pad_width = pad_width;
+	psl->cmp = cmp;
+	psl->pad_left = malloc((inner_width + 2 * pad_width) * cmp);
+	psl->buf = psl->pad_left + pad_width * cmp;
 }
 
-void
-padded_sl_init(struct padded_sl *psl, long in_width, long out_width,
-               enum sample_fmt fmt)
+void padded_sl_free(struct padded_sl *psl)
 {
-    long pad_width, buf_size;
-    int cmp;
-
-    psl->in_width = in_width;
-    psl->out_width = out_width;
-    psl->fmt = fmt;
-
-    cmp = sample_size(fmt);
-    pad_width = padded_sl_padwidth(psl);
-    buf_size = (in_width + 2 * pad_width) * cmp;
-
-    psl->pad_left = malloc(buf_size);
-    psl->buf = (unsigned char *)psl->pad_left + pad_width * cmp;
-}
-
-void
-padded_sl_free(struct padded_sl *psl)
-{
-    free(psl->pad_left);
+	free(psl->pad_left);
 }
 
 /**
@@ -583,34 +433,80 @@ padded_sl_free(struct padded_sl *psl)
  * width is the number of samples in the pad area.
  * cmp is the number of components per sample.
  */
-static void
-padded_sl_pad(unsigned char *pad, unsigned char *src, int width, int cmp)
+static void padded_sl_pad(unsigned char *pad, unsigned char *src, int width,
+	int cmp)
 {
-    int i, j;
+	int i, j;
 
-    for (i=0; i<width; i++)
-        for (j=0; j<cmp; j++)
-            pad[i * cmp + j] = src[j];
+	for (i=0; i<width; i++)
+		for (j=0; j<cmp; j++)
+			pad[i * cmp + j] = src[j];
 }
 
-static void
-padded_sl_extend_edges(struct padded_sl *psl)
+static void padded_sl_extend_edges(struct padded_sl *psl)
 {
-    int cmp;
-    long pad_width;
-    unsigned char *pad_right;
+	unsigned char *pad_right;
 
-    cmp = sample_size(psl->fmt);
-    pad_width = padded_sl_padwidth(psl);
-    pad_right = (unsigned char *)psl->buf + psl->in_width * cmp;
-
-    padded_sl_pad(psl->pad_left, psl->buf, pad_width, cmp);
-    padded_sl_pad(pad_right, pad_right - cmp, pad_width, cmp);
+	padded_sl_pad(psl->pad_left, psl->buf, psl->pad_width, psl->cmp);
+	pad_right = psl->buf + psl->inner_width * psl->cmp;
+	padded_sl_pad(pad_right, pad_right - psl->cmp, psl->pad_width, psl->cmp);
 }
 
-void
-padded_sl_scale(struct padded_sl *psl, unsigned char *out)
+void xscale(unsigned char *in, long in_width, unsigned char *out,
+	long out_width, enum oil_fmt fmt)
 {
-    padded_sl_extend_edges(psl);
-    xscale_gcd(psl->buf, psl->in_width, out, psl->out_width, psl->fmt);
+	float tx;
+	fix1_30 *coeffs;
+	long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps, tap_mult;
+	unsigned char *out_pos, *rpadv, *tmp;
+	int cmp;
+	struct padded_sl psl;
+
+	tap_mult = calc_tap_mult(in_width, out_width);
+	taps = tap_mult * TAPS;
+	coeffs = malloc(taps * sizeof(fix1_30));
+
+	scale_gcd = gcd(in_width, out_width);
+	in_chunk = in_width / scale_gcd;
+	out_chunk = out_width / scale_gcd;
+	cmp = sample_size(fmt);
+
+	if (in_width < taps * 2) {
+		padded_sl_init(&psl, in_width, taps / 2 + 1, cmp);
+		memcpy(psl.buf, in, in_width * cmp);
+		rpadv = psl.buf;
+	} else {
+		/* just the ends of the scanline with edges extended */
+		padded_sl_init(&psl, 2 * taps - 2, taps / 2 + 1, cmp);
+		memcpy(psl.buf, in, (taps - 1) * cmp);
+		memcpy(psl.buf + (taps - 1) * cmp, in + (in_width - taps + 1) * cmp, (taps - 1) * cmp);		
+		rpadv = psl.buf + (2 * taps - 2 - in_width) * cmp;
+	}
+
+	padded_sl_extend_edges(&psl);
+
+	for (i=0; i<out_chunk; i++) {
+		xsmp_i = split_map(in_width, out_width, i, &tx);
+		calc_coeffs(coeffs, tx, tap_mult);
+
+		xsmp_i += 1 - taps / 2;
+		out_pos = out + i * cmp;
+		for (j=0; j<scale_gcd; j++) {
+			if (xsmp_i < 0) {
+				tmp = psl.buf;
+			} else if (xsmp_i > in_width - taps) {
+				tmp = rpadv;
+			} else {
+				tmp = in;
+			}
+			tmp += xsmp_i * cmp;
+			xscale_set_sample(fmt, taps, coeffs, tmp, out_pos);
+			out_pos += out_chunk * cmp;
+
+			xsmp_i += in_chunk;
+		}
+	}
+
+	padded_sl_free(&psl);
+	free(coeffs);
 }

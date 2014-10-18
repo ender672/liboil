@@ -1,64 +1,64 @@
-/**
+#ifndef RESAMPLE_H
+#define RESAMPLE_H
+
+/*
  * The format in which image samples are stored. The RGBX format is an
  * optimization to allow memory-aligned access to sample data on an RGB image.
- */
-enum sample_fmt {
-    SAMPLE_GREYSCALE,
-    SAMPLE_GREYSCALE_ALPHA,
-    SAMPLE_RGB,
-    SAMPLE_RGBA,
-    SAMPLE_RGBX,
-    SAMPLE_UNKNOWN
-};
-
-int sample_size(enum sample_fmt fmt);
-
-/**
- * Scanline with extra space at the beginning and end. This allows us to extend
- * a scanline to the left and right. This in turn allows resizing functions
- * to operate past the edges of the scanline without having to check for
- * boundaries.
- */
-struct padded_sl {
-    void *buf;
-    void *pad_left;
-    long in_width;
-    long out_width;
-    enum sample_fmt fmt;
-};
-
-void padded_sl_init(struct padded_sl *psl, long in_width, long out_width, enum sample_fmt fmt);
-void padded_sl_scale(struct padded_sl *psl, unsigned char *out);
-void padded_sl_free(struct padded_sl *psl);
-
-/**
- * Array of scanlines, forming a strip. The virtual array allows us to advance
- * the strip beyond the top & bottom. This is needed by some resamplers.
- */
-struct strip {
-    long in_lineno;
-    long out_lineno;
-    long in_height;
-    long out_height;
-    void **sl;
-    void **virt;
-    long width;
-    enum sample_fmt fmt;
-};
-
-void strip_init(struct strip *st, long in_height, long out_height, long width, enum sample_fmt fmt);
-
-/**
- * Ask the strip for a buffer that needs to be filled. Returns a pointer to an
- * allocated buffer of size <width> * <sample width>. The sample width depends
- * on the sample format.
  *
- * The buffer can then be filled with source image data, and strip_next_inbuf()
- * can then be called again.
- *
- * This method must be called in a loop until it returns NULL. Then it is safe
- * to scale the strip.
+ * UNKNOWN allows functions returning this type to indicate failure.
  */
-void *strip_next_inbuf(struct strip *st);
-void strip_scale(struct strip *st, void *sl_out);
-void strip_free(struct strip *st);
+enum oil_fmt {
+	OIL_UNKNOWN,
+	OIL_GREYSCALE,
+	OIL_GREYSCALE_ALPHA,
+	OIL_RGB,
+	OIL_RGBA,
+	OIL_RGBX
+};
+
+/**
+ * Return the bytes per sample used by the sample format fmt.
+ */ 
+int sample_size(enum oil_fmt fmt);
+
+/**
+ * Scale scanline in to the scanline out.
+ */
+void xscale(unsigned char *in, long in_width, unsigned char *out,
+        long out_width, enum oil_fmt fmt);
+
+/**
+ * Indicate how many taps will be required to scale an image. The number of taps
+ * required indicates how tall a strip needs to be.
+ */
+long calc_taps(long dim_in, long dim_out);
+
+/**
+ * Given input & output dimensions and an output position, return the
+ * corresponding input position and put the sub-pixel remainder in rest.
+ */
+long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
+	float *rest);
+
+/**
+ * Scale a strip. The height parameter indicates the height of the strip, not
+ * the height of the image.
+ *
+ * The strip_height parameter indicates how many scanlines we are passing in. It
+ * must be a multiple of 4.
+ *
+ * The in parameter points to an array of scanlines, each with width samples in
+ * sample_fmt format. There must be at least strip_height scanlines in the
+ * array.
+ *
+ * The ty parameter indicates how far our mapped sampling position is from the
+ * center of the strip.
+ *
+ * Note that all scanlines in the strip must be populated, even when this
+ * requires scanlines that are less than 0 or larger than the height of the
+ * source image.
+ */
+void strip_scale(void **in, long strip_height, long width, void *out,
+        enum oil_fmt fmt, float ty);
+
+#endif
