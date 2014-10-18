@@ -1,0 +1,60 @@
+liboil
+======
+
+A C library for resizing images. It currently does all resizing with a
+catmull-rom interpolator. This library aims for fast performance, low memory
+use, and accuracy.
+
+Requirements
+------------
+
+libjpeg development headers and libpng development headers are required for the
+oil executable.
+
+Building
+--------
+
+Running make will generate the oil executable:
+
+    $ make
+
+Testing
+-------
+
+Oil includes a test binary that compares the output of the resizer to a
+reference implementation. You can build it with:
+
+    $ make test
+
+And run it with:
+
+    $ ./test
+
+Some tests currently fail against the reference implementation. Although these
+failures are probably imperceptable, they are currently being left in place so
+that they can be evaluated.
+
+License
+--------
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Timothy Elliott
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
