@@ -287,11 +287,9 @@ static int jpeginfo(FILE *input, FILE *output)
 	jpeg_read_header(&dinfo, TRUE);
 	cs = jpeg_color_space_to_str(dinfo.out_color_space);
 
-	printf("{\n");
-	printf("  \"width\": %d,\n", dinfo.image_width);
-	printf("  \"height\": %d,\n", dinfo.image_height);
-	printf("  \"color_space\": %s\n", cs);
-	printf("}\n");
+	printf("width:       %20u\n", dinfo.image_width);
+	printf("height:      %20u\n", dinfo.image_height);
+	printf("color_space: %20s\n", cs);
 
 	jpeg_destroy_decompress(&dinfo);
 
@@ -613,11 +611,9 @@ static int pnginfo(FILE *input, FILE *output)
 
 	cs = ctype_to_str(png_get_color_type(png, info));
 
-	printf("{\n");
-	printf("  \"width\": %ld,\n", png_get_image_width(png, info));
-	printf("  \"height\": %ld,\n", png_get_image_height(png, info));
-	printf("  \"color_space\": %s\n", cs);
-	printf("}\n");
+	printf("width:       %20lu\n", png_get_image_width(png, info));
+	printf("height:      %20lu\n", png_get_image_height(png, info));
+	printf("color_space: %20s\n", cs);
 
 	png_destroy_read_struct(&png, &info, NULL);
 	return 0;
