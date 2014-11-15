@@ -82,13 +82,12 @@ static void yscaler_map_pos(struct yscaler *ys)
 }
 
 void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
-	uint32_t width, uint32_t buflen)
+	uint32_t buflen)
 {
 	uint32_t taps;
 
 	ys->in_height = in_height;
 	ys->out_height = out_height;
-	ys->width = width;
 	ys->in_pos = 0;
 	ys->out_pos = 0;
 
@@ -126,13 +125,14 @@ unsigned char *yscaler_next(struct yscaler *ys)
 	return 0;
 }
 
-void yscaler_scale(struct yscaler *ys, uint8_t *out, uint8_t cmp, uint8_t opts)
+void yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width,
+	uint8_t cmp, uint8_t opts)
 {
 	struct strip *st;
 
 	st = &ys->strip;
-	strip_scale((void **)st->virt, st->height, ys->width, (void *)out,
-		ys->ty, cmp, opts);
+	strip_scale((void **)st->virt, st->height, width, (void *)out, ys->ty,
+		cmp, opts);
 	ys->out_pos++;
 	yscaler_map_pos(ys);
 }

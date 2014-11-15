@@ -171,7 +171,7 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 	buf_len = hdr.width * hdr.cmp;
 	scaled_sl = malloc(buf_len);
 
-	yscaler_init(&ys, hdr.height, height, hdr.width, buf_len);
+	yscaler_init(&ys, hdr.height, height, buf_len);
 	for (i=0; i<height; i++) {
 		while ((tmp = yscaler_next(&ys))) {
 			if (!fread(tmp, buf_len, 1, input)) {
@@ -179,7 +179,7 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 				break;
 			}
 		}
-		yscaler_scale(&ys, scaled_sl, hdr.cmp, hdr.opts);
+		yscaler_scale(&ys, scaled_sl, hdr.width, hdr.cmp, hdr.opts);
 		if (!fwrite(scaled_sl, buf_len, 1, output)) {
 			ret = 1;
 			break;

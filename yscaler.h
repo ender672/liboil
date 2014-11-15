@@ -14,7 +14,6 @@ struct strip {
 struct yscaler {
 	uint32_t in_height;
 	uint32_t out_height;
-	uint32_t width;
 	struct strip strip;
 	uint32_t in_pos;
 	uint32_t out_pos;
@@ -23,9 +22,10 @@ struct yscaler {
 };
 
 void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
-	uint32_t width, uint32_t buflen);
+	uint32_t buflen);
 void yscaler_free(struct yscaler *ys);
 unsigned char *yscaler_next(struct yscaler *ys);
-void yscaler_scale(struct yscaler *ys, uint8_t *out, uint8_t cmp, uint8_t opts);
+void yscaler_scale(struct yscaler *ys, uint8_t *out,  uint32_t width,
+	uint8_t cmp, uint8_t opts);
 
 #endif
