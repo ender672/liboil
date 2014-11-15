@@ -122,26 +122,6 @@ long calc_taps(long dim_in, long dim_out)
 }
 
 /**
- * Return the sample size in bytes for the given sample format.
- */
-int sample_size(enum oil_fmt fmt)
-{
-	switch (fmt) {
-	case OIL_GREYSCALE:
-		return 1;
-	case OIL_GREYSCALE_ALPHA:
-		return 2;
-	case OIL_RGB:
-		return 3;
-	case OIL_RGBX:
-	case OIL_RGBA:
-		return 4;
-	default:
-		return 0;
-	}
-}
-
-/**
  * Helper macros to extract byte components from an int32_t holding rgba.
  */
 #define rgba_r(x) ((x) & 0x000000FF)
@@ -174,24 +154,6 @@ static float catrom(float x)
 	if (x<1)
 		return (3*x*x*x - 5*x*x + 2) / 2;
 	return (-1*x*x*x + 5*x*x - 8*x + 4) / 2;
-}
-
-/**
- * Mitchell interpolator.
- */
-static float mitchell(float x)
-{
-	if (x<1)
-		return (7*x*x*x - 12*x*x + 5 + 1/3.0) / 6;
-	return (-7/3.0*x*x*x + 12*x*x - 20*x + 10 + 2/3.0) / 6;
-}
-
-/**
- * Linear interpolator.
- */
-static float linear(float x)
-{
-	return 1 - x;
 }
 
 /**
@@ -298,8 +260,8 @@ static void yscale_rgbx(long width, long height, fix1_30 *coeffs,
 	}
 }
 
-void strip_scale(void **in, long strip_height, long width, void *out,
-	enum oil_fmt fmt, float ty)
+void strip_scale(void **in, long strip_height, long width, void *out, float ty,
+	int cmp, int opts)
 {
 	fix1_30 *coeffs;
 	long tap_mult;
@@ -308,19 +270,15 @@ void strip_scale(void **in, long strip_height, long width, void *out,
 	coeffs = malloc(strip_height * sizeof(fix1_30));
 	calc_coeffs(coeffs, ty, tap_mult);
 
-	switch (fmt) {
-	case OIL_RGBA:
-		yscale_rgba(width, strip_height, coeffs, (uint32_t **)in,
-			(uint32_t *)out);
-		break;
-	case OIL_RGBX:
+	if (cmp == 4 && (opts & OIL_FILLER)) {
 		yscale_rgbx(width, strip_height, coeffs, (uint32_t **)in,
 			(uint32_t *)out);
-		break;
-	default:
-		yscale_gen(sample_size(fmt) * width, strip_height, coeffs,
+	} else if (cmp == 4) {
+		yscale_rgba(width, strip_height, coeffs, (uint32_t **)in,
+			(uint32_t *)out);
+	} else {
+		yscale_gen(cmp * width, strip_height, coeffs,
 			(unsigned char **)in, (unsigned char *)out);
-		break;
 	}
 
 	free(coeffs);
@@ -380,19 +338,15 @@ static uint32_t sample_rgbx(long taps, fix1_30 *coeffs, uint32_t *in)
 	return fix33_30_to_rgbx(r, g, b);
 }
 
-static void xscale_set_sample(enum oil_fmt fmt, long taps, fix1_30 *coeffs,
-	void *in, void *out)
+static void xscale_set_sample(long taps, fix1_30 *coeffs, void *in, void *out,
+	int cmp, int opts)
 {
-	switch (fmt) {
-	case OIL_RGBA:
-		*(uint32_t *)out = sample_rgba(taps, coeffs, (uint32_t *)in);
-		break;
-	case OIL_RGBX:
+	if (cmp == 4 && (opts & OIL_FILLER)) {
 		*(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
-		break;
-	default:
-		sample_generic(sample_size(fmt), taps, coeffs, in, out);
-		break;
+	} else if (cmp == 4) {
+		*(uint32_t *)out = sample_rgba(taps, coeffs, (uint32_t *)in);
+	} else {
+		sample_generic(cmp, taps, coeffs, in, out);
 	}
 }
 
@@ -453,13 +407,12 @@ static void padded_sl_extend_edges(struct padded_sl *psl)
 }
 
 void xscale(unsigned char *in, long in_width, unsigned char *out,
-	long out_width, enum oil_fmt fmt)
+	long out_width, int cmp, int opts)
 {
 	float tx;
 	fix1_30 *coeffs;
 	long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps, tap_mult;
 	unsigned char *out_pos, *rpadv, *tmp;
-	int cmp;
 	struct padded_sl psl;
 
 	tap_mult = calc_tap_mult(in_width, out_width);
@@ -469,7 +422,6 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 	scale_gcd = gcd(in_width, out_width);
 	in_chunk = in_width / scale_gcd;
 	out_chunk = out_width / scale_gcd;
-	cmp = sample_size(fmt);
 
 	if (in_width < taps * 2) {
 		padded_sl_init(&psl, in_width, taps / 2 + 1, cmp);
@@ -500,7 +452,7 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 				tmp = in;
 			}
 			tmp += xsmp_i * cmp;
-			xscale_set_sample(fmt, taps, coeffs, tmp, out_pos);
+			xscale_set_sample(taps, coeffs, tmp, out_pos, cmp, opts);
 			out_pos += out_chunk * cmp;
 
 			xsmp_i += in_chunk;

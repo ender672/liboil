@@ -5,44 +5,6 @@
 #include "stdio.h"
 #include "math.h"
 
-static void print_sl(unsigned char *sl, long width, enum oil_fmt fmt)
-{
-	int cmp, j;
-	long i;
-
-	cmp = sample_size(fmt);
-
-	for (i=0; i<width; i++) {
-		for(j=0; j<cmp; j++) {
-			if (fmt == OIL_RGBX && i == 4) {
-				continue;
-			}
-			if (i > 0 || j > 0) {
-				printf(", ");
-			}
-			printf("%d", sl[i * cmp + j]);			
-		}
-	}
-
-	printf("\n");
-}
-
-static void read_sl(unsigned char *sl, long width, enum oil_fmt fmt)
-{
-	FILE *fp;
-	fp = fopen("scanline.bin", "r");
-	fread(sl, 1, sample_size(fmt) * width, fp);
-	fclose(fp);
-}
-
-static void write_sl(unsigned char *sl, long width, enum oil_fmt fmt)
-{
-	FILE *fp;
-	fp = fopen("scanline.bin", "w");
-	fwrite(sl, 1, sample_size(fmt) * width, fp);
-	fclose(fp);
-}
-
 /* Precise calculation of reverse map. */
 static long double map(long dim_in, long dim_out, long pos)
 {
@@ -86,26 +48,6 @@ static void calc_coeffs(long double *coeffs, long double offset, long tap_mult)
 	}
 }
 
-static void test_sample_size()
-{
-	int res;
-
-	res = sample_size(OIL_GREYSCALE);
-	assert(res == 1);
-
-	res = sample_size(OIL_GREYSCALE_ALPHA);
-	assert(res == 2);
-
-	res = sample_size(OIL_RGB);
-	assert(res == 3);
-
-	res = sample_size(OIL_RGBA);
-	assert(res == 4);
-
-	res = sample_size(OIL_RGBX);
-	assert(res == 4);
-}
-
 unsigned char clamp(long double x)
 {
 	if (x < 0) {
@@ -128,7 +70,7 @@ long double get_delta(long double expected, unsigned char actual)
 }
 
 void strip_scale_check(unsigned char **in, long taps, long width,
-	unsigned char *out, enum oil_fmt fmt, long double ty)
+	unsigned char *out, int cmp, int opts, long double ty)
 {
 	long i, j, len, tap_mult, fails;
 	long double *coeffs, exp_val, delta, max_delta;
@@ -136,13 +78,13 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 	fails = 0;
 	max_delta = 0;
 
-	len = width * sample_size(fmt);
+	len = width * cmp;
 	tap_mult = taps / 4;
 	coeffs = malloc(taps * sizeof(long double));
 	calc_coeffs(coeffs, ty, tap_mult);
 
 	for (i=0; i<len; i++) {
-		if (fmt == OIL_RGBX && i%4 == 3) {
+		if (cmp == 4 && (opts & OIL_FILLER) && i%4 == 3) {
 			continue;
 		}
 		exp_val = 0;
@@ -161,28 +103,27 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 
 	free(coeffs);
 	if (fails > 0) {
-		printf("(y) len: %ld, cmp: %d, ty: %.20Lf, fails: %ld, max_delta: %.20Lf\n", len, sample_size(fmt), ty, fails, max_delta);
+		printf("(y) len: %ld, cmp: %d, ty: %.20Lf, fails: %ld, max_delta: %.20Lf\n", len, cmp, ty, fails, max_delta);
 	}
 }
 
 static void validate_scanline(unsigned char *in, long width_in,
-	unsigned char *out, long width_out, enum oil_fmt fmt)
+	unsigned char *out, long width_out, int cmp, int opts)
 {
 	long i, k, smp_i, smp_safe, tap_mult, fails, taps;
 	long double *coeffs, smp, exp_val, delta, max_delta;
-	int j, cmp;
+	int j;
 
 	fails = 0;
 	max_delta = 0;
 
-	cmp = sample_size(fmt);
 	taps = calc_taps(width_in, width_out);
 	tap_mult = taps / 4;
 	coeffs = malloc(taps * sizeof(long double));
 
 	for (i=0; i<width_out; i++) {
 		for (j=0; j<cmp; j++) {
-			if (fmt == OIL_RGBX && j == 3) {
+			if (cmp == 4 && (opts & OIL_FILLER) && j == 3) {
 				continue;
 			}
 			smp = map(width_in, width_out, i);
@@ -223,18 +164,16 @@ static void fill_rand(unsigned char *buf, long len)
 	}	
 }
 
-static void test_xscale(long width_in, long width_out, enum oil_fmt fmt)
+static void test_xscale(long width_in, long width_out, int cmp, int opts)
 {
 	unsigned char *inbuf, *outbuf;
-	int cmp;
 
-	cmp = sample_size(fmt);
 	inbuf = malloc(width_in * cmp);
 	fill_rand(inbuf, width_in * cmp);
 	outbuf = malloc(width_out * cmp);
 
-	xscale(inbuf, width_in, outbuf, width_out, fmt);
-	validate_scanline(inbuf, width_in, outbuf, width_out, fmt);
+	xscale(inbuf, width_in, outbuf, width_out, cmp, opts);
+	validate_scanline(inbuf, width_in, outbuf, width_out, cmp, opts);
 
 	free(outbuf);
 	free(inbuf);
@@ -242,11 +181,11 @@ static void test_xscale(long width_in, long width_out, enum oil_fmt fmt)
 
 static void test_xscale_fmt(long width_in, long width_out)
 {
-	test_xscale(width_in, width_out, OIL_GREYSCALE);
-	test_xscale(width_in, width_out, OIL_GREYSCALE_ALPHA);
-	test_xscale(width_in, width_out, OIL_RGB);
-	test_xscale(width_in, width_out, OIL_RGBA);
-	test_xscale(width_in, width_out, OIL_RGBX);
+	test_xscale(width_in, width_out, 1, 0);
+	test_xscale(width_in, width_out, 2, 0);
+	test_xscale(width_in, width_out, 3, 0);
+	test_xscale(width_in, width_out, 4, 0);
+	test_xscale(width_in, width_out, 4, OIL_FILLER);
 }
 
 static void test_xscale_all()
@@ -339,13 +278,11 @@ static void test_split_map_all()
 	test_split_map(19, 10000);
 }
 
-static void test_yscale(long taps, long width, enum oil_fmt fmt, float ty)
+static void test_yscale(long taps, long width, int cmp, int opts, float ty)
 {
 	unsigned char **scanlines, *out;
 	long i;
-	int cmp;
 
-	cmp = sample_size(fmt);
 	scanlines = malloc(taps * sizeof(unsigned char *));
 	out = malloc(width * cmp);
 
@@ -354,8 +291,8 @@ static void test_yscale(long taps, long width, enum oil_fmt fmt, float ty)
 		fill_rand(scanlines[i], width * cmp);
 	}
 
-	strip_scale((void **)scanlines, taps, width, (void *)out, fmt, ty);
-	strip_scale_check(scanlines, taps, width, out, fmt, ty);
+	strip_scale((void **)scanlines, taps, width, (void *)out, ty, cmp, opts);
+	strip_scale_check(scanlines, taps, width, out, cmp, opts, ty);
 
 	for (i=0; i<taps; i++) {
 		free(scanlines[i]);
@@ -366,16 +303,15 @@ static void test_yscale(long taps, long width, enum oil_fmt fmt, float ty)
 
 static void test_yscale_all()
 {
-	test_yscale(4, 1000, OIL_RGBA, 0.2345);
-	test_yscale(8, 1000, OIL_RGBX, 0.5);
-	test_yscale(12, 1000, OIL_GREYSCALE, 0.0);
-	test_yscale(12, 1000, OIL_RGB, 0.00005);
-	test_yscale(12, 1000, OIL_GREYSCALE_ALPHA, 0.99999);
+	test_yscale(4, 1000, 4, 0, 0.2345);
+	test_yscale(8, 1000, 4, OIL_FILLER, 0.5);
+	test_yscale(12, 1000, 1, 0, 0.0);
+	test_yscale(12, 1000, 3, 0, 0.00005);
+	test_yscale(12, 1000, 2, 0, 0.99999);
 }
 
 int main()
 {
-	test_sample_size();
 	test_xscale_all();
 	test_calc_taps();
 	test_split_map_all();

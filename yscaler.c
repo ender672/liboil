@@ -7,7 +7,7 @@
  *
  * Scanlines are allocated with a size of len bytes.
  */
-static void strip_init(struct strip *st, uint32_t height, uint32_t len)
+static void strip_init(struct strip *st, uint32_t height, size_t buflen)
 {
 	uint32_t i;
 
@@ -16,7 +16,7 @@ static void strip_init(struct strip *st, uint32_t height, uint32_t len)
 	st->sl = malloc(height * sizeof(uint8_t *));
 	st->virt = malloc(height * sizeof(uint8_t *));
 	for (i=0; i<height; i++) {
-		st->sl[i] = malloc(len);
+		st->sl[i] = malloc(buflen);
 		st->virt[i] = st->sl[0];
 	}
 }
@@ -82,19 +82,18 @@ static void yscaler_map_pos(struct yscaler *ys)
 }
 
 void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
-	uint32_t width, enum oil_fmt fmt)
+	uint32_t width, uint32_t buflen)
 {
 	uint32_t taps;
 
 	ys->in_height = in_height;
 	ys->out_height = out_height;
 	ys->width = width;
-	ys->fmt = fmt;
 	ys->in_pos = 0;
 	ys->out_pos = 0;
 
 	taps = calc_taps(in_height, out_height);
-	strip_init(&ys->strip, taps, width * sample_size(fmt));
+	strip_init(&ys->strip, taps, buflen);
 	yscaler_map_pos(ys);
 }
 
@@ -118,7 +117,7 @@ unsigned char *yscaler_next(struct yscaler *ys)
 	while (ys->in_pos < ys->in_target) {
 		ys->in_pos++;
 		strip_top_shift(&ys->strip);
-		if (ys->in_pos < ys->in_height - 1) {
+		if (ys->in_pos <= ys->in_height) {
 			strip_bottom_shift(st);
 			return strip_bottom(st);
 		}
@@ -127,13 +126,13 @@ unsigned char *yscaler_next(struct yscaler *ys)
 	return 0;
 }
 
-void yscaler_scale(struct yscaler *ys, uint8_t *out)
+void yscaler_scale(struct yscaler *ys, uint8_t *out, uint8_t cmp, uint8_t opts)
 {
 	struct strip *st;
 
 	st = &ys->strip;
 	strip_scale((void **)st->virt, st->height, ys->width, (void *)out,
-		ys->fmt, ys->ty);
+		ys->ty, cmp, opts);
 	ys->out_pos++;
 	yscaler_map_pos(ys);
 }

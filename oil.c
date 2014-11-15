@@ -14,7 +14,8 @@
 struct header {
 	uint8_t sig1;
 	uint8_t sig2;
-	uint16_t fmt;
+	uint8_t cmp;
+	uint8_t opts;
 	uint32_t width;
 	uint32_t height;
 };
@@ -35,16 +36,18 @@ static int read_header(FILE *f, struct header *hdr)
 	return 0;
 }
 
-static int write_header(FILE *f, uint32_t width, uint32_t height, uint16_t fmt)
+static int write_header(FILE *f, uint32_t width, uint32_t height, uint8_t cmp,
+	uint8_t opts)
 {
 	struct header hdr;
 	size_t io_len;
 
 	hdr.sig1 = 'O';
 	hdr.sig2 = 'L';
-	hdr.fmt = fmt;
 	hdr.width = width;
 	hdr.height = height;
+	hdr.cmp = cmp;
+	hdr.opts = opts;
 
 	io_len = fwrite(&hdr, 1, sizeof(struct header), f);
 	if (io_len != sizeof(struct header)) {
@@ -60,7 +63,7 @@ static int write_header(FILE *f, uint32_t width, uint32_t height, uint16_t fmt)
 
 static int scalex(FILE *input, FILE *output, uint32_t width)
 {
-	int cmp, ret;
+	int ret;
 	uint32_t i;
 	uint8_t *inbuf, *outbuf;
 	size_t iolen, inbuf_len, outbuf_len;
@@ -70,14 +73,13 @@ static int scalex(FILE *input, FILE *output, uint32_t width)
 		return 1;
 	}
 
-	if (write_header(output, width, hdr.height, hdr.fmt)) {
+	if (write_header(output, width, hdr.height, hdr.cmp, hdr.opts)) {
 		return 1;
 	}
 
 	ret = 0;
-	cmp = sample_size(hdr.fmt);
-	inbuf_len = hdr.width * cmp;
-	outbuf_len = width * cmp;
+	inbuf_len = hdr.width * hdr.cmp;
+	outbuf_len = width * hdr.cmp;
 
 	inbuf = malloc(inbuf_len);
 	outbuf = malloc(outbuf_len);
@@ -88,7 +90,7 @@ static int scalex(FILE *input, FILE *output, uint32_t width)
 			ret = 1;
 			break;
 		}
-		xscale(inbuf, hdr.width, outbuf, width, hdr.fmt);
+		xscale(inbuf, hdr.width, outbuf, width, hdr.cmp, hdr.opts);
 		iolen = fwrite(outbuf, 1, outbuf_len, output);
 		if (iolen != outbuf_len) {
 			ret = 1;
@@ -161,15 +163,15 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 		return 1;
 	}
 
-	if (write_header(output, hdr.width, height, hdr.fmt)) {
+	if (write_header(output, hdr.width, height, hdr.cmp, hdr.opts)) {
 		return 1;
 	}
 
 	ret = 0;
-	buf_len = hdr.width * sample_size(hdr.fmt);
+	buf_len = hdr.width * hdr.cmp;
 	scaled_sl = malloc(buf_len);
 
-	yscaler_init(&ys, hdr.height, height, hdr.width, hdr.fmt);
+	yscaler_init(&ys, hdr.height, height, hdr.width, buf_len);
 	for (i=0; i<height; i++) {
 		while ((tmp = yscaler_next(&ys))) {
 			if (!fread(tmp, buf_len, 1, input)) {
@@ -177,7 +179,7 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 				break;
 			}
 		}
-		yscaler_scale(&ys, scaled_sl);
+		yscaler_scale(&ys, scaled_sl, hdr.cmp, hdr.opts);
 		if (!fwrite(scaled_sl, buf_len, 1, output)) {
 			ret = 1;
 			break;
@@ -332,20 +334,6 @@ int jpeginfo_cmd(int argc, char *argv[])
  * JPEG Decoder.
  */
 
-static enum oil_fmt jpeg_color_space_to_fmt(J_COLOR_SPACE jcs)
-{
-	switch (jcs) {
-	case JCS_GRAYSCALE:
-		return OIL_GREYSCALE;
-	case JCS_RGB:
-		return OIL_RGB;
-	case JCS_EXT_RGBX:
-		return OIL_RGBX;
-	default:
-		return OIL_UNKNOWN;
-	}
-}
-
 static int rjpeg(FILE *input, FILE *output, int rgbx, int downscale)
 {
 	struct jpeg_decompress_struct dinfo;
@@ -353,10 +341,10 @@ static int rjpeg(FILE *input, FILE *output, int rgbx, int downscale)
 	uint32_t i;
 	uint8_t *buf;
 	size_t buf_len, io_len;
-	int ret;
-	enum oil_fmt fmt;
+	int ret, opts;
 
 	ret = 0;
+	opts = 0;
 
 	dinfo.err = jpeg_std_error(&jerr);
 	jpeg_create_decompress(&dinfo);
@@ -364,13 +352,12 @@ static int rjpeg(FILE *input, FILE *output, int rgbx, int downscale)
 	jpeg_read_header(&dinfo, TRUE);
 
 	if (rgbx && dinfo.out_color_space == JCS_RGB) {
+		opts = OIL_FILLER;
 		dinfo.out_color_space = JCS_EXT_RGBX;
-		jpeg_calc_output_dimensions(&dinfo);
 	}
 
 	if (downscale) {
 		dinfo.scale_denom = downscale;
-		jpeg_calc_output_dimensions(&dinfo);
 	}
 
 	jpeg_start_decompress(&dinfo);
@@ -378,13 +365,8 @@ static int rjpeg(FILE *input, FILE *output, int rgbx, int downscale)
 	buf_len = dinfo.output_width * dinfo.output_components;
 	buf = malloc(buf_len);
 
-	fmt = jpeg_color_space_to_fmt(dinfo.out_color_space);
-	if (fmt == OIL_UNKNOWN) {
-		ret = 1;
-		goto cleanup_exit;
-	}
-
-	if (write_header(output, dinfo.output_width, dinfo.output_height, fmt)) {
+	if (write_header(output, dinfo.output_width, dinfo.output_height,
+		dinfo.output_components, opts)) {
 		ret = 1;
 		goto cleanup_exit;
 	}
@@ -473,21 +455,6 @@ int rjpeg_cmd(int argc, char *argv[])
  * JPEG Encoder.
  */
 
-static J_COLOR_SPACE fmt_to_jpeg_color_space(enum oil_fmt fmt)
-{
-	switch (fmt) {
-	case OIL_GREYSCALE:
-		return JCS_GRAYSCALE;
-	case OIL_RGB:
-		return JCS_RGB;
-	case OIL_RGBA:
-	case OIL_RGBX:
-		return JCS_EXT_RGBX;
-	default:
-		return JCS_UNKNOWN;
-	}
-}
-
 static int wjpeg(FILE *input, FILE *output)
 {
 	struct jpeg_compress_struct cinfo;
@@ -495,7 +462,7 @@ static int wjpeg(FILE *input, FILE *output)
 	uint32_t i;
 	uint8_t *buf;
 	size_t buf_len, io_len;
-	int ret, cmp;
+	int ret;
 	struct header hdr;
 
 	if (read_header(input, &hdr)) {
@@ -504,8 +471,7 @@ static int wjpeg(FILE *input, FILE *output)
 	}
 
 	ret = 0;
-	cmp = sample_size(hdr.fmt);
-	buf_len = hdr.width * cmp;
+	buf_len = hdr.width * hdr.cmp;
 
 	buf = malloc(buf_len);
 
@@ -514,12 +480,19 @@ static int wjpeg(FILE *input, FILE *output)
 	jpeg_stdio_dest(&cinfo, output);
 	cinfo.image_width = hdr.width;
 	cinfo.image_height = hdr.height;
-	cinfo.in_color_space = fmt_to_jpeg_color_space(hdr.fmt);
-	cinfo.input_components = cmp;
+	cinfo.input_components = hdr.cmp;
 
-	if (cinfo.in_color_space == JCS_UNKNOWN) {
-		fprintf(stderr, "unknown color space!\n");
-		ret = 1;
+	switch (hdr.cmp) {
+	case 1:
+		cinfo.in_color_space = JCS_GRAYSCALE;
+		break;
+	case 3:
+		cinfo.in_color_space = JCS_RGB;
+		break;
+	case 4:
+		cinfo.in_color_space = JCS_EXT_RGBX;
+		break;
+	default:
 		goto cleanup_exit;
 	}
 
@@ -655,88 +628,40 @@ int pnginfo_cmd(int argc, char *argv[])
  * PNG Decoder.
  */
 
- static enum oil_fmt ctype_to_fmt(png_byte ctype)
-{
-	switch (ctype) {
-	case PNG_COLOR_TYPE_GRAY:
-		return OIL_GREYSCALE;
-	case PNG_COLOR_TYPE_GRAY_ALPHA:
-		return OIL_GREYSCALE_ALPHA;
-	case PNG_COLOR_TYPE_PALETTE: /* Palette images are converted to RGB */
-	case PNG_COLOR_TYPE_RGB:
-		return OIL_RGBX;
-	case PNG_COLOR_TYPE_RGB_ALPHA:
-		return OIL_RGBA;
-	}
-
-	return OIL_UNKNOWN;
-}
-
-static void png_normalize_input(png_structp read_ptr, png_infop read_i_ptr)
-{
-	png_byte ctype;
-	int bit_depth;
-
-	bit_depth = png_get_bit_depth(read_ptr, read_i_ptr);
-	ctype = png_get_color_type(read_ptr, read_i_ptr);
-
-	if (ctype == PNG_COLOR_TYPE_GRAY && bit_depth < 8) {
-		png_set_gray_1_2_4_to_8(read_ptr);
-	}
-
-	if (bit_depth < 8) {
-		png_set_packing(read_ptr);
-	} else if (bit_depth == 16) {
-		png_set_strip_16(read_ptr);
-	}
-
-	if (png_get_valid(read_ptr, read_i_ptr, PNG_INFO_tRNS)) {
-		png_set_tRNS_to_alpha(read_ptr);
-	}
-
-	switch (ctype) {
-	case PNG_COLOR_TYPE_PALETTE:
-		png_set_palette_to_rgb(read_ptr);
-	case PNG_COLOR_TYPE_RGB: /* fallthrough - both types need filler */
-		png_set_filler(read_ptr, 0, PNG_FILLER_AFTER);
-	}
-
-	png_read_update_info(read_ptr, read_i_ptr);
-}
-
 static int rpng(FILE *input, FILE *output)
 {
 	png_structp png;
 	png_infop info;
-	png_byte ctype;
-	enum oil_fmt fmt;
 	uint32_t i, width, height;
 	uint8_t *buf;
 	size_t buf_len, io_len;
-	int ret;
+	int ret, opts;
 
 	ret = 0;
+	opts = 0;
 
 	png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	info = png_create_info_struct(png);
 	png_init_io(png, input);
 	png_read_info(png, info);
 
-	png_normalize_input(png, info);
-
-	ctype = png_get_color_type(png, info);
-	fmt = ctype_to_fmt(ctype);
-	if (fmt == OIL_UNKNOWN) {
-		return -1;
-	}
+	png_set_packing(png);
+	png_set_strip_16(png);
+	png_set_expand(png);
+	png_read_update_info(png, info);
 
 	width = png_get_image_width(png, info);
 	height = png_get_image_height(png, info);
 
-	buf_len = width * sample_size(fmt);
+	buf_len = png_get_rowbytes(png, info);
 	buf = malloc(buf_len);
 
-	if (write_header(output, width, height, fmt)) {
+	if (png_get_color_type(png, info) == PNG_COLOR_TYPE_RGB) {
+		png_set_filler(png, 0, PNG_FILLER_AFTER);
+		opts = OIL_FILLER;
+	}
+
+	if (write_header(output, width, height, png_get_channels(png, info), opts)) {
 		ret = 1;
 		goto cleanup_exit;
 	}
@@ -795,29 +720,6 @@ int rpng_cmd(int argc, char *argv[])
  * PNG Encoder.
  */
 
-static int fmt_to_ctype(enum oil_fmt fmt, png_byte *ctype)
-{
-	switch (fmt) {
-	case OIL_GREYSCALE:
-		*ctype = PNG_COLOR_TYPE_GRAY;
-		break;
-	case OIL_GREYSCALE_ALPHA:
-		*ctype = PNG_COLOR_TYPE_GRAY_ALPHA;
-		break;
-	case OIL_RGB:
-	case OIL_RGBX:
-		*ctype = PNG_COLOR_TYPE_RGB;
-		break;
-	case OIL_RGBA:
-		*ctype = PNG_COLOR_TYPE_RGB_ALPHA;
-		break;
-	default:
-		return -1;
-	}
-
-	return 0;
-}
-
 static int wpng(FILE *input, FILE *output)
 {
 	png_structp png;
@@ -826,7 +728,7 @@ static int wpng(FILE *input, FILE *output)
 	uint32_t i;
 	uint8_t *buf;
 	size_t buf_len, io_len;
-	int ret, cmp;
+	int ret;
 	struct header hdr;
 
 	if (read_header(input, &hdr)) {
@@ -834,20 +736,25 @@ static int wpng(FILE *input, FILE *output)
 		return 1;
 	}
 
-	if (fmt_to_ctype(hdr.fmt, &ctype)) {
-		fprintf(stderr, "unable to determine color type!\n");
-		return 1;
-	}
-
 	ret = 0;
-	cmp = sample_size(hdr.fmt);
-	buf_len = hdr.width * cmp;
-
+	buf_len = hdr.width * hdr.cmp;
 	buf = malloc(buf_len);
 
 	png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	info = png_create_info_struct(png);
 	png_init_io(png, output);
+
+	if (hdr.cmp == 1) {
+		ctype = PNG_COLOR_TYPE_GRAY;
+	} else if (hdr.cmp == 2) {
+		ctype = PNG_COLOR_TYPE_GRAY_ALPHA;
+	} else if (hdr.cmp == 3 || (hdr.cmp == 4 && hdr.opts & OIL_FILLER)) {
+		ctype = PNG_COLOR_TYPE_RGB;
+	} else if (hdr.cmp == 4) {
+		ctype = PNG_COLOR_TYPE_RGB_ALPHA;
+	} else {
+		goto cleanup_exit;
+	}
 
 	png_set_IHDR(png, info, hdr.width, hdr.height, 8, ctype,
 		PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
@@ -855,7 +762,7 @@ static int wpng(FILE *input, FILE *output)
 
 	png_write_info(png, info);
 
-	if (hdr.fmt == OIL_RGBX) {
+	if (hdr.opts & OIL_FILLER) {
 		png_set_filler(png, 0, PNG_FILLER_AFTER);
 	}
 
