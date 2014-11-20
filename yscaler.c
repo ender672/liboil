@@ -1,4 +1,5 @@
 #include "yscaler.h"
+#include "resample.h"
 #include <stdlib.h>
 #include <stdint.h>
 

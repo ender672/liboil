@@ -1,7 +1,6 @@
 #ifndef YSCALER_H
 #define YSCALER_H
 
-#include "resample.h"
 #include <stdint.h>
 
 struct strip {
