@@ -628,13 +628,66 @@ int pnginfo_cmd(int argc, char *argv[])
  * PNG Decoder.
  */
 
+int rpng_interlaced(png_structp png, png_infop info, FILE *output)
+{
+	uint8_t **sl;
+	uint32_t i, height;
+	size_t buf_len, io_len;
+	int ret;
+
+	ret = 0;
+
+	height = png_get_image_height(png, info);
+	sl = malloc(height * sizeof(uint8_t *));
+
+	buf_len = png_get_rowbytes(png, info);
+	for (i=0; i<height; i++) {
+		sl[i] = malloc(buf_len);
+	}
+
+	png_read_image(png, sl);
+
+	for (i=0; i<height; i++) {
+		io_len = fwrite(sl[i], 1, buf_len, output);
+		if (io_len != buf_len) {
+			ret = 1;
+			break;
+		}
+	}
+
+	for (i=0; i<height; i++) {
+		free(sl[i]);
+	}
+	free(sl);
+	return ret;
+}
+
+int rpng_noninterlaced(png_structp png, png_infop info, FILE *output)
+{
+	uint8_t *buf;
+	uint32_t i, height;
+	size_t buf_len, io_len;
+
+	buf_len = png_get_rowbytes(png, info);
+	buf = malloc(buf_len);
+	height = png_get_image_height(png, info);
+
+	for (i=0; i<height; i++) {
+		png_read_row(png, buf, NULL);
+		io_len = fwrite(buf, 1, buf_len, output);
+		if (io_len != buf_len) {
+			return 1;
+		}
+	}
+
+	free(buf);
+	return 0;
+}
+
 static int rpng(FILE *input, FILE *output)
 {
 	png_structp png;
 	png_infop info;
-	uint32_t i, width, height;
-	uint8_t *buf;
-	size_t buf_len, io_len;
 	int ret, opts;
 
 	ret = 0;
@@ -642,45 +695,40 @@ static int rpng(FILE *input, FILE *output)
 
 	png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	info = png_create_info_struct(png);
-	png_init_io(png, input);
-	png_read_info(png, info);
 
 	png_set_packing(png);
 	png_set_strip_16(png);
 	png_set_expand(png);
-	png_read_update_info(png, info);
 
-	width = png_get_image_width(png, info);
-	height = png_get_image_height(png, info);
-
-	buf_len = png_get_rowbytes(png, info);
-	buf = malloc(buf_len);
+	png_init_io(png, input);
+	png_read_info(png, info);
 
 	if (png_get_color_type(png, info) == PNG_COLOR_TYPE_RGB) {
 		png_set_filler(png, 0, PNG_FILLER_AFTER);
+		png_read_update_info(png, info);
 		opts = OIL_FILLER;
 	}
 
-	if (write_header(output, width, height, png_get_channels(png, info), opts)) {
+	if (write_header(output, png_get_image_width(png, info),
+		png_get_image_height(png, info),
+		png_get_channels(png, info), opts)) {
 		ret = 1;
 		goto cleanup_exit;
 	}
 
-	/* TODO: Handle interlaced png by decoding all to memory. */
-
-	for (i=0; i<height; i++) {
-		png_read_row(png, buf, NULL);
-		io_len = fwrite(buf, 1, buf_len, output);
-		if (io_len != buf_len) {
-			ret = 1;
-			break;
-		}
+	switch (png_get_interlace_type(png, info)) {
+	case PNG_INTERLACE_NONE:
+		ret = rpng_noninterlaced(png, info, output);
+		break;
+	case PNG_INTERLACE_ADAM7:
+		ret = rpng_interlaced(png, info, output);
+		break;
+	default:
+		ret = 1;
 	}
 
 	cleanup_exit:
 	png_destroy_read_struct(&png, &info, NULL);
-	free(buf);
-
 	return ret;
 }
 
