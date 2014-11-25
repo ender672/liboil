@@ -26,5 +26,8 @@ void yscaler_free(struct yscaler *ys);
 unsigned char *yscaler_next(struct yscaler *ys);
 void yscaler_scale(struct yscaler *ys, uint8_t *out,  uint32_t width,
 	uint8_t cmp, uint8_t opts);
+void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
+	uint8_t opts);
 
 #endif

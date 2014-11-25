@@ -137,3 +137,31 @@ void yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width,
 	ys->out_pos++;
 	yscaler_map_pos(ys);
 }
+
+void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
+	uint8_t opts)
+{
+	uint32_t i, taps;
+	int32_t smp_i, strip_pos;
+	uint8_t **virt;
+	float ty;
+
+	taps = calc_taps(in_height, out_height);
+	virt = malloc(taps * sizeof(uint8_t *));
+	smp_i = split_map(in_height, out_height, pos, &ty);
+	strip_pos = smp_i + 1 - taps / 2;
+
+	for (i=0; i<taps; i++) {
+		if (strip_pos < 0) {
+			virt[i] = in[0];
+		} else if ((uint32_t)strip_pos > in_height - 1) {
+			virt[i] = in[in_height - 1];
+		} else {
+			virt[i] = in[strip_pos];
+		}
+		strip_pos++;
+	}
+
+	strip_scale((void **)virt, taps, width, (void *)out, ty, cmp, opts);
+}
