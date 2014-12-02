@@ -182,7 +182,7 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, long tap_mult)
 	tx = 1 - tx - taps / 2;
 
 	for (i=0; i<taps-1; i++) {
-		tmp = catrom(fabs(tx) / tap_mult) / tap_mult;
+		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
 		tmp_fixed = f_to_fix1_30(tmp);
 		coeffs[i] = tmp_fixed;
 		total += tmp_fixed;
