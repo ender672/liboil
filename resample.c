@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/**
+ * Bicubic interpolation. 2 base taps on either side.
+ */
 #define TAPS 4
 
 /**
@@ -99,26 +102,23 @@ long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
 }
 
 /**
- * When we reduce an image by a factor of two, we need to scale our resampling
- * function by two as well in order to avoid aliasing.
- *
- * Calculate the resampling scalar given input and output dimensions.
- */
-static long calc_tap_mult(long dim_in, long dim_out)
-{
-	if (dim_out > dim_in) {
-		return 1;
-	}
-	return dim_in / dim_out;
-}
-
-/**
  * Given input and output dimension, calculate the total number of taps that
  * will be needed to calculate an output sample.
+ *
+ * When we reduce an image by a factor of two, we need to scale our resampling
+ * function by two as well in order to avoid aliasing.
  */
 long calc_taps(long dim_in, long dim_out)
 {
-	return calc_tap_mult(dim_in, dim_out) * TAPS;
+	long tmp;
+
+	if (dim_out > dim_in) {
+		return TAPS;
+	}
+
+	tmp = dim_in * TAPS / dim_out;
+	/* Round up to the nearest even integer */
+	return tmp + (tmp&1);
 }
 
 /**
@@ -151,8 +151,9 @@ static uint32_t fix33_30_to_rgba(fix33_30 r, fix33_30 g, fix33_30 b, fix33_30 a)
  */
 static float catrom(float x)
 {
-	if (x<1)
+	if (x<1) {
 		return (3*x*x*x - 5*x*x + 2) / 2;
+	}
 	return (-1*x*x*x + 5*x*x - 8*x + 4) / 2;
 }
 
@@ -170,26 +171,28 @@ static fix1_30 f_to_fix1_30(float x)
  *
  * The coefficients are stored as fix1_30 fixed point ints in coeffs.
  */
-static void calc_coeffs(fix1_30 *coeffs, float tx, long tap_mult)
+static void calc_coeffs(fix1_30 *coeffs, float tx, long taps)
 {
-	long i, taps, total;
-	float tmp;
+	long i;
+	float tmp, total, tap_mult;
 	fix1_30 tmp_fixed;
 
 	total = 0;
 
-	taps = tap_mult * TAPS;
+	tap_mult = (double)taps / TAPS;
 	tx = 1 - tx - taps / 2;
 
-	for (i=0; i<taps-1; i++) {
-		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
+	for (i=0; i<taps; i++) {
+		tmp = catrom(fabsf(tx) / tap_mult);
 		tmp_fixed = f_to_fix1_30(tmp);
 		coeffs[i] = tmp_fixed;
-		total += tmp_fixed;
+		total += tmp;
 		tx += 1;
 	}
 
-	coeffs[taps-1] = ONE_FIX1_30 - total;
+	for (i=0; i<taps; i++) {
+		coeffs[i] /= total;
+	}
 }
 
 /**
@@ -264,11 +267,9 @@ void strip_scale(void **in, long strip_height, long width, void *out, float ty,
 	int cmp, int opts)
 {
 	fix1_30 *coeffs;
-	long tap_mult;
 
-	tap_mult = strip_height / TAPS;
 	coeffs = malloc(strip_height * sizeof(fix1_30));
-	calc_coeffs(coeffs, ty, tap_mult);
+	calc_coeffs(coeffs, ty, strip_height);
 
 	if (cmp == 4 && (opts & OIL_FILLER)) {
 		yscale_rgbx(width, strip_height, coeffs, (uint32_t **)in,
@@ -411,12 +412,11 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 {
 	float tx;
 	fix1_30 *coeffs;
-	long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps, tap_mult;
+	long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps;
 	unsigned char *out_pos, *rpadv, *tmp;
 	struct padded_sl psl;
 
-	tap_mult = calc_tap_mult(in_width, out_width);
-	taps = tap_mult * TAPS;
+	taps = calc_taps(in_width, out_width);
 	coeffs = malloc(taps * sizeof(fix1_30));
 
 	scale_gcd = gcd(in_width, out_width);
@@ -439,7 +439,7 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 
 	for (i=0; i<out_chunk; i++) {
 		xsmp_i = split_map(in_width, out_width, i, &tx);
-		calc_coeffs(coeffs, tx, tap_mult);
+		calc_coeffs(coeffs, tx, taps);
 
 		xsmp_i += 1 - taps / 2;
 		out_pos = out + i * cmp;

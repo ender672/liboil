@@ -5,6 +5,22 @@
 #include "stdio.h"
 #include "math.h"
 
+static long calc_taps_check(long dim_in, long dim_out)
+{
+	long double tmp;
+	int tmp_i;
+
+	if (dim_out >= dim_in) {
+		return 4;
+	}
+
+	tmp = (long double)dim_in / dim_out ;
+	tmp_i = tmp * 4;
+
+	return tmp_i + (tmp_i%2);
+}
+
+
 /* Precise calculation of reverse map. */
 static long double map(long dim_in, long dim_out, long pos)
 {
@@ -36,15 +52,20 @@ static long double catrom(long double x)
 	return cubic(0, 0.5l, x);
 }
 
-static void calc_coeffs(long double *coeffs, long double offset, long tap_mult)
+static void calc_coeffs(long double *coeffs, long double offset, long taps)
 {
-	long i, taps;
-	long double tap_offset;
+	long i;
+	long double tap_offset, tap_mult, sum;
 
-	taps = tap_mult * 4;
+	tap_mult = (long double)taps / 4;
+	sum = 0;
 	for (i=0; i<taps; i++) {
 		tap_offset = 1 - offset - taps / 2 + i;
 		coeffs[i] = catrom(fabsl(tap_offset) / tap_mult) / tap_mult;
+		sum += coeffs[i];
+	}
+	for (i=0; i<taps; i++) {
+		coeffs[i] /= sum;
 	}
 }
 
@@ -69,30 +90,44 @@ long double get_delta(long double expected, unsigned char actual)
 	return 0;
 }
 
+long double validate_sample(long taps, unsigned char *samples, long double *coeffs, unsigned char expected)
+{
+	long i;
+	long double sum;
+
+	sum = 0;
+
+	for (i=0; i<taps; i++) {
+		sum += coeffs[i] * samples[i];
+	}
+
+	return get_delta(sum, expected);
+}
+
 void strip_scale_check(unsigned char **in, long taps, long width,
 	unsigned char *out, int cmp, int opts, long double ty)
 {
-	long i, j, len, tap_mult, fails;
-	long double *coeffs, exp_val, delta, max_delta;
+	long i, j, len, fails;
+	long double *coeffs, delta, max_delta;
+	unsigned char *samples;
 
 	fails = 0;
 	max_delta = 0;
 
 	len = width * cmp;
-	tap_mult = taps / 4;
 	coeffs = malloc(taps * sizeof(long double));
-	calc_coeffs(coeffs, ty, tap_mult);
+	samples = malloc(taps * sizeof(unsigned char));
+	calc_coeffs(coeffs, ty, taps);
 
 	for (i=0; i<len; i++) {
 		if (cmp == 4 && (opts & OIL_FILLER) && i%4 == 3) {
 			continue;
 		}
-		exp_val = 0;
 		for (j=0; j<taps; j++) {
-			exp_val += coeffs[j] * in[j][i];
+			samples[j] = in[j][i];
 		}
 
-		delta = get_delta(exp_val, out[i]);
+		delta = validate_sample(taps, samples, coeffs, out[i]);
 		if (delta) {
 			fails++;
 			if (delta > max_delta) {
@@ -102,6 +137,7 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 	}
 
 	free(coeffs);
+	free(samples);
 	if (fails > 0) {
 		printf("(y) len: %ld, cmp: %d, ty: %.20Lf, fails: %ld, max_delta: %.20Lf\n", len, cmp, ty, fails, max_delta);
 	}
@@ -110,26 +146,26 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 static void validate_scanline(unsigned char *in, long width_in,
 	unsigned char *out, long width_out, int cmp, int opts)
 {
-	long i, k, smp_i, smp_safe, tap_mult, fails, taps;
-	long double *coeffs, smp, exp_val, delta, max_delta;
+	long i, k, smp_i, smp_safe, fails, taps;
+	long double *coeffs, smp, delta, max_delta;
+	unsigned char *samples;
 	int j;
 
 	fails = 0;
 	max_delta = 0;
 
 	taps = calc_taps(width_in, width_out);
-	tap_mult = taps / 4;
 	coeffs = malloc(taps * sizeof(long double));
+	samples = malloc(taps * sizeof(unsigned char));
 
-	for (i=0; i<width_out; i++) {
+	for (i=0; i<1; i++) {
 		for (j=0; j<cmp; j++) {
 			if (cmp == 4 && (opts & OIL_FILLER) && j == 3) {
 				continue;
 			}
 			smp = map(width_in, width_out, i);
 			smp_i = floorl(smp);
-			calc_coeffs(coeffs, smp - smp_i, tap_mult);
-			exp_val = 0;
+			calc_coeffs(coeffs, smp - smp_i, taps);
 			for (k=0; k<taps; k++) {
 				smp_safe = smp_i - taps / 2 + 1 + k;
 				if (smp_safe < 0) {
@@ -137,10 +173,10 @@ static void validate_scanline(unsigned char *in, long width_in,
 				} else if (smp_safe >= width_in) {
 					smp_safe = width_in - 1;
 				}
-				exp_val += coeffs[k] * in[smp_safe * cmp + j];
+				samples[k] = in[smp_safe * cmp + j];
 			}
 
-			delta = get_delta(exp_val, out[i * cmp + j]);
+			delta = validate_sample(taps, samples, coeffs, out[i * cmp + j]);
 			if (delta) {
 				fails++;
 				if (delta > max_delta) {
@@ -150,6 +186,7 @@ static void validate_scanline(unsigned char *in, long width_in,
 		}
 	}
 
+	free(samples);
 	free(coeffs);
 	if (fails > 0) {
 		printf("(x) in: %ld, out: %ld, cmp: %d, fails: %ld, max_delta: %.20Lf\n", width_in, width_out, cmp, fails, max_delta);
@@ -201,27 +238,31 @@ static void test_xscale_all()
 	test_xscale_fmt(9999, 10000);
 }
 
+static void test_calc_taps2(long dim_in, long dim_out)
+{
+	long check, res;
+
+	res = calc_taps(dim_in, dim_out);
+	check = calc_taps_check(dim_in, dim_out);
+	assert(res == check);
+}
+
 static void test_calc_taps()
 {
-	int res;
-
-	res = calc_taps(100, 100);
-	assert(res == 4);
-
-	res = calc_taps(1, 1);
-	assert(res == 4);
-
-	res = calc_taps(1, 10000);
-	assert(res == 4);
-
-	res = calc_taps(400, 200);
-	assert(res == 8);
-
-	res = calc_taps(600, 200);
-	assert(res == 12);
-
-	res = calc_taps(10000, 10);
-	assert(res == 4000);
+	test_calc_taps2(100, 100);
+	test_calc_taps2(1, 1);
+	test_calc_taps2(1, 10000);
+	test_calc_taps2(10000, 1);
+	test_calc_taps2(400, 200);
+	test_calc_taps2(200, 400);
+	test_calc_taps2(600, 200);
+	test_calc_taps2(200, 600);
+	test_calc_taps2(10000, 10);
+	test_calc_taps2(10, 10000);
+	test_calc_taps2(10003, 17);
+	test_calc_taps2(17, 10003);
+	test_calc_taps2(10000, 9999);
+	test_calc_taps2(9999, 10000);
 }
 
 /* Precise calculation of bottom of scanline */
