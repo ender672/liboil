@@ -179,7 +179,7 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, long taps)
 
 	total = 0;
 
-	tap_mult = (double)taps / TAPS;
+	tap_mult = (float)taps / TAPS;
 	tx = 1 - tx - taps / 2;
 
 	for (i=0; i<taps; i++) {
