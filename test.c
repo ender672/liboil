@@ -73,7 +73,11 @@ unsigned char clamp(long double x)
 	if (x < 0) {
 		return 0;
 	}
+	/* Fix for rounding errors */
 	x += 0.000000000001l;
+
+	/* This rounds to the nearest integer */
+	x += 0.5l;
 	if (x > 255) {
 		return 255;
 	}
