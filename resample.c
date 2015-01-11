@@ -26,7 +26,7 @@ typedef int64_t fix33_30;
  * The best possible value was determined by comparing to a reference
  * implementation and comparing values for the minimal number of errors.
  */
-#define TOPOFF 4096
+#define TOPOFF 8192
 
 /**
  * Signed type that uses 1 bit for signedness, 1 bit for the integer, and 30
@@ -62,8 +62,8 @@ static unsigned char clamp(fix33_30 x)
 		return 0;
 	}
 
-	/* bump up rounding errors before truncating */
-	x += TOPOFF;
+	/* add 0.5 and bump up rounding errors before truncating */
+	x += (1<<29) + TOPOFF;
 
 	/* This is safe because we have the < 0 check above and a sample can't
 	 * end up with a value over 512 */
@@ -431,7 +431,7 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 		/* just the ends of the scanline with edges extended */
 		padded_sl_init(&psl, 2 * taps - 2, taps / 2 + 1, cmp);
 		memcpy(psl.buf, in, (taps - 1) * cmp);
-		memcpy(psl.buf + (taps - 1) * cmp, in + (in_width - taps + 1) * cmp, (taps - 1) * cmp);		
+		memcpy(psl.buf + (taps - 1) * cmp, in + (in_width - taps + 1) * cmp, (taps - 1) * cmp);
 		rpadv = psl.buf + (2 * taps - 2 - in_width) * cmp;
 	}
 
