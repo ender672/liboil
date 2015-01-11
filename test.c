@@ -1,9 +1,9 @@
-#include "assert.h"
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
 #include "resample.h"
-#include "string.h"
-#include "stdlib.h"
-#include "stdio.h"
-#include "math.h"
 
 static long calc_taps_check(long dim_in, long dim_out)
 {
@@ -14,12 +14,11 @@ static long calc_taps_check(long dim_in, long dim_out)
 		return 4;
 	}
 
-	tmp = (long double)dim_in / dim_out ;
+	tmp = (long double)dim_in / dim_out;
 	tmp_i = tmp * 4;
 
 	return tmp_i + (tmp_i%2);
 }
-
 
 /* Precise calculation of reverse map. */
 static long double map(long dim_in, long dim_out, long pos)
@@ -107,12 +106,9 @@ long double validate_sample(long taps, unsigned char *samples, long double *coef
 void strip_scale_check(unsigned char **in, long taps, long width,
 	unsigned char *out, int cmp, int opts, long double ty)
 {
-	long i, j, len, fails;
-	long double *coeffs, delta, max_delta;
+	long i, j, len;
+	long double *coeffs, delta;
 	unsigned char *samples;
-
-	fails = 0;
-	max_delta = 0;
 
 	len = width * cmp;
 	coeffs = malloc(taps * sizeof(long double));
@@ -129,30 +125,21 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 
 		delta = validate_sample(taps, samples, coeffs, out[i]);
 		if (delta) {
-			fails++;
-			if (delta > max_delta) {
-				max_delta = delta;
-			}
+			printf("(y) len: %ld, cmp: %d, ty: %.20Lf, delta: %.20Lf\n", len, cmp, ty, delta);
 		}
 	}
 
 	free(coeffs);
 	free(samples);
-	if (fails > 0) {
-		printf("(y) len: %ld, cmp: %d, ty: %.20Lf, fails: %ld, max_delta: %.20Lf\n", len, cmp, ty, fails, max_delta);
-	}
 }
 
 static void validate_scanline(unsigned char *in, long width_in,
 	unsigned char *out, long width_out, int cmp, int opts)
 {
-	long i, k, smp_i, smp_safe, fails, taps;
-	long double *coeffs, smp, delta, max_delta;
+	long i, k, smp_i, smp_safe, taps;
+	long double *coeffs, smp, delta;
 	unsigned char *samples;
 	int j;
-
-	fails = 0;
-	max_delta = 0;
 
 	taps = calc_taps(width_in, width_out);
 	coeffs = malloc(taps * sizeof(long double));
@@ -178,19 +165,13 @@ static void validate_scanline(unsigned char *in, long width_in,
 
 			delta = validate_sample(taps, samples, coeffs, out[i * cmp + j]);
 			if (delta) {
-				fails++;
-				if (delta > max_delta) {
-					max_delta = delta;
-				}
+				printf("(x) in: %ld, out: %ld, cmp: %d, delta: %.20Lf\n", width_in, width_out, cmp, delta);
 			}
 		}
 	}
 
 	free(samples);
 	free(coeffs);
-	if (fails > 0) {
-		printf("(x) in: %ld, out: %ld, cmp: %d, fails: %ld, max_delta: %.20Lf\n", width_in, width_out, cmp, fails, max_delta);
-	}
 }
 
 static void fill_rand(unsigned char *buf, long len)
