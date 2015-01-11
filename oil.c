@@ -689,29 +689,38 @@ static int rpng(FILE *input, FILE *output)
 	png_structp png;
 	png_infop info;
 	int ret, opts;
+	png_uint_32 width, height;
+	png_byte channels;
 
 	ret = 0;
 	opts = 0;
 
 	png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+
+	if (setjmp(png_jmpbuf(png))) {
+		ret = 1;
+		goto cleanup_exit;
+	}
+
 	info = png_create_info_struct(png);
+	png_init_io(png, input);
+	png_read_info(png, info);
 
 	png_set_packing(png);
 	png_set_strip_16(png);
 	png_set_expand(png);
 
-	png_init_io(png, input);
-	png_read_info(png, info);
-
 	if (png_get_color_type(png, info) == PNG_COLOR_TYPE_RGB) {
 		png_set_filler(png, 0, PNG_FILLER_AFTER);
-		png_read_update_info(png, info);
 		opts = OIL_FILLER;
 	}
+	png_read_update_info(png, info);
 
-	if (write_header(output, png_get_image_width(png, info),
-		png_get_image_height(png, info),
-		png_get_channels(png, info), opts)) {
+	width = png_get_image_width(png, info);
+	height = png_get_image_height(png, info);
+	channels = png_get_channels(png, info);
+
+	if (write_header(output, width, height, channels, opts)) {
 		ret = 1;
 		goto cleanup_exit;
 	}
