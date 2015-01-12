@@ -30,10 +30,6 @@ And run it with:
 
     $ ./test
 
-Some tests currently fail against the reference implementation. Although these
-failures are probably imperceptable, they are currently being left in place so
-that they can be evaluated.
-
 License
 --------
 
