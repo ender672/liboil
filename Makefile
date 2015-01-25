@@ -30,10 +30,27 @@ pngsuite: PngSuite-2013jan13.tgz
 test-pngsuite: pngsuite oil
 	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
 
-# imagesuite pngsuite testing
+# imagetestsuite png testing
 imagetestsuite-png-1.01.tar.gz:
 	wget https://imagetestsuite.googlecode.com/files/$@
-png: imagetestsuite-png-1.01.tar.gz
-	tar xzf $<
-test-imagetestsuite-png: png oil
+imagetestsuite/png: imagetestsuite-png-1.01.tar.gz
+	mkdir -p imagetestsuite
+	tar xzf $< -C imagetestsuite
+test-imagetestsuite-png: imagetestsuite/png oil
 	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
+
+# imagetestsuite jpg testing
+imagetestsuite-jpg-1.00.tar.gz:
+	wget https://imagetestsuite.googlecode.com/files/$@
+imagetestsuite/jpg: imagetestsuite-jpg-1.00.tar.gz
+	tar xzf $<
+test-imagetestsuite-jpg: imagetestsuite/jpg oil
+	for f in $</*.jpg; do echo $$f; ./oil rjpeg $$f > /dev/null; done
+
+# imagetestsuite gif testing
+imagetestsuite-gif-1.00.tar.gz:
+	wget https://imagetestsuite.googlecode.com/files/$@
+imagetestsuite/gif: imagetestsuite-gif-1.00.tar.gz
+	tar xzf $<
+test-imagetestsuite-gif: imagetestsuite/gif oil
+	for f in $</*.gif; do echo $$f; ./oil rgif $$f > /dev/null; done
