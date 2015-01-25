@@ -1162,10 +1162,17 @@ int wgif_cmd(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	char *action, *cmd;
+	FILE *usage;
 
 	cmd = argv[0];
+	usage = stderr;
 
-	if (argc < 2 || !strcmp(argv[1], "--help")) {
+	if (argc < 2) {
+		goto usage_exit;
+	}
+
+	if (!strcmp(argv[1], "--help")) {
+		usage = stdout;
 		goto usage_exit;
 	}
 
@@ -1198,6 +1205,19 @@ int main(int argc, char *argv[])
 	}
 
 	usage_exit:
-	fprintf(stderr, "Usage: %s [jpeginfo|rjpeg|wjpeg|pnginfo|rpng|wpng|gifinfo|rgif|wgif|scalex|scaley]\n", cmd);
+
+	fprintf(usage, "Usage: %s [--help] <command> [<args>]\n\n", cmd);
+	fprintf(usage, "Commands:\n");
+	fprintf(usage, "   jpeginfo  Print information about a jpeg file\n");
+	fprintf(usage, "   rjpeg     Read a jpeg file\n");
+	fprintf(usage, "   wjpeg     Write a jpeg file\n");
+	fprintf(usage, "   pnginfo   Print information about a png file\n");
+	fprintf(usage, "   rpng      Read a png file\n");
+	fprintf(usage, "   wpng      Write a png file\n");
+	fprintf(usage, "   gifinfo   Print information about a gif file\n");
+	fprintf(usage, "   rgif      Read a gif file\n");
+	fprintf(usage, "   wgif      Write a gif file\n");
+	fprintf(usage, "   scaley    Scale image height\n");
+	fprintf(usage, "   scalex    Scale image width\n");
 	return 1;
 }
