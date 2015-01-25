@@ -895,11 +895,55 @@ int wpng_cmd(int argc, char *argv[])
 static int gifinfo(FILE *input, FILE *output)
 {
 	GifFileType *gif;
+	GifRecordType record_type;
+	int ext_type;
+	GifByteType *ext_data;
+	uint16_t delay;
+	int num_images;
+
+	num_images = 0;
+	delay = 0;
 
 	gif = DGifOpenFileHandle(fileno(input));
 
+	if (!gif) {
+		fprintf(stderr, "Error: Unable to read gif file.\n");
+		return 1;
+	}
+
+	while(1) {
+		DGifGetRecordType(gif, &record_type);
+
+		switch (record_type) {
+		case EXTENSION_RECORD_TYPE:
+			DGifGetExtension(gif, &ext_type, &ext_data);
+			if (ext_type == GRAPHICS_EXT_FUNC_CODE) {
+				delay = *(uint16_t *)(ext_data + 2);
+			}
+			while (ext_data != NULL) {
+				if (DGifGetExtensionNext(gif, &ext_data) == GIF_ERROR) {
+					goto end;
+				}
+			}
+			break;
+		case TERMINATE_RECORD_TYPE:
+			goto end;
+			break;
+		case IMAGE_DESC_RECORD_TYPE:
+			num_images++;
+			break;
+		case SCREEN_DESC_RECORD_TYPE:
+		case UNDEFINED_RECORD_TYPE:
+			break;
+		}
+	};
+
+	end:
+
 	fprintf(output, "width:       %20d\n", gif->SWidth);
 	fprintf(output, "height:      %20d\n", gif->SHeight);
+	fprintf(output, "delay:       %20d\n", delay);
+	fprintf(output, "image count: %20d\n", num_images);
 
 	DGifCloseFile(gif);
 	return 0;
