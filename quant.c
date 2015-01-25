@@ -5,7 +5,8 @@
  * Copyright (C) 1991-1996, Thomas G. Lane.
  * libjpeg-turbo Modifications:
  * Copyright (C) 2009, 2014, D. R. Commander.
- * For conditions of distribution and use, see the accompanying README file.
+ * For conditions of distribution and use, see the accompanying README-libjpeg
+ * file.
  *
  * This file contains 2-pass color quantization (color mapping) routines.
  * These routines provide selection of a custom color map for an image,
@@ -19,12 +20,14 @@
  * fundamental assumptions even hold with an irregularly spaced color map.
  */
 
-#define JPEG_INTERNALS
-#include "jinclude.h"
-#include "jpeglib.h"
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include "quant.h"
 
-#ifdef QUANT_2PASS_SUPPORTED
-
+#define RIGHT_SHIFT(x,shft)     ((x) >> (shft))
+#define MAXJSAMPLE      255
+#define BITS_IN_JSAMPLE 8
 
 /*
  * This module implements the well-known Heckbert paradigm for color
@@ -77,9 +80,9 @@
 #define B_SCALE 1               /* and B by this much */
 
 static const int c_scales[3]={R_SCALE, G_SCALE, B_SCALE};
-#define C0_SCALE c_scales[rgb_red[cinfo->out_color_space]]
-#define C1_SCALE c_scales[rgb_green[cinfo->out_color_space]]
-#define C2_SCALE c_scales[rgb_blue[cinfo->out_color_space]]
+#define C0_SCALE c_scales[0]
+#define C1_SCALE c_scales[1]
+#define C2_SCALE c_scales[2]
 
 /*
  * First we have the histogram data structure and routines for creating it.
@@ -112,27 +115,15 @@ static const int c_scales[3]={R_SCALE, G_SCALE, B_SCALE};
  */
 #define HIST_C0_BITS  5         /* bits of precision in R/B histogram */
 #define HIST_C1_BITS  6         /* bits of precision in G histogram */
-#define HIST_C2_BITS  5         /* bits of precision in B/R histogram */
 
 /* Number of elements along histogram axes. */
 #define HIST_C0_ELEMS  (1<<HIST_C0_BITS)
 #define HIST_C1_ELEMS  (1<<HIST_C1_BITS)
-#define HIST_C2_ELEMS  (1<<HIST_C2_BITS)
 
 /* These are the amounts to shift an input value to get a histogram index. */
 #define C0_SHIFT  (BITS_IN_JSAMPLE-HIST_C0_BITS)
 #define C1_SHIFT  (BITS_IN_JSAMPLE-HIST_C1_BITS)
 #define C2_SHIFT  (BITS_IN_JSAMPLE-HIST_C2_BITS)
-
-
-typedef UINT16 histcell;        /* histogram cell; prefer an unsigned type */
-
-typedef histcell * histptr; /* for pointers to histogram cells */
-
-typedef histcell hist1d[HIST_C2_ELEMS]; /* typedefs for the array */
-typedef hist1d * hist2d;    /* type for the 2nd-level pointers */
-typedef hist2d * hist3d;        /* type for top-level pointer */
-
 
 /* Declarations for Floyd-Steinberg dithering.
  *
@@ -155,39 +146,12 @@ typedef hist2d * hist3d;        /* type for top-level pointer */
  * Each entry is three values long, one value for each color component.
  */
 
-#if BITS_IN_JSAMPLE == 8
-typedef INT16 FSERROR;          /* 16 bits should be enough */
 typedef int LOCFSERROR;         /* use 'int' for calculation temps */
-#else
-typedef INT32 FSERROR;          /* may need more than 16 bits */
-typedef INT32 LOCFSERROR;       /* be sure calculation temps are big enough */
-#endif
-
-typedef FSERROR *FSERRPTR;      /* pointer to error array */
 
 
 /* Private subobject */
 
-typedef struct {
-  struct jpeg_color_quantizer pub; /* public fields */
-
-  /* Space for the eventually created colormap is stashed here */
-  JSAMPARRAY sv_colormap;       /* colormap allocated at init time */
-  int desired;                  /* desired # of colors = size of colormap */
-
-  /* Variables for accumulating image statistics */
-  hist3d histogram;             /* pointer to the histogram */
-
-  boolean needs_zeroed;         /* TRUE if next pass must zero histogram */
-
-  /* Variables for Floyd-Steinberg dithering */
-  FSERRPTR fserrors;            /* accumulated errors */
-  boolean on_odd_row;           /* flag to remember which row we are on */
-  int * error_limiter;          /* table for clamping the applied error */
-} my_cquantizer;
-
 typedef my_cquantizer * my_cquantize_ptr;
-
 
 /*
  * Prescan some rows of pixels.
@@ -198,25 +162,25 @@ typedef my_cquantizer * my_cquantize_ptr;
  * NULL pointer).
  */
 
-METHODDEF(void)
-prescan_quantize (j_decompress_ptr cinfo, JSAMPARRAY input_buf,
-                  JSAMPARRAY output_buf, int num_rows)
+void
+prescan_quantize (j_decompress2_ptr cinfo, unsigned char **input_buf,
+                  unsigned char **output_buf, int num_rows)
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
-  register JSAMPROW ptr;
+  register unsigned char *ptr;
   register histptr histp;
   register hist3d histogram = cquantize->histogram;
   int row;
-  JDIMENSION col;
-  JDIMENSION width = cinfo->output_width;
+  unsigned int col;
+  unsigned int width = cinfo->output_width;
 
   for (row = 0; row < num_rows; row++) {
     ptr = input_buf[row];
     for (col = width; col > 0; col--) {
       /* get pixel value and index into the histogram */
-      histp = & histogram[GETJSAMPLE(ptr[0]) >> C0_SHIFT]
-                         [GETJSAMPLE(ptr[1]) >> C1_SHIFT]
-                         [GETJSAMPLE(ptr[2]) >> C2_SHIFT];
+      histp = & histogram[ptr[0] >> C0_SHIFT]
+                         [ptr[1] >> C1_SHIFT]
+                         [ptr[2] >> C2_SHIFT];
       /* increment, check for overflow and undo increment if so. */
       if (++(*histp) <= 0)
         (*histp)--;
@@ -239,7 +203,7 @@ typedef struct {
   int c1min, c1max;
   int c2min, c2max;
   /* The volume (actually 2-norm) of the box */
-  INT32 volume;
+  int32_t volume;
   /* The number of nonzero histogram cells within this box */
   long colorcount;
 } box;
@@ -247,7 +211,7 @@ typedef struct {
 typedef box * boxptr;
 
 
-LOCAL(boxptr)
+static boxptr
 find_biggest_color_pop (boxptr boxlist, int numboxes)
 /* Find the splittable box with the largest color population */
 /* Returns NULL if no splittable boxes remain */
@@ -267,14 +231,14 @@ find_biggest_color_pop (boxptr boxlist, int numboxes)
 }
 
 
-LOCAL(boxptr)
+static boxptr
 find_biggest_volume (boxptr boxlist, int numboxes)
 /* Find the splittable box with the largest (scaled) volume */
 /* Returns NULL if no splittable boxes remain */
 {
   register boxptr boxp;
   register int i;
-  register INT32 maxv = 0;
+  register int32_t maxv = 0;
   boxptr which = NULL;
 
   for (i = 0, boxp = boxlist; i < numboxes; i++, boxp++) {
@@ -287,8 +251,8 @@ find_biggest_volume (boxptr boxlist, int numboxes)
 }
 
 
-LOCAL(void)
-update_box (j_decompress_ptr cinfo, boxptr boxp)
+static void
+update_box (j_decompress2_ptr cinfo, boxptr boxp)
 /* Shrink the min/max bounds of a box to enclose only nonzero elements, */
 /* and recompute its volume and population */
 {
@@ -297,7 +261,7 @@ update_box (j_decompress_ptr cinfo, boxptr boxp)
   histptr histp;
   int c0,c1,c2;
   int c0min,c0max,c1min,c1max,c2min,c2max;
-  INT32 dist0,dist1,dist2;
+  int32_t dist0,dist1,dist2;
   long ccount;
 
   c0min = boxp->c0min;  c0max = boxp->c0max;
@@ -376,7 +340,7 @@ update_box (j_decompress_ptr cinfo, boxptr boxp)
    * against making long narrow boxes, and it has the side benefit that
    * a box is splittable iff norm > 0.
    * Since the differences are expressed in histogram-cell units,
-   * we have to shift back to JSAMPLE units to get consistent distances;
+   * we have to shift back to unsigned char units to get consistent distances;
    * after which, we scale according to the selected distance scale factors.
    */
   dist0 = ((c0max - c0min) << C0_SHIFT) * C0_SCALE;
@@ -398,8 +362,8 @@ update_box (j_decompress_ptr cinfo, boxptr boxp)
 }
 
 
-LOCAL(int)
-median_cut (j_decompress_ptr cinfo, boxptr boxlist, int numboxes,
+static int
+median_cut (j_decompress2_ptr cinfo, boxptr boxlist, int numboxes,
             int desired_colors)
 /* Repeatedly select and split the largest box until we have enough boxes */
 {
@@ -432,16 +396,9 @@ median_cut (j_decompress_ptr cinfo, boxptr boxlist, int numboxes,
     /* We want to break any ties in favor of green, then red, blue last.
      * This code does the right thing for R,G,B or B,G,R color orders only.
      */
-    if (rgb_red[cinfo->out_color_space] == 0) {
-      cmax = c1; n = 1;
-      if (c0 > cmax) { cmax = c0; n = 0; }
-      if (c2 > cmax) { n = 2; }
-    }
-    else {
-      cmax = c1; n = 1;
-      if (c2 > cmax) { cmax = c2; n = 2; }
-      if (c0 > cmax) { n = 0; }
-    }
+    cmax = c1; n = 1;
+    if (c0 > cmax) { cmax = c0; n = 0; }
+    if (c2 > cmax) { n = 2; }
     /* Choose split point along selected axis, and update box bounds.
      * Current algorithm: split at halfway point.
      * (Since the box has been shrunk to minimum volume,
@@ -474,8 +431,8 @@ median_cut (j_decompress_ptr cinfo, boxptr boxlist, int numboxes,
 }
 
 
-LOCAL(void)
-compute_color (j_decompress_ptr cinfo, boxptr boxp, int icolor)
+static void
+compute_color (j_decompress2_ptr cinfo, boxptr boxp, int icolor)
 /* Compute representative color for a box, put it in colormap[icolor] */
 {
   /* Current algorithm: mean weighted by pixels (not colors) */
@@ -508,23 +465,22 @@ compute_color (j_decompress_ptr cinfo, boxptr boxp, int icolor)
       }
     }
 
-  cinfo->colormap[0][icolor] = (JSAMPLE) ((c0total + (total>>1)) / total);
-  cinfo->colormap[1][icolor] = (JSAMPLE) ((c1total + (total>>1)) / total);
-  cinfo->colormap[2][icolor] = (JSAMPLE) ((c2total + (total>>1)) / total);
+  cinfo->colormap[0][icolor] = (unsigned char) ((c0total + (total>>1)) / total);
+  cinfo->colormap[1][icolor] = (unsigned char) ((c1total + (total>>1)) / total);
+  cinfo->colormap[2][icolor] = (unsigned char) ((c2total + (total>>1)) / total);
 }
 
 
-LOCAL(void)
-select_colors (j_decompress_ptr cinfo, int desired_colors)
+static void
+select_colors (j_decompress2_ptr cinfo, int desired_colors)
 /* Master routine for color selection */
 {
   boxptr boxlist;
   int numboxes;
   int i;
 
-  /* Allocate workspace for box list */
-  boxlist = (boxptr) (*cinfo->mem->alloc_small)
-    ((j_common_ptr) cinfo, JPOOL_IMAGE, desired_colors * sizeof(box));
+  /* Allocate workspace for box list. */
+  boxlist = malloc(desired_colors * sizeof(box));
   /* Initialize one box containing whole space */
   numboxes = 1;
   boxlist[0].c0min = 0;
@@ -541,7 +497,8 @@ select_colors (j_decompress_ptr cinfo, int desired_colors)
   for (i = 0; i < numboxes; i++)
     compute_color(cinfo, & boxlist[i], i);
   cinfo->actual_number_of_colors = numboxes;
-  TRACEMS1(cinfo, 1, JTRC_QUANT_SELECTED, numboxes);
+
+  free(boxlist);
 }
 
 
@@ -571,7 +528,7 @@ select_colors (j_decompress_ptr cinfo, int desired_colors)
  * distance from every colormap entry to every histogram cell.  Unfortunately,
  * it needs a work array to hold the best-distance-so-far for each histogram
  * cell (because the inner loop has to be over cells, not colormap entries).
- * The work array elements have to be INT32s, so the work array would need
+ * The work array elements have to be int32_ts, so the work array would need
  * 256Kb at our recommended precision.  This is not feasible in DOS machines.
  *
  * To get around these problems, we apply Thomas' method to compute the
@@ -621,9 +578,9 @@ select_colors (j_decompress_ptr cinfo, int desired_colors)
  * inner-loop variables.
  */
 
-LOCAL(int)
-find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
-                    JSAMPLE colorlist[])
+static int
+find_nearby_colors (j_decompress2_ptr cinfo, int minc0, int minc1, int minc2,
+                    unsigned char colorlist[])
 /* Locate the colormap entries close enough to an update box to be candidates
  * for the nearest entry to some cell(s) in the update box.  The update box
  * is specified by the center coordinates of its first cell.  The number of
@@ -637,8 +594,8 @@ find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
   int maxc0, maxc1, maxc2;
   int centerc0, centerc1, centerc2;
   int i, x, ncolors;
-  INT32 minmaxdist, min_dist, max_dist, tdist;
-  INT32 mindist[MAXNUMCOLORS];  /* min distance to colormap entry i */
+  int32_t minmaxdist, min_dist, max_dist, tdist;
+  int32_t mindist[MAXNUMCOLORS];  /* min distance to colormap entry i */
 
   /* Compute true coordinates of update box's upper corner and center.
    * Actually we compute the coordinates of the center of the upper-corner
@@ -665,7 +622,7 @@ find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
 
   for (i = 0; i < numcolors; i++) {
     /* We compute the squared-c0-distance term, then add in the other two. */
-    x = GETJSAMPLE(cinfo->colormap[0][i]);
+    x = cinfo->colormap[0][i];
     if (x < minc0) {
       tdist = (x - minc0) * C0_SCALE;
       min_dist = tdist*tdist;
@@ -688,7 +645,7 @@ find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
       }
     }
 
-    x = GETJSAMPLE(cinfo->colormap[1][i]);
+    x = cinfo->colormap[1][i];
     if (x < minc1) {
       tdist = (x - minc1) * C1_SCALE;
       min_dist += tdist*tdist;
@@ -710,7 +667,7 @@ find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
       }
     }
 
-    x = GETJSAMPLE(cinfo->colormap[2][i]);
+    x = cinfo->colormap[2][i];
     if (x < minc2) {
       tdist = (x - minc2) * C2_SCALE;
       min_dist += tdist*tdist;
@@ -744,15 +701,16 @@ find_nearby_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
   ncolors = 0;
   for (i = 0; i < numcolors; i++) {
     if (mindist[i] <= minmaxdist)
-      colorlist[ncolors++] = (JSAMPLE) i;
+      colorlist[ncolors++] = (unsigned char) i;
   }
   return ncolors;
 }
 
 
-LOCAL(void)
-find_best_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
-                  int numcolors, JSAMPLE colorlist[], JSAMPLE bestcolor[])
+static void
+find_best_colors (j_decompress2_ptr cinfo, int minc0, int minc1, int minc2,
+                  int numcolors, unsigned char colorlist[],
+                  unsigned char bestcolor[])
 /* Find the closest colormap entry for each cell in the update box,
  * given the list of candidate colors prepared by find_nearby_colors.
  * Return the indexes of the closest entries in the bestcolor[] array.
@@ -762,15 +720,15 @@ find_best_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
 {
   int ic0, ic1, ic2;
   int i, icolor;
-  register INT32 * bptr;        /* pointer into bestdist[] array */
-  JSAMPLE * cptr;               /* pointer into bestcolor[] array */
-  INT32 dist0, dist1;           /* initial distance values */
-  register INT32 dist2;         /* current distance in inner loop */
-  INT32 xx0, xx1;               /* distance increments */
-  register INT32 xx2;
-  INT32 inc0, inc1, inc2;       /* initial values for increments */
+  register int32_t * bptr;        /* pointer into bestdist[] array */
+  unsigned char * cptr;               /* pointer into bestcolor[] array */
+  int32_t dist0, dist1;           /* initial distance values */
+  register int32_t dist2;         /* current distance in inner loop */
+  int32_t xx0, xx1;               /* distance increments */
+  register int32_t xx2;
+  int32_t inc0, inc1, inc2;       /* initial values for increments */
   /* This array holds the distance to the nearest-so-far color for each cell */
-  INT32 bestdist[BOX_C0_ELEMS * BOX_C1_ELEMS * BOX_C2_ELEMS];
+  int32_t bestdist[BOX_C0_ELEMS * BOX_C1_ELEMS * BOX_C2_ELEMS];
 
   /* Initialize best-distance for each cell of the update box */
   bptr = bestdist;
@@ -788,13 +746,13 @@ find_best_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
 #define STEP_C2  ((1 << C2_SHIFT) * C2_SCALE)
 
   for (i = 0; i < numcolors; i++) {
-    icolor = GETJSAMPLE(colorlist[i]);
+    icolor = colorlist[i];
     /* Compute (square of) distance from minc0/c1/c2 to this color */
-    inc0 = (minc0 - GETJSAMPLE(cinfo->colormap[0][icolor])) * C0_SCALE;
+    inc0 = (minc0 - cinfo->colormap[0][icolor]) * C0_SCALE;
     dist0 = inc0*inc0;
-    inc1 = (minc1 - GETJSAMPLE(cinfo->colormap[1][icolor])) * C1_SCALE;
+    inc1 = (minc1 - cinfo->colormap[1][icolor]) * C1_SCALE;
     dist0 += inc1*inc1;
-    inc2 = (minc2 - GETJSAMPLE(cinfo->colormap[2][icolor])) * C2_SCALE;
+    inc2 = (minc2 - cinfo->colormap[2][icolor]) * C2_SCALE;
     dist0 += inc2*inc2;
     /* Form the initial difference increments */
     inc0 = inc0 * (2 * STEP_C0) + STEP_C0 * STEP_C0;
@@ -813,7 +771,7 @@ find_best_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
         for (ic2 = BOX_C2_ELEMS-1; ic2 >= 0; ic2--) {
           if (dist2 < *bptr) {
             *bptr = dist2;
-            *cptr = (JSAMPLE) icolor;
+            *cptr = icolor;
           }
           dist2 += xx2;
           xx2 += 2 * STEP_C2 * STEP_C2;
@@ -830,8 +788,8 @@ find_best_colors (j_decompress_ptr cinfo, int minc0, int minc1, int minc2,
 }
 
 
-LOCAL(void)
-fill_inverse_cmap (j_decompress_ptr cinfo, int c0, int c1, int c2)
+static void
+fill_inverse_cmap (j_decompress2_ptr cinfo, int c0, int c1, int c2)
 /* Fill the inverse-colormap entries in the update box that contains */
 /* histogram cell c0/c1/c2.  (Only that one cell MUST be filled, but */
 /* we can fill as many others as we wish.) */
@@ -840,13 +798,13 @@ fill_inverse_cmap (j_decompress_ptr cinfo, int c0, int c1, int c2)
   hist3d histogram = cquantize->histogram;
   int minc0, minc1, minc2;      /* lower left corner of update box */
   int ic0, ic1, ic2;
-  register JSAMPLE * cptr;      /* pointer into bestcolor[] array */
+  register unsigned char * cptr;      /* pointer into bestcolor[] array */
   register histptr cachep;      /* pointer into main cache array */
   /* This array lists the candidate colormap indexes. */
-  JSAMPLE colorlist[MAXNUMCOLORS];
+  unsigned char colorlist[MAXNUMCOLORS];
   int numcolors;                /* number of candidate colors */
   /* This array holds the actually closest colormap index for each cell. */
-  JSAMPLE bestcolor[BOX_C0_ELEMS * BOX_C1_ELEMS * BOX_C2_ELEMS];
+  unsigned char bestcolor[BOX_C0_ELEMS * BOX_C1_ELEMS * BOX_C2_ELEMS];
 
   /* Convert cell coordinates to update box ID */
   c0 >>= BOX_C0_LOG;
@@ -879,7 +837,7 @@ fill_inverse_cmap (j_decompress_ptr cinfo, int c0, int c1, int c2)
     for (ic1 = 0; ic1 < BOX_C1_ELEMS; ic1++) {
       cachep = & histogram[c0+ic0][c1+ic1][c2];
       for (ic2 = 0; ic2 < BOX_C2_ELEMS; ic2++) {
-        *cachep++ = (histcell) (GETJSAMPLE(*cptr++) + 1);
+        *cachep++ = (histcell) (*cptr++ + 1);
       }
     }
   }
@@ -890,43 +848,43 @@ fill_inverse_cmap (j_decompress_ptr cinfo, int c0, int c1, int c2)
  * Map some rows of pixels to the output colormapped representation.
  */
 
-METHODDEF(void)
-pass2_no_dither (j_decompress_ptr cinfo,
-                 JSAMPARRAY input_buf, JSAMPARRAY output_buf, int num_rows)
+void
+pass2_no_dither (j_decompress2_ptr cinfo, unsigned char **input_buf,
+                 unsigned char **output_buf, int num_rows)
 /* This version performs no dithering */
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
   hist3d histogram = cquantize->histogram;
-  register JSAMPROW inptr, outptr;
+  register unsigned char *inptr, *outptr;
   register histptr cachep;
   register int c0, c1, c2;
   int row;
-  JDIMENSION col;
-  JDIMENSION width = cinfo->output_width;
+  unsigned int col;
+  unsigned int width = cinfo->output_width;
 
   for (row = 0; row < num_rows; row++) {
     inptr = input_buf[row];
     outptr = output_buf[row];
     for (col = width; col > 0; col--) {
       /* get pixel value and index into the cache */
-      c0 = GETJSAMPLE(*inptr++) >> C0_SHIFT;
-      c1 = GETJSAMPLE(*inptr++) >> C1_SHIFT;
-      c2 = GETJSAMPLE(*inptr++) >> C2_SHIFT;
+      c0 = *inptr++ >> C0_SHIFT;
+      c1 = *inptr++ >> C1_SHIFT;
+      c2 = *inptr++ >> C2_SHIFT;
       cachep = & histogram[c0][c1][c2];
       /* If we have not seen this color before, find nearest colormap entry */
       /* and update the cache */
       if (*cachep == 0)
         fill_inverse_cmap(cinfo, c0,c1,c2);
       /* Now emit the colormap index for this cell */
-      *outptr++ = (JSAMPLE) (*cachep - 1);
+      *outptr++ = (unsigned char) (*cachep - 1);
     }
   }
 }
 
 
-METHODDEF(void)
-pass2_fs_dither (j_decompress_ptr cinfo,
-                 JSAMPARRAY input_buf, JSAMPARRAY output_buf, int num_rows)
+void
+pass2_fs_dither (j_decompress2_ptr cinfo, unsigned char **input_buf,
+	 	 unsigned char **output_buf,int num_rows)
 /* This version performs Floyd-Steinberg dithering */
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
@@ -935,20 +893,18 @@ pass2_fs_dither (j_decompress_ptr cinfo,
   LOCFSERROR belowerr0, belowerr1, belowerr2; /* error for pixel below cur */
   LOCFSERROR bpreverr0, bpreverr1, bpreverr2; /* error for below/prev col */
   register FSERRPTR errorptr;   /* => fserrors[] at column before current */
-  JSAMPROW inptr;               /* => current input pixel */
-  JSAMPROW outptr;              /* => current output pixel */
+  unsigned char *inptr;               /* => current input pixel */
+  unsigned char *outptr;              /* => current output pixel */
   histptr cachep;
   int dir;                      /* +1 or -1 depending on direction */
   int dir3;                     /* 3*dir, for advancing inptr & errorptr */
   int row;
-  JDIMENSION col;
-  JDIMENSION width = cinfo->output_width;
-  JSAMPLE *range_limit = cinfo->sample_range_limit;
+  unsigned int col;
+  unsigned int width = cinfo->output_width;
   int *error_limit = cquantize->error_limiter;
-  JSAMPROW colormap0 = cinfo->colormap[0];
-  JSAMPROW colormap1 = cinfo->colormap[1];
-  JSAMPROW colormap2 = cinfo->colormap[2];
-  SHIFT_TEMPS
+  unsigned char *colormap0 = cinfo->colormap[0];
+  unsigned char *colormap1 = cinfo->colormap[1];
+  unsigned char *colormap2 = cinfo->colormap[2];
 
   for (row = 0; row < num_rows; row++) {
     inptr = input_buf[row];
@@ -960,13 +916,13 @@ pass2_fs_dither (j_decompress_ptr cinfo,
       dir = -1;
       dir3 = -3;
       errorptr = cquantize->fserrors + (width+1)*3; /* => entry after last column */
-      cquantize->on_odd_row = FALSE; /* flip for next time */
+      cquantize->on_odd_row = 0; /* flip for next time */
     } else {
       /* work left to right in this row */
       dir = 1;
       dir3 = 3;
       errorptr = cquantize->fserrors; /* => entry before first real column */
-      cquantize->on_odd_row = TRUE; /* flip for next time */
+      cquantize->on_odd_row = 1; /* flip for next time */
     }
     /* Preset error values: no error propagated to first pixel from left */
     cur0 = cur1 = cur2 = 0;
@@ -996,12 +952,26 @@ pass2_fs_dither (j_decompress_ptr cinfo,
        * The maximum error is +- MAXJSAMPLE (or less with error limiting);
        * this sets the required size of the range_limit array.
        */
-      cur0 += GETJSAMPLE(inptr[0]);
-      cur1 += GETJSAMPLE(inptr[1]);
-      cur2 += GETJSAMPLE(inptr[2]);
-      cur0 = GETJSAMPLE(range_limit[cur0]);
-      cur1 = GETJSAMPLE(range_limit[cur1]);
-      cur2 = GETJSAMPLE(range_limit[cur2]);
+      cur0 += inptr[0];
+      cur1 += inptr[1];
+      cur2 += inptr[2];
+
+      if (cur0 > 255) {
+      	cur0 = 255;
+      } else if (cur0 < 0) {
+      	cur0 = 0;
+      }
+      if (cur1 > 255) {
+      	cur1 = 255;
+      } else if (cur1 < 0) {
+      	cur1 = 0;
+      }
+      if (cur2 > 255) {
+      	cur2 = 255;
+      } else if (cur2 < 0) {
+      	cur2 = 0;
+      }
+
       /* Index into the cache with adjusted pixel value */
       cachep = & histogram[cur0>>C0_SHIFT][cur1>>C1_SHIFT][cur2>>C2_SHIFT];
       /* If we have not seen this color before, find nearest colormap */
@@ -1010,11 +980,11 @@ pass2_fs_dither (j_decompress_ptr cinfo,
         fill_inverse_cmap(cinfo, cur0>>C0_SHIFT,cur1>>C1_SHIFT,cur2>>C2_SHIFT);
       /* Now emit the colormap index for this cell */
       { register int pixcode = *cachep - 1;
-        *outptr = (JSAMPLE) pixcode;
+        *outptr = (unsigned char) pixcode;
         /* Compute representation error for this pixel */
-        cur0 -= GETJSAMPLE(colormap0[pixcode]);
-        cur1 -= GETJSAMPLE(colormap1[pixcode]);
-        cur2 -= GETJSAMPLE(colormap2[pixcode]);
+        cur0 -= colormap0[pixcode];
+        cur1 -= colormap1[pixcode];
+        cur2 -= colormap2[pixcode];
       }
       /* Compute error fractions to be propagated to adjacent pixels.
        * Add these into the running sums, and simultaneously shift the
@@ -1074,16 +1044,15 @@ pass2_fs_dither (j_decompress_ptr cinfo,
  * to Aaron Giles for this idea.
  */
 
-LOCAL(void)
-init_error_limit (j_decompress_ptr cinfo)
+static void
+init_error_limit (j_decompress2_ptr cinfo)
 /* Allocate and fill in the error_limiter table */
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
   int * table;
   int in, out;
 
-  table = (int *) (*cinfo->mem->alloc_small)
-    ((j_common_ptr) cinfo, JPOOL_IMAGE, (MAXJSAMPLE*2+1) * sizeof(int));
+  table = (int *) malloc((MAXJSAMPLE*2+1) * sizeof(int));
   table += MAXJSAMPLE;          /* so can index -MAXJSAMPLE .. +MAXJSAMPLE */
   cquantize->error_limiter = table;
 
@@ -1104,28 +1073,32 @@ init_error_limit (j_decompress_ptr cinfo)
 #undef STEPSIZE
 }
 
+static void
+zero_histogram (j_decompress2_ptr cinfo)
+{
+  int i;
+  my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
+  hist3d histogram = cquantize->histogram;
+
+  /* Zero the histogram or inverse color map, if necessary */
+  for (i = 0; i < HIST_C0_ELEMS; i++) {
+    memset(histogram[i], 0, HIST_C1_ELEMS*HIST_C2_ELEMS * sizeof(histcell));
+  }
+}
 
 /*
  * Finish up at the end of each pass.
  */
 
-METHODDEF(void)
-finish_pass1 (j_decompress_ptr cinfo)
+void
+finish_pass1 (j_decompress2_ptr cinfo)
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
 
   /* Select the representative colors and fill in cinfo->colormap */
   cinfo->colormap = cquantize->sv_colormap;
   select_colors(cinfo, cquantize->desired);
-  /* Force next pass to zero the color index table */
-  cquantize->needs_zeroed = TRUE;
-}
-
-
-METHODDEF(void)
-finish_pass2 (j_decompress_ptr cinfo)
-{
-  /* no work */
+  zero_histogram(cinfo);
 }
 
 
@@ -1133,76 +1106,16 @@ finish_pass2 (j_decompress_ptr cinfo)
  * Initialize for each processing pass.
  */
 
-METHODDEF(void)
-start_pass_2_quant (j_decompress_ptr cinfo, boolean is_pre_scan)
+void
+start_pass_2_quant (j_decompress2_ptr cinfo)
 {
   my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
-  hist3d histogram = cquantize->histogram;
-  int i;
+  size_t arraysize;
 
-  /* Only F-S dithering or no dithering is supported. */
-  /* If user asks for ordered dither, give him F-S. */
-  if (cinfo->dither_mode != JDITHER_NONE)
-    cinfo->dither_mode = JDITHER_FS;
-
-  if (is_pre_scan) {
-    /* Set up method pointers */
-    cquantize->pub.color_quantize = prescan_quantize;
-    cquantize->pub.finish_pass = finish_pass1;
-    cquantize->needs_zeroed = TRUE; /* Always zero histogram */
-  } else {
-    /* Set up method pointers */
-    if (cinfo->dither_mode == JDITHER_FS)
-      cquantize->pub.color_quantize = pass2_fs_dither;
-    else
-      cquantize->pub.color_quantize = pass2_no_dither;
-    cquantize->pub.finish_pass = finish_pass2;
-
-    /* Make sure color count is acceptable */
-    i = cinfo->actual_number_of_colors;
-    if (i < 1)
-      ERREXIT1(cinfo, JERR_QUANT_FEW_COLORS, 1);
-    if (i > MAXNUMCOLORS)
-      ERREXIT1(cinfo, JERR_QUANT_MANY_COLORS, MAXNUMCOLORS);
-
-    if (cinfo->dither_mode == JDITHER_FS) {
-      size_t arraysize = (size_t) ((cinfo->output_width + 2) *
-                                   (3 * sizeof(FSERROR)));
-      /* Allocate Floyd-Steinberg workspace if we didn't already. */
-      if (cquantize->fserrors == NULL)
-        cquantize->fserrors = (FSERRPTR) (*cinfo->mem->alloc_large)
-          ((j_common_ptr) cinfo, JPOOL_IMAGE, arraysize);
-      /* Initialize the propagated errors to zero. */
-      jzero_far((void *) cquantize->fserrors, arraysize);
-      /* Make the error-limit table if we didn't already. */
-      if (cquantize->error_limiter == NULL)
-        init_error_limit(cinfo);
-      cquantize->on_odd_row = FALSE;
-    }
-
-  }
-  /* Zero the histogram or inverse color map, if necessary */
-  if (cquantize->needs_zeroed) {
-    for (i = 0; i < HIST_C0_ELEMS; i++) {
-      jzero_far((void *) histogram[i],
-                HIST_C1_ELEMS*HIST_C2_ELEMS * sizeof(histcell));
-    }
-    cquantize->needs_zeroed = FALSE;
-  }
-}
-
-
-/*
- * Switch to a new external colormap between output passes.
- */
-
-METHODDEF(void)
-new_color_map_2_quant (j_decompress_ptr cinfo)
-{
-  my_cquantize_ptr cquantize = (my_cquantize_ptr) cinfo->cquantize;
-
-  /* Reset the inverse color map */
-  cquantize->needs_zeroed = TRUE;
+  arraysize = (size_t) ((cinfo->output_width + 2) *
+                               (3 * sizeof(FSERROR)));
+  memset(cquantize->fserrors, 0, arraysize);
+  cquantize->on_odd_row = 0;
 }
 
 
@@ -1210,58 +1123,37 @@ new_color_map_2_quant (j_decompress_ptr cinfo)
  * Module initialization routine for 2-pass color quantization.
  */
 
-GLOBAL(void)
-jinit_2pass_quantizer (j_decompress_ptr cinfo)
+void
+jinit_2pass_quantizer (j_decompress2_ptr cinfo)
 {
   my_cquantize_ptr cquantize;
-  int i;
+  int i, desired;
 
-  cquantize = (my_cquantize_ptr)
-    (*cinfo->mem->alloc_small) ((j_common_ptr) cinfo, JPOOL_IMAGE,
-                                sizeof(my_cquantizer));
+  cquantize = (my_cquantize_ptr)malloc(sizeof(my_cquantizer));
   cinfo->cquantize = (struct jpeg_color_quantizer *) cquantize;
-  cquantize->pub.start_pass = start_pass_2_quant;
-  cquantize->pub.new_color_map = new_color_map_2_quant;
   cquantize->fserrors = NULL;   /* flag optional arrays not allocated */
   cquantize->error_limiter = NULL;
 
-  /* Make sure jdmaster didn't give me a case I can't handle */
-  if (cinfo->out_color_components != 3)
-    ERREXIT(cinfo, JERR_NOTIMPL);
-
   /* Allocate the histogram/inverse colormap storage */
-  cquantize->histogram = (hist3d) (*cinfo->mem->alloc_small)
-    ((j_common_ptr) cinfo, JPOOL_IMAGE, HIST_C0_ELEMS * sizeof(hist2d));
+  cquantize->histogram = (hist3d)malloc(HIST_C0_ELEMS * sizeof(hist2d));
   for (i = 0; i < HIST_C0_ELEMS; i++) {
-    cquantize->histogram[i] = (hist2d) (*cinfo->mem->alloc_large)
-      ((j_common_ptr) cinfo, JPOOL_IMAGE,
-       HIST_C1_ELEMS*HIST_C2_ELEMS * sizeof(histcell));
+    cquantize->histogram[i] = (hist2d)malloc(HIST_C1_ELEMS*HIST_C2_ELEMS * sizeof(histcell));
   }
-  cquantize->needs_zeroed = TRUE; /* histogram is garbage now */
+
+  zero_histogram(cinfo);
 
   /* Allocate storage for the completed colormap, if required.
    * We do this now since it may affect the memory manager's space
    * calculations.
    */
-  if (cinfo->enable_2pass_quant) {
-    /* Make sure color count is acceptable */
-    int desired = cinfo->desired_number_of_colors;
-    /* Lower bound on # of colors ... somewhat arbitrary as long as > 0 */
-    if (desired < 8)
-      ERREXIT1(cinfo, JERR_QUANT_FEW_COLORS, 8);
-    /* Make sure colormap indexes can be represented by JSAMPLEs */
-    if (desired > MAXNUMCOLORS)
-      ERREXIT1(cinfo, JERR_QUANT_MANY_COLORS, MAXNUMCOLORS);
-    cquantize->sv_colormap = (*cinfo->mem->alloc_sarray)
-      ((j_common_ptr) cinfo,JPOOL_IMAGE, (JDIMENSION) desired, (JDIMENSION) 3);
-    cquantize->desired = desired;
-  } else
-    cquantize->sv_colormap = NULL;
+  /* Make sure color count is acceptable */
+  desired = cinfo->desired_number_of_colors;
 
-  /* Only F-S dithering or no dithering is supported. */
-  /* If user asks for ordered dither, give him F-S. */
-  if (cinfo->dither_mode != JDITHER_NONE)
-    cinfo->dither_mode = JDITHER_FS;
+  cquantize->sv_colormap = malloc(3 * sizeof(unsigned char*));
+  for (i = 0; i < 3; i++) {
+    cquantize->sv_colormap[i] = malloc(desired);
+  }
+  cquantize->desired = desired;
 
   /* Allocate Floyd-Steinberg workspace if necessary.
    * This isn't really needed until pass 2, but again it may affect the memory
@@ -1269,13 +1161,30 @@ jinit_2pass_quantizer (j_decompress_ptr cinfo)
    * in dither_mode, we do not promise to honor max_memory_to_use if
    * dither_mode changes.
    */
-  if (cinfo->dither_mode == JDITHER_FS) {
-    cquantize->fserrors = (FSERRPTR) (*cinfo->mem->alloc_large)
-      ((j_common_ptr) cinfo, JPOOL_IMAGE,
-       (size_t) ((cinfo->output_width + 2) * (3 * sizeof(FSERROR))));
-    /* Might as well create the error-limiting table too. */
-    init_error_limit(cinfo);
-  }
+  cquantize->fserrors = (FSERRPTR)malloc((cinfo->output_width + 2) * (3 * sizeof(FSERROR)));
+  /* Might as well create the error-limiting table too. */
+  init_error_limit(cinfo);
 }
 
-#endif /* QUANT_2PASS_SUPPORTED */
+void
+quant_free(j_decompress2_ptr cinfo)
+{
+  my_cquantize_ptr cquantize;
+  int i;
+
+  cquantize = (my_cquantize_ptr)cinfo->cquantize;
+  free(cquantize->error_limiter - MAXJSAMPLE);
+  free(cquantize->fserrors);
+
+  for (i=0; i<3; i++) {
+    free(cquantize->sv_colormap[i]);
+  }
+  free(cquantize->sv_colormap);
+
+  for (i=0; i<HIST_C0_ELEMS; i++) {
+    free(cquantize->histogram[i]);
+  }
+  free(cquantize->histogram);
+
+  free(cquantize);
+}

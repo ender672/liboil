@@ -1,11 +1,13 @@
 #include "resample.h"
 #include "yscaler.h"
+#include "quant.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <jpeglib.h>
 #include <png.h>
+#include <gif_lib.h>
 
 /**
  * Mini format for uncompressed image data.
@@ -503,7 +505,7 @@ static int wjpeg(FILE *input, FILE *output)
 	for (i=0; i<hdr.height; i++) {
 		io_len = fread(buf, 1, buf_len, input);
 		if (io_len != buf_len) {
-			fprintf(stderr, "Unable to write output!\n");
+			fprintf(stderr, "ERROR: Unable to read image.\n");
 			ret = 1;
 			goto cleanup_exit;
 		}
@@ -753,7 +755,7 @@ int rpng_cmd(int argc, char *argv[])
 	}
 
 	if (argc > 2 || (argc == 2 && !strcmp(arg, "--help"))) {
-		fprintf(stderr, "Usage: %s [-i] [FILE]\n", argv[0]);
+		fprintf(stderr, "Usage: %s [FILE]\n", argv[0]);
 		return 1;
 	}
 
@@ -789,7 +791,7 @@ static int wpng(FILE *input, FILE *output)
 	struct header hdr;
 
 	if (read_header(input, &hdr)) {
-		fprintf(stderr, "read header failed!\n");
+		fprintf(stderr, "Error: Read header failed!\n");
 		return 1;
 	}
 
@@ -826,7 +828,7 @@ static int wpng(FILE *input, FILE *output)
 	for (i=0; i<hdr.height; i++) {
 		io_len = fread(buf, 1, buf_len, input);
 		if (io_len != buf_len) {
-			fprintf(stderr, "Unable to write output!\n");
+			fprintf(stderr, "Error: Unable to read.\n");
 			ret = 1;
 			goto cleanup_exit;
 		}
@@ -874,12 +876,295 @@ int wpng_cmd(int argc, char *argv[])
 }
 
 /**
+ * GIF info.
+ */
+
+static int gifinfo(FILE *input, FILE *output)
+{
+	GifFileType *gif;
+
+	gif = DGifOpenFileHandle(fileno(input));
+
+	fprintf(output, "width:       %20d\n", gif->SWidth);
+	fprintf(output, "height:      %20d\n", gif->SHeight);
+
+	DGifCloseFile(gif);
+	return 0;
+}
+
+static int gifinfo_cmd(int argc, char *argv[])
+{
+	char *arg;
+	FILE *input;
+
+	arg = NULL;
+
+	if (argc == 2) {
+		arg = argv[1];
+	}
+
+	if (argc > 2 || (argc == 2 && !strcmp(arg, "--help"))) {
+		fprintf(stderr, "Usage: %s [FILE]\n", argv[0]);
+		return 1;
+	}
+
+	input = arg ? fopen(arg, "r+") : stdin;
+	if (!input) {
+		fprintf(stderr, "Error: Unable to open file.\n");
+		return 1;
+	}
+
+	if (gifinfo(input, stdout)) {
+		fprintf(stderr, "Error: GIF Info Failed.\n");
+		fclose(input);
+		return 1;
+	}
+
+	fclose(input);
+	return 0;
+}
+
+/**
+ * GIF Decoder.
+ */
+
+static int rgif(FILE *input, FILE *output)
+{
+	GifFileType *gif;
+	GifRecordType record_type;
+	GifPixelType *gif_buf;
+	uint8_t *buf;
+	uint32_t i, j, width, height;
+	GifColorType *color, *colors;
+	int ret;
+	size_t buf_len, io_len;
+
+	ret = 0;
+
+	gif = DGifOpenFileHandle(fileno(input));
+
+	do {
+		DGifGetRecordType(gif, &record_type);
+		switch (record_type) {
+		case IMAGE_DESC_RECORD_TYPE:
+			DGifGetImageDesc(gif);
+
+			if (gif->Image.ColorMap) {
+				colors = gif->Image.ColorMap->Colors;
+			} else if (gif->SColorMap) {
+				colors = gif->SColorMap->Colors;
+			} else {
+				fprintf(stderr, "Error: GIF image has no color map.\n");
+				ret = 1;
+				goto cleanup_exit;
+			}
+			width = gif->Image.Width;
+			height = gif->Image.Height;
+
+			if (write_header(output, width, height, 4, OIL_FILLER)) {
+				ret = 1;
+				goto cleanup_exit;
+			}
+
+			gif_buf = malloc(width * sizeof(GifPixelType));
+			buf_len = width * 4;
+			buf = malloc(buf_len);
+
+			for(i=0; i<height; i++) {
+				DGifGetLine(gif, gif_buf, width);
+				for (j=0; j<width; j++) {
+					color = &colors[gif_buf[j]];
+					buf[j*4] = color->Red;
+					buf[j*4+1] = color->Green;
+					buf[j*4+2] = color->Blue;
+					buf[j*4+3] = 0;
+				}
+
+				io_len = fwrite(buf, 1, buf_len, output);
+				if (io_len != buf_len) {
+					fprintf(stderr, "ERROR: unable to write output.\n");
+					return 1;
+				}
+			}
+			free(buf);
+			free(gif_buf);
+			break;
+		case SCREEN_DESC_RECORD_TYPE:
+		case EXTENSION_RECORD_TYPE:
+		case UNDEFINED_RECORD_TYPE:
+		case TERMINATE_RECORD_TYPE:
+			break;
+		}
+	} while (record_type != TERMINATE_RECORD_TYPE && record_type != IMAGE_DESC_RECORD_TYPE);
+
+	cleanup_exit:
+	DGifCloseFile(gif);
+	return ret;
+}
+
+static int rgif_cmd(int argc, char *argv[])
+{
+	char *arg;
+	FILE *input;
+
+	arg = NULL;
+
+	if (argc == 2) {
+		arg = argv[1];
+	}
+
+	if (argc > 2 || (argc == 2 && !strcmp(arg, "--help"))) {
+		fprintf(stderr, "Usage: %s [FILE]\n", argv[0]);
+		return 1;
+	}
+
+	input = arg ? fopen(arg, "r+") : stdin;
+	if (!input) {
+		fprintf(stderr, "Error: Unable to open file.\n");
+		return 1;
+	}
+
+	if (rgif(input, stdout)) {
+		fprintf(stderr, "Error: GIF Decoding Failed.\n");
+		fclose(input);
+		return 1;
+	}
+
+	fclose(input);
+	return 0;
+}
+
+/**
+ * GIF Encoder.
+ */
+
+static int wgif(FILE *input, FILE *output)
+{
+	struct header hdr;
+	struct j_decompress2 cinfo;
+	uint8_t **inbufs, *outbuf;
+	uint32_t i;
+	size_t row_len, io_len;
+	int ret, count;
+	ColorMapObject *cmap;
+	GifColorType *colors;
+	GifFileType *gif;
+
+	ret = 0;
+
+	if (read_header(input, &hdr)) {
+		fprintf(stderr, "Error: Read header failed!\n");
+		return 1;
+	}
+
+	if (hdr.cmp != 3) {
+		fprintf(stderr, "quant only supports images with 3 channels.\n");
+		return 1;
+	}
+
+	row_len = hdr.width * hdr.cmp;
+
+	inbufs = malloc(hdr.height * sizeof(uint8_t *));
+	outbuf = malloc(hdr.width);
+
+	cinfo.output_width = hdr.width;
+	cinfo.desired_number_of_colors = 256;
+
+	jinit_2pass_quantizer(&cinfo);
+
+	for (i=0; i<hdr.height; i++) {
+		inbufs[i] = malloc(row_len);
+		io_len = fread(inbufs[i], 1, row_len, input);
+		if (io_len != row_len) {
+			fprintf(stderr, "Error: Unable to read!\n");
+			ret = 1;
+			goto cleanup_exit;
+		}
+		prescan_quantize(&cinfo, inbufs + i, 0, 1);
+	}
+
+	finish_pass1(&cinfo);
+	start_pass_2_quant(&cinfo);
+
+	/* Prepare GIF Color Map */
+	count = cinfo.actual_number_of_colors;
+	cmap = MakeMapObject(count, NULL);
+	colors = cmap->Colors;
+	for (i=0; i<count; i++) {
+		colors[i].Red = cinfo.colormap[0][i];
+		colors[i].Green = cinfo.colormap[1][i];
+		colors[i].Blue = cinfo.colormap[2][i];
+	}
+
+	/* Write GIF */
+	gif = EGifOpenFileHandle(fileno(output));
+	EGifPutScreenDesc(gif, hdr.width, hdr.height, count, 0, cmap);
+	EGifPutImageDesc(gif, 0, 0, hdr.width, hdr.height, FALSE, NULL);
+
+	for(i=0; i<hdr.height; i++) {
+		pass2_fs_dither(&cinfo, inbufs + i, &outbuf, 1);
+		EGifPutLine(gif, outbuf, hdr.width);
+	}
+
+	EGifCloseFile(gif);
+
+	/* Free GIF Color Map */
+	FreeMapObject(cmap);
+
+	cleanup_exit:
+
+	free(outbuf);
+	for (i=0; i<hdr.height; i++) {
+		free(inbufs[i]);
+	}
+	free(inbufs);
+
+	quant_free(&cinfo);
+
+	return ret;
+}
+
+int wgif_cmd(int argc, char *argv[])
+{
+	char *arg;
+	FILE *input;
+
+	arg = NULL;
+
+	if (argc == 2) {
+		arg = argv[1];
+	}
+
+	if (argc > 2 || (argc == 2 && !strcmp(arg, "--help"))) {
+		fprintf(stderr, "Usage: %s [FILE]\n", argv[0]);
+		return 1;
+	}
+
+	input = arg ? fopen(arg, "r+") : stdin;
+	if (!input) {
+		fprintf(stderr, "Error: Unable to open file.\n");
+		return 1;
+	}
+
+	if (wgif(input, stdout)) {
+		fprintf(stderr, "Error: GIF Compression Failed.\n");
+		fclose(input);
+		return 1;
+	}
+
+	fclose(input);
+	return 0;
+}
+
+/**
  * Main.
  */
 
 int main(int argc, char *argv[])
 {
-	char *action;
+	char *action, *cmd;
+
+	cmd = argv[0];
 
 	if (argc < 2 || !strcmp(argv[1], "--help")) {
 		goto usage_exit;
@@ -905,9 +1190,15 @@ int main(int argc, char *argv[])
 		return wpng_cmd(argc, argv);
 	} else if (!strcmp(action, "pnginfo")) {
 		return pnginfo_cmd(argc, argv);
+	} else if (!strcmp(action, "gifinfo")) {
+		return gifinfo_cmd(argc, argv);
+	} else if (!strcmp(action, "rgif")) {
+		return rgif_cmd(argc, argv);
+	} else if (!strcmp(action, "wgif")) {
+		return wgif_cmd(argc, argv);
 	}
 
 	usage_exit:
-	fprintf(stderr, "Usage: %s [jpeginfo|rjpeg|wjpeg|pnginfo|rpng|wpng|scalex|scaley]\n", argv[0]);
+	fprintf(stderr, "Usage: %s [jpeginfo|rjpeg|wjpeg|pnginfo|rpng|wpng|gifinfo|rgif|wgif|scalex|scaley]\n", cmd);
 	return 1;
 }

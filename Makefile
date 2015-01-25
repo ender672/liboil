@@ -1,14 +1,15 @@
-CFLAGS = -Os -Wall -pedantic
-LDLIBS = -lpng -ljpeg -lm
+CFLAGS = -Os -g -Wall -pedantic
+LDLIBS = -lpng -ljpeg -lgif -lm
 
-oil: oil.o resample.o yscaler.o
+oil: oil.o resample.o yscaler.o quant.o
 oil.o: oil.c
 yscaler.o: yscaler.c yscaler.h
 resample.o: resample.c resample.h
+quant.o: quant.c quant.h
 test.o: test.c
 test: test.o resample.o
 clean:
-	rm -rf oil oil.o yscaler.o resample.o test test.o
+	rm -rf oil oil.o yscaler.o resample.o test test.o quant.o
 
 # rscope testing
 test-rscope: oil
