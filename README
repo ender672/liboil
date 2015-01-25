@@ -30,6 +30,22 @@ And run it with:
 
     $ ./test
 
+The Oil binary
+--------------
+
+oil.c compiles into a swiss-army binary that can decode jpeg, png, and gif
+images. It can resize images and re-encode them.
+
+This acts as a reference implementation of liboil. gif support is in-progress.
+
+Compile it with:
+
+  $ make oil
+
+Example usage - read a jpeg file, resize to 500x500, and reencode as a png:
+
+  $ ./oil rjpeg in.jpg | ./oil scalex 500 | ./oil scaley 500 | ./oil wpng > out.png
+
 libjpeg License
 ---------------
 
