@@ -30,6 +30,12 @@ And run it with:
 
     $ ./test
 
+libjpeg License
+---------------
+
+The file quant.c was copied from the libjpeg-turbo project. Please read
+README-libjpeg for license information on this file.
+
 License
 --------
 
