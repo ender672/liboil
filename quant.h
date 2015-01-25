@@ -15,7 +15,7 @@ typedef histcell hist1d[HIST_C2_ELEMS]; /* typedefs for the array */
 typedef hist1d * hist2d;    /* type for the 2nd-level pointers */
 typedef hist2d * hist3d;    /* type for top-level pointer */
 
-typedef struct {
+struct quant {
 	/* Space for the eventually created colormap is stashed here */
 	unsigned char **sv_colormap;  /* colormap allocated at init time */
 	int desired;                  /* desired # of colors = size of colormap */
@@ -27,9 +27,7 @@ typedef struct {
 	FSERRPTR fserrors;            /* accumulated errors */
 	int on_odd_row;               /* flag to remember which row we are on */
 	int * error_limiter;          /* table for clamping the applied error */
-} my_cquantizer;
 
-struct j_decompress2 {
 	struct jpeg_color_quantizer * cquantize;
 	unsigned int output_width;
 	unsigned char **colormap;
@@ -37,14 +35,13 @@ struct j_decompress2 {
 	int desired_number_of_colors;
 };
 
-typedef struct j_decompress2 * j_decompress2_ptr;
+void jinit_2pass_quantizer(struct quant *cquantize);
+void prescan_quantize(struct quant *cquantize, unsigned char **input_buf,
+	unsigned char **output_buf, int num_rows);
+void finish_pass1(struct quant *cquantize);
+void start_pass_2_quant(struct quant *cquantize);
+void pass2_fs_dither(struct quant *cquantize, unsigned char **input_buf,
+	unsigned char **output_buf, int num_rows);
+void quant_free(struct quant *cquantize);
 
-void jinit_2pass_quantizer(j_decompress2_ptr cinfo);
-void prescan_quantize(j_decompress2_ptr cinfo, unsigned char **input_buf,
-	unsigned char **output_buf, int num_rows);
-void finish_pass1(j_decompress2_ptr cinfo);
-void start_pass_2_quant(j_decompress2_ptr cinfo);
-void pass2_fs_dither(j_decompress2_ptr cinfo, unsigned char **input_buf,
-	unsigned char **output_buf, int num_rows);
-void quant_free(j_decompress2_ptr cinfo);
 #endif

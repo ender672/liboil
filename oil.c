@@ -1041,7 +1041,7 @@ static int rgif_cmd(int argc, char *argv[])
 static int wgif(FILE *input, FILE *output)
 {
 	struct header hdr;
-	struct j_decompress2 cinfo;
+	struct quant quant;
 	uint8_t **inbufs, *outbuf;
 	uint32_t i;
 	size_t row_len, io_len;
@@ -1067,10 +1067,10 @@ static int wgif(FILE *input, FILE *output)
 	inbufs = malloc(hdr.height * sizeof(uint8_t *));
 	outbuf = malloc(hdr.width);
 
-	cinfo.output_width = hdr.width;
-	cinfo.desired_number_of_colors = 256;
+	quant.output_width = hdr.width;
+	quant.desired_number_of_colors = 256;
 
-	jinit_2pass_quantizer(&cinfo);
+	jinit_2pass_quantizer(&quant);
 
 	for (i=0; i<hdr.height; i++) {
 		inbufs[i] = malloc(row_len);
@@ -1080,20 +1080,20 @@ static int wgif(FILE *input, FILE *output)
 			ret = 1;
 			goto cleanup_exit;
 		}
-		prescan_quantize(&cinfo, inbufs + i, 0, 1);
+		prescan_quantize(&quant, inbufs + i, 0, 1);
 	}
 
-	finish_pass1(&cinfo);
-	start_pass_2_quant(&cinfo);
+	finish_pass1(&quant);
+	start_pass_2_quant(&quant);
 
 	/* Prepare GIF Color Map */
-	count = cinfo.actual_number_of_colors;
+	count = quant.actual_number_of_colors;
 	cmap = MakeMapObject(count, NULL);
 	colors = cmap->Colors;
 	for (i=0; i<count; i++) {
-		colors[i].Red = cinfo.colormap[0][i];
-		colors[i].Green = cinfo.colormap[1][i];
-		colors[i].Blue = cinfo.colormap[2][i];
+		colors[i].Red = quant.colormap[0][i];
+		colors[i].Green = quant.colormap[1][i];
+		colors[i].Blue = quant.colormap[2][i];
 	}
 
 	/* Write GIF */
@@ -1102,7 +1102,7 @@ static int wgif(FILE *input, FILE *output)
 	EGifPutImageDesc(gif, 0, 0, hdr.width, hdr.height, FALSE, NULL);
 
 	for(i=0; i<hdr.height; i++) {
-		pass2_fs_dither(&cinfo, inbufs + i, &outbuf, 1);
+		pass2_fs_dither(&quant, inbufs + i, &outbuf, 1);
 		EGifPutLine(gif, outbuf, hdr.width);
 	}
 
@@ -1119,7 +1119,7 @@ static int wgif(FILE *input, FILE *output)
 	}
 	free(inbufs);
 
-	quant_free(&cinfo);
+	quant_free(&quant);
 
 	return ret;
 }
