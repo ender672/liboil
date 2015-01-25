@@ -679,6 +679,12 @@ int rpng_noninterlaced(png_structp png, png_infop info, FILE *output)
 
 	buf_len = png_get_rowbytes(png, info);
 	buf = malloc(buf_len);
+
+	if (setjmp(png_jmpbuf(png))) {
+		free(buf);
+		return 1;
+	}
+
 	height = png_get_image_height(png, info);
 
 	for (i=0; i<height; i++) {
