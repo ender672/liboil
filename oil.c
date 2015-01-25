@@ -647,6 +647,11 @@ int rpng_interlaced(png_structp png, png_infop info, FILE *output)
 		sl[i] = malloc(buf_len);
 	}
 
+	if (setjmp(png_jmpbuf(png))) {
+		ret = 1;
+		goto cleanup_exit;
+	}
+
 	png_read_image(png, sl);
 
 	for (i=0; i<height; i++) {
@@ -656,6 +661,8 @@ int rpng_interlaced(png_structp png, png_infop info, FILE *output)
 			break;
 		}
 	}
+
+	cleanup_exit:
 
 	for (i=0; i<height; i++) {
 		free(sl[i]);

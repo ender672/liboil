@@ -29,3 +29,11 @@ pngsuite: PngSuite-2013jan13.tgz
 	tar xzf $< -C $@
 test-pngsuite: pngsuite oil
 	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
+
+# imagesuite pngsuite testing
+imagetestsuite-png-1.01.tar.gz:
+	wget https://imagetestsuite.googlecode.com/files/$@
+png: imagetestsuite-png-1.01.tar.gz
+	tar xzf $<
+test-imagetestsuite-png: png oil
+	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
