@@ -1070,7 +1070,7 @@ static int wgif(FILE *input, FILE *output)
 	quant.output_width = hdr.width;
 	quant.desired_number_of_colors = 256;
 
-	jinit_2pass_quantizer(&quant);
+	quant_init(&quant);
 
 	for (i=0; i<hdr.height; i++) {
 		inbufs[i] = malloc(row_len);
@@ -1080,11 +1080,10 @@ static int wgif(FILE *input, FILE *output)
 			ret = 1;
 			goto cleanup_exit;
 		}
-		prescan_quantize(&quant, inbufs + i, 0, 1);
+		quant_index(&quant, inbufs[i]);
 	}
 
-	finish_pass1(&quant);
-	start_pass_2_quant(&quant);
+	quant_gen_palette(&quant);
 
 	/* Prepare GIF Color Map */
 	count = quant.actual_number_of_colors;
@@ -1102,7 +1101,7 @@ static int wgif(FILE *input, FILE *output)
 	EGifPutImageDesc(gif, 0, 0, hdr.width, hdr.height, FALSE, NULL);
 
 	for(i=0; i<hdr.height; i++) {
-		pass2_fs_dither(&quant, inbufs + i, &outbuf, 1);
+		quant_map(&quant, inbufs[i], outbuf);
 		EGifPutLine(gif, outbuf, hdr.width);
 	}
 

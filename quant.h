@@ -10,7 +10,6 @@ typedef int16_t FSERROR;          /* 16 bits should be enough */
 typedef FSERROR *FSERRPTR;      /* pointer to error array */
 
 typedef uint16_t histcell;  /* histogram cell; prefer an unsigned type */
-typedef histcell * histptr; /* for pointers to histogram cells */
 typedef histcell hist1d[HIST_C2_ELEMS]; /* typedefs for the array */
 typedef hist1d * hist2d;    /* type for the 2nd-level pointers */
 typedef hist2d * hist3d;    /* type for top-level pointer */
@@ -35,13 +34,10 @@ struct quant {
 	int desired_number_of_colors;
 };
 
-void jinit_2pass_quantizer(struct quant *cquantize);
-void prescan_quantize(struct quant *cquantize, unsigned char **input_buf,
-	unsigned char **output_buf, int num_rows);
-void finish_pass1(struct quant *cquantize);
-void start_pass_2_quant(struct quant *cquantize);
-void pass2_fs_dither(struct quant *cquantize, unsigned char **input_buf,
-	unsigned char **output_buf, int num_rows);
+void quant_init(struct quant *cquantize);
+void quant_index(struct quant *cquantize, unsigned char *ptr);
+void quant_gen_palette(struct quant *cquantize);
+void quant_map(struct quant *cquantize, unsigned char *inptr, unsigned char *outptr);
 void quant_free(struct quant *cquantize);
 
 #endif
