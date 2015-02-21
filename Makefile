@@ -1,5 +1,5 @@
-CFLAGS = -Os -Wall -pedantic
-LDLIBS = -lpng -ljpeg -lgif -lm
+CFLAGS += -Os -Wall -pedantic
+LDLIBS += -lpng -ljpeg -lgif -lm
 
 oil: oil.o resample.o yscaler.o quant.o
 oil.o: oil.c quant.h resample.h yscaler.h
