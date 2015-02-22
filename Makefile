@@ -1,13 +1,16 @@
-CFLAGS += -Os -Wall -pedantic
+CFLAGS += -Os -Wall -pedantic -I/usr/local/include
 LDLIBS += -lpng -ljpeg -lgif -lm
+LDFLAGS += -L/usr/local/lib
 
 oil: oil.o resample.o yscaler.o quant.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 oil.o: oil.c quant.h resample.h yscaler.h
 yscaler.o: yscaler.c yscaler.h
 resample.o: resample.c resample.h
 quant.o: quant.c quant.h
 test.o: test.c
 test: test.o resample.o
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 clean:
 	rm -f oil oil.o yscaler.o resample.o test test.o quant.o
 
@@ -26,31 +29,31 @@ PngSuite-2013jan13.tgz:
 	wget http://www.schaik.com/pngsuite/$@
 pngsuite: PngSuite-2013jan13.tgz
 	mkdir -p $@
-	tar xzf $< -C $@
+	tar xzf PngSuite-2013jan13.tgz -C $@
 test-pngsuite: pngsuite oil
-	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
+	for f in pngsuite/*.png; do echo $$f; ./oil rpng $$f > /dev/null || true; done
 
 # imagetestsuite png testing
 imagetestsuite-png-1.01.tar.gz:
-	wget https://imagetestsuite.googlecode.com/files/$@
+	wget https://imagetestsuite.googlecode.com/files/$@ --no-check-certificate
 imagetestsuite/png: imagetestsuite-png-1.01.tar.gz
 	mkdir -p imagetestsuite
-	tar xzf $< -C imagetestsuite
+	tar xzf imagetestsuite-png-1.01.tar.gz -C imagetestsuite
 test-imagetestsuite-png: imagetestsuite/png oil
-	for f in $</*.png; do echo $$f; ./oil rpng $$f > /dev/null; done
+	for f in imagetestsuite/png/*.png; do echo $$f; ./oil rpng $$f > /dev/null || true; done
 
 # imagetestsuite jpg testing
 imagetestsuite-jpg-1.00.tar.gz:
-	wget https://imagetestsuite.googlecode.com/files/$@
+	wget https://imagetestsuite.googlecode.com/files/$@ --no-check-certificate
 imagetestsuite/jpg: imagetestsuite-jpg-1.00.tar.gz
-	tar xzf $<
+	tar xzf imagetestsuite-jpg-1.00.tar.gz
 test-imagetestsuite-jpg: imagetestsuite/jpg oil
-	for f in $</*.jpg; do echo $$f; ./oil rjpeg $$f > /dev/null; done
+	for f in imagetestsuite/jpg/*.jpg; do echo $$f; ./oil rjpeg $$f > /dev/null || true; done
 
 # imagetestsuite gif testing
 imagetestsuite-gif-1.00.tar.gz:
-	wget https://imagetestsuite.googlecode.com/files/$@
+	wget https://imagetestsuite.googlecode.com/files/$@ --no-check-certificate
 imagetestsuite/gif: imagetestsuite-gif-1.00.tar.gz
-	tar xzf $<
+	tar xzf imagetestsuite-gif-1.00.tar.gz
 test-imagetestsuite-gif: imagetestsuite/gif oil
-	for f in $</*.gif; do echo $$f; ./oil rgif $$f > /dev/null; done
+	for f in imagetestsuite/gif/*.gif; do echo $$f; ./oil rgif $$f > /dev/null || true; done
