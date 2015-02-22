@@ -255,6 +255,7 @@ static char *jpeg_color_space_to_str(J_COLOR_SPACE jcs)
 		return "JCS_CMYK";
 	case JCS_YCCK:
 		return "JCS_YCCK";
+#ifdef JCS_EXTENSIONS
 	case JCS_EXT_RGB:
 		return "JCS_EXT_RGB";
 	case JCS_EXT_RGBX:
@@ -275,6 +276,7 @@ static char *jpeg_color_space_to_str(J_COLOR_SPACE jcs)
 		return "JCS_EXT_ABGR";
 	case JCS_EXT_ARGB:
 		return "JCS_EXT_ARGB";
+#endif
 	}
 	return "UNKNOWN";
 }
@@ -353,10 +355,12 @@ static int rjpeg(FILE *input, FILE *output, int rgbx, int downscale)
 	jpeg_stdio_src(&dinfo, input);
 	jpeg_read_header(&dinfo, TRUE);
 
+#ifdef JCS_EXTENSIONS
 	if (rgbx && dinfo.out_color_space == JCS_RGB) {
 		opts = OIL_FILLER;
 		dinfo.out_color_space = JCS_EXT_RGBX;
 	}
+#endif
 
 	if (downscale) {
 		dinfo.scale_denom = downscale;
@@ -491,9 +495,11 @@ static int wjpeg(FILE *input, FILE *output)
 	case 3:
 		cinfo.in_color_space = JCS_RGB;
 		break;
+#ifdef JCS_EXTENSIONS
 	case 4:
 		cinfo.in_color_space = JCS_EXT_RGBX;
 		break;
+#endif
 	default:
 		goto cleanup_exit;
 	}
@@ -586,8 +592,8 @@ static int pnginfo(FILE *input, FILE *output)
 
 	cs = ctype_to_str(png_get_color_type(png, info));
 
-	printf("width:       %20lu\n", png_get_image_width(png, info));
-	printf("height:      %20lu\n", png_get_image_height(png, info));
+	printf("width:       %20lu\n", (unsigned long)png_get_image_width(png, info));
+	printf("height:      %20lu\n", (unsigned long)png_get_image_height(png, info));
 	printf("color_space: %20s\n", cs);
 
 	png_destroy_read_struct(&png, &info, NULL);
