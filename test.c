@@ -284,9 +284,7 @@ static void test_split_map(long dim_in, long dim_out)
 		 * Should it be tightened? What effect does it have when ty is
 		 * off by this much?
 		 */
-		if (delta > 0.0000001l) {
-			printf("delta: %.30Lf\n", delta);
-		}
+		assert(delta < 0.0000001l);
 	}
 }
 
