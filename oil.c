@@ -181,7 +181,7 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 				break;
 			}
 		}
-		yscaler_scale(&ys, scaled_sl, hdr.width, hdr.cmp, hdr.opts);
+		yscaler_scale(&ys, scaled_sl, hdr.width, hdr.cmp, hdr.opts, i);
 		if (!fwrite(scaled_sl, buf_len, 1, output)) {
 			ret = 1;
 			break;
