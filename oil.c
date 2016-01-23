@@ -1,5 +1,4 @@
 #include "resample.h"
-#include "yscaler.h"
 #include "quant.h"
 #include <stdint.h>
 #include <stdio.h>

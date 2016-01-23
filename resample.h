@@ -1,6 +1,8 @@
 #ifndef RESAMPLE_H
 #define RESAMPLE_H
 
+#include <stdint.h>
+
 #define OIL_FILLER 1
 
 /**
@@ -42,5 +44,58 @@ long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
  */
 void strip_scale(void **in, long strip_height, long width, void *out, float ty,
 	int cmp, int opts);
+
+/**
+ * Struct to hold state for y-scaling.
+ */
+struct yscaler {
+	uint32_t in_height; // input image height.
+	uint32_t out_height; // output image height.
+	uint32_t taps; // number of taps required for scaling.
+	uint32_t scanline_len; // length in bytes of a scanline.
+	uint8_t *strip; // a ring buffer to hold scanlines.
+	uint32_t sl_count; // a counter for the ring buffer.
+	uint32_t target; // where the ring buffer should be on next scaling.
+	float ty; // sub-pixel offset for next scaling.
+};
+
+/**
+ * Initialize a yscaler struct. Calculates how large the scanline ring buffer
+ * will need to be and allocates it.
+ */
+void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
+	uint32_t scanline_len);
+
+/**
+ * Free a yscaler struct, including the ring buffer.
+ */
+void yscaler_free(struct yscaler *ys);
+
+/**
+ * Get a pointer to the next scanline to be filled in the ring buffer. Returns
+ * null if no more scanlines are needed to perform scaling.
+ */
+unsigned char *yscaler_next(struct yscaler *ys);
+
+/**
+ * Scale the buffered contents of the yscaler to produce the next scaled output
+ * scanline.
+ *
+ * Scaled scanline will be written to the out parameter.
+ * The width parameter is the nuber of samples in each scanline.
+ * The cmp parameter is the number of components per sample (3 for RGB).
+ * The opts parameter is a bit mask for options. Currently OIL_FILLER is the
+ *   only one.
+ * The pos parameter is the position of the output scanline.
+ */
+void yscaler_scale(struct yscaler *ys, uint8_t *out,  uint32_t width,
+	uint8_t cmp, uint8_t opts, uint32_t pos);
+
+/**
+ * Helper for scaling an image that sits fully in memory.
+ */
+void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
+	uint8_t opts);
 
 #endif

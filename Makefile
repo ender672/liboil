@@ -2,20 +2,19 @@ CFLAGS += -Os -Wall -pedantic -I/usr/local/include
 LDLIBS += -lpng -ljpeg -lgif -lm
 LDFLAGS += -L/usr/local/lib
 
-OIL_OBJS=oil.o resample.o yscaler.o quant.o
+OIL_OBJS=oil.o resample.o quant.o
 TEST_OBJS=test.o resample.o
 
 oil: ${OIL_OBJS}
 	$(CC) $(LDFLAGS) ${OIL_OBJS} -o $@ $(LDLIBS)
-oil.o: oil.c quant.h resample.h yscaler.h
-yscaler.o: yscaler.c yscaler.h
+oil.o: oil.c quant.h resample.h
 resample.o: resample.c resample.h
 quant.o: quant.c quant.h
 test.o: test.c
 test: ${TEST_OBJS}
 	$(CC) $(LDFLAGS) ${TEST_OBJS} -o $@ $(LDLIBS)
 clean:
-	rm -f oil oil.o yscaler.o resample.o test test.o quant.o
+	rm -f oil oil.o resample.o test test.o quant.o
 
 # rscope testing
 test-rscope-x: oil
