@@ -465,9 +465,9 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 
 static void yscaler_map_pos(struct yscaler *ys, uint32_t pos)
 {
-	uint32_t target;
+	long target;
 	target = split_map(ys->in_height, ys->out_height, pos, &ys->ty);
-	ys->target = target + ys->taps / 2 + 1;
+	ys->target = target + ys->taps / 2;
 }
 
 void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
@@ -489,7 +489,7 @@ void yscaler_free(struct yscaler *ys)
 
 uint8_t *yscaler_next(struct yscaler *ys)
 {
-	if (ys->sl_count == ys->in_height || ys->sl_count >= ys->target + 1) {
+	if (ys->sl_count == ys->in_height || ys->sl_count > ys->target) {
 		return 0;
 	}
 
