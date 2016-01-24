@@ -3,3 +3,8 @@
 *.o
 oil
 test
+
+# OSX
+oil.dSYM
+test.dSYM
+.DS_Store
