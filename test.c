@@ -55,8 +55,6 @@ unsigned char clamp(long double x)
 	if (x < 0) {
 		return 0;
 	}
-	/* Fix for rounding errors */
-	x += 0.000000000001l;
 
 	/* This rounds to the nearest integer */
 	x += 0.5l;
@@ -234,9 +232,7 @@ static void validate_scanline(unsigned char *in, long width_in,
 			}
 
 			delta = validate_sample(taps, samples, coeffs, out[i * cmp + j]);
-			if (delta) {
-				printf("(x) in: %ld, out: %ld, cmp: %d, delta: %.20Lf\n", width_in, width_out, cmp, delta);
-			}
+			assert(!delta);
 		}
 	}
 
@@ -305,16 +301,14 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 		}
 
 		delta = validate_sample(taps, samples, coeffs, out[i]);
-		if (delta) {
-			printf("(y) len: %ld, cmp: %d, ty: %.20Lf, delta: %.20Lf\n", len, cmp, ty, delta);
-		}
+		assert(!delta);
 	}
 
 	free(coeffs);
 	free(samples);
 }
 
-static void test_yscale(long taps, long width, int cmp, int opts, float ty)
+static void test_strip_scale(long taps, long width, int cmp, int opts, float ty)
 {
 	unsigned char **scanlines, *out;
 	long i;
@@ -337,13 +331,13 @@ static void test_yscale(long taps, long width, int cmp, int opts, float ty)
 	free(scanlines);
 }
 
-static void test_yscale_all()
+static void test_strip_scale_all()
 {
-	test_yscale(4, 1000, 4, 0, 0.2345);
-	test_yscale(8, 1000, 4, OIL_FILLER, 0.5);
-	test_yscale(12, 1000, 1, 0, 0.0);
-	test_yscale(12, 1000, 3, 0, 0.00005);
-	test_yscale(12, 1000, 2, 0, 0.99999);
+	test_strip_scale(4, 1000, 4, 0, 0.2345);
+	test_strip_scale(8, 1000, 4, OIL_FILLER, 0.5);
+	test_strip_scale(12, 1000, 1, 0, 0.0);
+	test_strip_scale(12, 1000, 3, 0, 0.00005);
+	test_strip_scale(12, 1000, 2, 0, 0.99999);
 }
 
 int main()
@@ -351,7 +345,7 @@ int main()
 	test_calc_taps();
 	test_split_map_all();
 	test_xscale_all();
-	test_yscale_all();
+	test_strip_scale_all();
 	printf("All tests pass.\n");
 	return 0;
 }
