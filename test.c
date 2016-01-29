@@ -340,12 +340,69 @@ static void test_strip_scale_all()
 	test_strip_scale(12, 1000, 2, 0, 0.99999);
 }
 
+/**
+ * sl_rbuf
+ */
+static void test_sl_rbuf()
+{
+	uint8_t *p, *buf1, *buf2, *buf3, *buf4, **virt;
+	struct sl_rbuf rb;
+	sl_rbuf_init(&rb, 4, 1024);
+	assert(rb.count == 0);
+
+	buf1 = rb.buf;
+	buf2 = rb.buf + 1024;
+	buf3 = rb.buf + 1024 * 2;
+	buf4 = rb.buf + 1024 * 3;
+
+	p = sl_rbuf_next(&rb);
+	assert(p == buf1);
+	assert(rb.count == 1);
+
+	virt = sl_rbuf_virt(&rb, 0);
+	assert(virt[0] == buf1);
+	assert(virt[1] == buf1);
+	assert(virt[2] == buf1);
+	assert(virt[3] == buf1);
+
+	p = sl_rbuf_next(&rb);
+	assert(p == buf2);
+	assert(rb.count == 2);
+
+	virt = sl_rbuf_virt(&rb, 1);
+	assert(virt[0] == buf1);
+	assert(virt[1] == buf1);
+	assert(virt[2] == buf1);
+	assert(virt[3] == buf2);
+
+	p = sl_rbuf_next(&rb);
+	assert(p == buf3);
+	assert(rb.count == 3);
+
+	p = sl_rbuf_next(&rb);
+	assert(p == buf4);
+	assert(rb.count == 4);
+
+	p = sl_rbuf_next(&rb);
+	assert(p == buf1);
+	assert(rb.count == 5);
+
+	virt = sl_rbuf_virt(&rb, 5);
+	assert(virt[0] == buf3);
+	assert(virt[1] == buf4);
+	assert(virt[2] == buf1);
+	assert(virt[3] == buf1);
+
+	sl_rbuf_free(&rb);
+}
+
 int main()
 {
 	test_calc_taps();
 	test_split_map_all();
 	test_xscale_all();
 	test_strip_scale_all();
+	test_sl_rbuf();
 	printf("All tests pass.\n");
 	return 0;
 }
