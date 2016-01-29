@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 
+/**
+ * Use this for the opts argument to indicate that our samples have a 'filler'
+ * component to improve memory alignment, for example RGBX.
+ *
+ * When given, this can result in a modest speed improvement since oil can
+ * ignore the extra component.
+ */
 #define OIL_FILLER 1
 
 /**

@@ -5,18 +5,102 @@ A C library for resizing images. It currently does all resizing with a
 catmull-rom interpolator. This library aims for fast performance, low memory
 use, and accuracy.
 
-Requirements
-------------
+Usage
+-----
 
-libjpeg development headers and libpng development headers are required for the
-oil executable.
+liboil provides separate methods for x-scaling and y-scaling. x-scaling is
+relatively straightforward since it translates one input scanline to one output
+scanline.
 
-Building
---------
+y-scaling works by translating multiple input scanlines to one output scanline.
+The number of input scanlines depends on the input and output sizes.
 
-Running make will generate the oil executable:
+The high-level yscaler API manages input scanlines for you:
 
-    $ make
+    struct yscaler ys;
+    int opts;
+    uint32_t i, height_in, height_out, scanline_len;
+    uint8_t *tmp, *scaled_scanline;
+
+    // set height_in, height_out, width (in samples), cmp (components), opts
+    // and scanline_len.
+    scaled_scanline = malloc(scanline_len);
+
+    yscaler_init(&ys, height_in, height_out, scanline_len);
+    for (i=0; i<height_out; i++) {
+        while ((tmp = yscaler_next(&ys))) {
+          // populate tmp buffer with the next input scanline
+        }
+        yscaler_scale(&ys, scaled_scanline, width, cmp, opts, i);
+        // handle output in scaled_scanline
+    }
+    yscaler_free(&ys);
+    free(scaled_scanline);
+
+Beneath the hood, yscaler uses sl_rbuf, a circular buffer for managing
+scanlines. For fine-grained control, you can do the same:
+
+    struct sl_rbuf rb;
+    int opts;
+    uint32_t i, height_in, height_out, scanline_len, taps;
+    long target;
+    float ty;
+    uint8_t *tmp, *scaled_scanline, **virt;
+
+    // set height_in, height_out, width (in samples), cmp (components), opts
+    // and scanline_len.
+    scaled_scanline = malloc(scanline_len);
+    taps = calc_taps(height_in, height_out);
+
+    sl_rbuf_init(&rb, taps, scanline_len);
+    for (i=0; i<height_out; i++) {
+        target = split_map(height_in, height_out, i, &ty) + taps / 2;
+        while (rb.count <= target && rb.count < height_in) {
+            tmp = sl_rbuf_next(&rb);
+            // populate tmp buffer with the next input scanline
+        }
+        virt = sl_rbuf_virt(&rb, target);
+        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp, opts);
+        // handle output in scaled_scanline
+    }
+    sl_rbuf_free(&rb);
+    free(scaled_scanline);
+
+It is also possible to manage scanlines yourself, performing y-scaling using
+only the low-level primitives calc_taps(), split_map(), and strip_scale():
+
+    int opts;
+    uint32_t i, j, height_in, height_out, scanline_len, taps, rb_count, safe;
+    long target;
+    float ty;
+    uint8_t *rbuf, *tmp, *scaled_scanline, **virt;
+
+    // set height_in, height_out, width (in samples), cmp (components), opts
+    // and scanline_len.
+    scaled_scanline = malloc(scanline_len);
+    taps = calc_taps(height_in, height_out);
+
+    rbuf = malloc(scanline_len * taps);
+    rb_count = 0;
+    virt = malloc(sizeof(uint8_t *) * taps);
+
+    for (i=0; i<height_out; i++) {
+        target = split_map(height_in, height_out, i, &ty) + taps / 2;
+        while (rb_count <= target && rb_count < height_in) {
+            tmp = rbuf + (rb_count++ % taps) * scanline_len;
+            // populate tmp buffer with the next input scanline
+        }
+        for (j=0; j<taps; j++) {
+            safe = target < j ? 0 : target - j;
+            safe = safe > height_in ? height_in : safe;
+            virt[taps - j - 1] = rbuf + (safe % taps) * scanline_len;
+        }
+        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp, opts);
+        // handle output in scaled_scanline
+    }
+    free(virt);
+    free(rbuf);
+    free(scaled_scanline);
 
 Testing
 -------
@@ -30,34 +114,16 @@ And run it with:
 
     $ ./test
 
-The Oil binary
---------------
+It is recommended to run it with valgrind as well:
 
-oil.c compiles into a swiss-army binary that can decode jpeg, png, and gif
-images. It can resize images and re-encode them.
-
-This acts as a reference implementation of liboil. gif support is in-progress.
-
-Compile it with:
-
-  $ make oil
-
-Example usage - read a jpeg file, resize to 500x500, and reencode as a png:
-
-  $ ./oil rjpeg in.jpg | ./oil scalex 500 | ./oil scaley 500 | ./oil wpng > out.png
-
-libjpeg License
----------------
-
-The file quant.c was copied from the libjpeg-turbo project. Please read
-README-libjpeg for license information on this file.
+    $ valgrind ./test
 
 License
 --------
 
 The MIT License (MIT)
 
-Copyright (c) 2014 Timothy Elliott
+Copyright (c) 2016 Timothy Elliott
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
