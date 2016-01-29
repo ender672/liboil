@@ -483,16 +483,21 @@ uint8_t *sl_rbuf_next(struct sl_rbuf *rb)
 	return rb->buf + (rb->count++ % rb->height) * rb->length;
 }
 
-uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long target)
+uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long last_target)
 {
-	uint32_t i, safe, taps;
-	taps = rb->height;
-	for (i=0; i<taps; i++) {
-		safe = target < i ? 0 : target - i;
-		if (safe >= rb->count) {
-			safe = rb->count - 1; // safe is an index (not counter)
-		}
-		rb->virt[taps - i - 1] = rb->buf + (safe % taps) * rb->length;
+	uint32_t i, safe, height, last_idx;
+	height = rb->height;
+	last_idx = rb->count - 1;
+
+	// Make sure we have the 1st scanline if extending upwards
+	if (last_target < last_idx && last_idx > height - 1) {
+		return 0;
+	}
+
+	for (i=0; i<height; i++) {
+		safe = last_target < i ? 0 : last_target - i;
+		safe = safe > last_idx ? last_idx : safe;
+		rb->virt[height - i - 1] = rb->buf + (safe % height) * rb->length;
 	}
 	return rb->virt;
 }
