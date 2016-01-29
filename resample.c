@@ -463,58 +463,78 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 	free(coeffs);
 }
 
+void sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, uint32_t sl_len)
+{
+	rb->height = height;
+	rb->count = 0;
+	rb->length = sl_len;
+	rb->buf = malloc(sl_len * rb->height);
+	rb->virt = malloc(sizeof(uint8_t *) * rb->height);
+}
+
+void sl_rbuf_free(struct sl_rbuf *rb)
+{
+	free(rb->buf);
+	free(rb->virt);
+}
+
+uint8_t *sl_rbuf_next(struct sl_rbuf *rb)
+{
+	return rb->buf + (rb->count++ % rb->height) * rb->length;
+}
+
+uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long target)
+{
+	uint32_t i, safe, taps;
+	taps = rb->height;
+	for (i=0; i<taps; i++) {
+		safe = target < i ? 0 : target - i;
+		if (safe >= rb->count) {
+			safe = rb->count - 1; // safe is an index (not counter)
+		}
+		rb->virt[taps - i - 1] = rb->buf + (safe % taps) * rb->length;
+	}
+	return rb->virt;
+}
+
 static void yscaler_map_pos(struct yscaler *ys, uint32_t pos)
 {
 	long target;
 	target = split_map(ys->in_height, ys->out_height, pos, &ys->ty);
-	ys->target = target + ys->taps / 2;
+	ys->target = target + ys->rb.height / 2;
 }
 
 void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
 	uint32_t scanline_len)
 {
+	uint32_t taps;
+	taps = calc_taps(in_height, out_height);
+	sl_rbuf_init(&ys->rb, taps, scanline_len);
 	ys->in_height = in_height;
 	ys->out_height = out_height;
-	ys->sl_count = 0;
-	ys->taps = calc_taps(in_height, out_height);
-	ys->scanline_len = scanline_len;
-	ys->strip = malloc(scanline_len * ys->taps);
 	yscaler_map_pos(ys, 0);
 }
 
 void yscaler_free(struct yscaler *ys)
 {
-	free(ys->strip);
+	sl_rbuf_free(&ys->rb);
 }
 
-uint8_t *yscaler_next(struct yscaler *ys)
+unsigned char *yscaler_next(struct yscaler *ys)
 {
-	if (ys->sl_count == ys->in_height || ys->sl_count > ys->target) {
+	if (ys->rb.count == ys->in_height || ys->rb.count > ys->target) {
 		return 0;
 	}
-
-	return ys->strip + (ys->sl_count++ % ys->taps) * ys->scanline_len;
+	return sl_rbuf_next(&ys->rb);
 }
 
 void yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width,
 	uint8_t cmp, uint8_t opts, uint32_t pos)
 {
-	void **virt, *ptr;
-	uint32_t i, target_safe, taps;
-
-	taps = ys->taps;
-	virt = malloc(sizeof(uint8_t *) * taps);
-	for (i=0; i<taps; i++) {
-		target_safe = ys->target < i ? 0 : ys->target - i;
-		if (target_safe > ys->in_height) {
-			target_safe = ys->in_height;
-		}
-		ptr = ys->strip + (target_safe % taps) * ys->scanline_len;
-		virt[taps - i - 1] = ptr;
-	}
-	strip_scale(virt, taps, width, (void *)out, ys->ty, cmp, opts);
+	void **virt;
+	virt = (void **)sl_rbuf_virt(&ys->rb, ys->target);
+	strip_scale(virt, ys->rb.height, width, out, ys->ty, cmp, opts);
 	yscaler_map_pos(ys, pos + 1);
-	free(virt);
 }
 
 void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,

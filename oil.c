@@ -150,13 +150,105 @@ int scalex_cmd(int argc, char *argv[])
 /**
  * Y Scaling.
  */
+static int scaley_primitives(FILE *input, FILE *output, uint32_t height)
+{
+	int ret;
+	uint32_t i, j, target, safe, taps, rb_count;
+	uint8_t *rbuf, *scaled_sl, *tmp, **virt;
+	float ty;
+	size_t sl_len;
+	struct header hdr;
 
-static int scaley(FILE *input, FILE *output, uint32_t height)
+	if (read_header(input, &hdr)) {
+		return 1;
+	}
+
+	if (write_header(output, hdr.width, height, hdr.cmp, hdr.opts)) {
+		return 1;
+	}
+
+	ret = 0;
+	sl_len = hdr.width * hdr.cmp;
+	scaled_sl = malloc(sl_len);
+	taps = calc_taps(hdr.height, height);
+
+	rbuf = malloc(sl_len * taps);
+	rb_count = 0;
+	virt = malloc(sizeof(uint8_t *) * taps);
+	for (i=0; i<height; i++) {
+		target = split_map(hdr.height, height, i, &ty) + taps / 2;
+		while (rb_count <= target && rb_count < hdr.height) {
+			tmp = rbuf + (rb_count++ % taps) * sl_len;
+			if (!fread(tmp, sl_len, 1, input)) {
+				ret = 1;
+				break;
+			}
+		}
+		for (j=0; j<taps; j++) {
+			safe = target < j ? 0 : target - j;
+			if (safe > hdr.height) {
+				safe = hdr.height;
+			}
+			virt[taps - j - 1] = rbuf + (safe % taps) * sl_len;
+		}
+		strip_scale((void **)virt, taps, hdr.width, scaled_sl, ty, hdr.cmp, hdr.opts);
+		fwrite(scaled_sl, sl_len, 1, output);
+	}
+
+	free(virt);
+	free(rbuf);
+	free(scaled_sl);
+	return ret;
+}
+
+static int scaley_rbuf(FILE *input, FILE *output, uint32_t height)
+{
+	int ret;
+	uint32_t i, target, taps;
+	uint8_t *scaled_sl, **virt;
+	float ty;
+	size_t sl_len;
+	struct header hdr;
+	struct sl_rbuf rb;
+
+	if (read_header(input, &hdr)) {
+		return 1;
+	}
+
+	if (write_header(output, hdr.width, height, hdr.cmp, hdr.opts)) {
+		return 1;
+	}
+
+	ret = 0;
+	sl_len = hdr.width * hdr.cmp;
+	scaled_sl = malloc(sl_len);
+	taps = calc_taps(hdr.height, height);
+
+	sl_rbuf_init(&rb, taps, sl_len);
+	for (i=0; i<height; i++) {
+		target = split_map(hdr.height, height, i, &ty) + taps / 2;
+		while (rb.count <= target && rb.count < hdr.height) {
+			if (!fread(sl_rbuf_next(&rb), sl_len, 1, input)) {
+				ret = 1;
+				break;
+			}
+		}
+		virt = sl_rbuf_virt(&rb, target);
+		strip_scale((void **)virt, taps, hdr.width, scaled_sl, ty, hdr.cmp, hdr.opts);
+		fwrite(scaled_sl, sl_len, 1, output);
+	}
+
+	free(scaled_sl);
+	sl_rbuf_free(&rb);
+	return ret;
+}
+
+static int scaley_yscaler(FILE *input, FILE *output, uint32_t height)
 {
 	int ret;
 	uint32_t i;
 	uint8_t *scaled_sl, *tmp;
-	size_t buf_len;
+	size_t sl_len;
 	struct header hdr;
 	struct yscaler ys;
 
@@ -169,19 +261,19 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 	}
 
 	ret = 0;
-	buf_len = hdr.width * hdr.cmp;
-	scaled_sl = malloc(buf_len);
+	sl_len = hdr.width * hdr.cmp;
+	scaled_sl = malloc(sl_len);
 
-	yscaler_init(&ys, hdr.height, height, buf_len);
+	yscaler_init(&ys, hdr.height, height, sl_len);
 	for (i=0; i<height; i++) {
 		while ((tmp = yscaler_next(&ys))) {
-			if (!fread(tmp, buf_len, 1, input)) {
+			if (!fread(tmp, sl_len, 1, input)) {
 				ret = 1;
 				break;
 			}
 		}
 		yscaler_scale(&ys, scaled_sl, hdr.width, hdr.cmp, hdr.opts, i);
-		if (!fwrite(scaled_sl, buf_len, 1, output)) {
+		if (!fwrite(scaled_sl, sl_len, 1, output)) {
 			ret = 1;
 			break;
 		}
@@ -194,34 +286,57 @@ static int scaley(FILE *input, FILE *output, uint32_t height)
 
 int scaley_cmd(int argc, char *argv[])
 {
-	int i;
+	int i, rbuf, primitives, ret;
 	uint32_t height;
-	char *end;
+	char *end, *arg, *file_path;
 	FILE *input;
 
+	// Default to using yscaler
+	primitives = 0;
+	rbuf = 0;
+	file_path = 0;
+	height = 0;
+
 	for (i=1; i<argc; i++) {
+		arg = argv[i];
 		if (!strcmp(argv[i], "--help")) {
+			goto usage_exit;
+		} else if (!strcmp(arg, "--rbuf")) {
+			rbuf = 1;
+		} else if (!strcmp(arg, "--primitives")) {
+			primitives = 1;
+		} else if (!height) {
+			height = strtoul(argv[i], &end, 10);
+			if (*end || !height) {
+				fprintf(stderr, "Error: Invalid height.\n");
+				return 1;
+			}
+		} else if (!file_path) {
+			file_path = argv[i];
+		} else {
 			goto usage_exit;
 		}
 	}
 
-	if (argc != 2 && argc != 3) {
+	if (!height) {
 		goto usage_exit;
 	}
 
-	height = strtoul(argv[1], &end, 10);
-	if (*end) {
-		fprintf(stderr, "Error: Invalid height.\n");
-		return 1;
-	}
-
-	input = argc == 3 ? fopen(argv[2], "r+") : stdin;
+	input = file_path ? fopen(file_path, "r+") : stdin;
 	if (!input) {
 		fprintf(stderr, "Error: Unable to open file.\n");
 		return 1;
 	}
 
-	if (scaley(input, stdout, height)) {
+	if (primitives) {
+		ret = scaley_primitives(input, stdout, height);
+	} else if (rbuf) {
+		ret = scaley_rbuf(input, stdout, height);
+	} else {
+		ret = scaley_yscaler(input, stdout, height);
+	}
+
+	if (ret) {
 		fprintf(stderr, "Error: Y Scaling Failed.\n");
 		fclose(input);
 		return 1;
@@ -231,7 +346,7 @@ int scaley_cmd(int argc, char *argv[])
 	return 0;
 
 	usage_exit:
-	fprintf(stderr, "Usage: %s HEIGHT [FILE]\n", argv[0]);
+	fprintf(stderr, "Usage: %s [OPTIONS] HEIGHT [FILE]\n", argv[0]);
 	return 1;
 }
 

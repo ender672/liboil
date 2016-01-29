@@ -46,15 +46,46 @@ void strip_scale(void **in, long strip_height, long width, void *out, float ty,
 	int cmp, int opts);
 
 /**
+ * struct sl_rbuf manages scanlines for y scaling. It implements a ring buffer
+ * for storing scanlines.
+ */
+struct sl_rbuf {
+	uint32_t height; // number of scanlines that the ring buffer can hold
+	uint32_t length; // width in bytes of each scanline in the buffer
+	uint32_t count; // total no. of scanlines that have been fed in
+	uint8_t *buf; // buffer for the ring buffer
+	uint8_t **virt; // space to provide scanline pointers for scaling
+};
+
+/**
+ * Initialize a yscaler struct. Calculates how large the scanline ring buffer
+ * will need to be and allocates it.
+ */
+void sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, uint32_t sl_len);
+
+/**
+ * Free a sl_rbuf struct, including the ring buffer.
+ */
+void sl_rbuf_free(struct sl_rbuf *rb);
+
+/**
+ * Get a pointer to the next scanline to be filled in the ring buffer and
+ * advance the internal counter of scanlines in the buffer.
+ */
+uint8_t *sl_rbuf_next(struct sl_rbuf *rb);
+
+/**
+ * Return an ordered array of scanline pointers for use in scaling.
+ */
+uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long target);
+
+/**
  * Struct to hold state for y-scaling.
  */
 struct yscaler {
+	struct sl_rbuf rb; // ring buffer holding scanlines.
 	uint32_t in_height; // input image height.
 	uint32_t out_height; // output image height.
-	uint32_t taps; // number of taps required for scaling.
-	uint32_t scanline_len; // length in bytes of a scanline.
-	uint8_t *strip; // a ring buffer to hold scanlines.
-	uint32_t sl_count; // a counter for the ring buffer.
 	uint32_t target; // where the ring buffer should be on next scaling.
 	float ty; // sub-pixel offset for next scaling.
 };
