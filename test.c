@@ -5,27 +5,9 @@
 #include <math.h>
 #include "resample.h"
 
-static long calc_taps_check(long dim_in, long dim_out)
-{
-	long double tmp;
-	int tmp_i;
-
-	if (dim_out >= dim_in) {
-		return 4;
-	}
-
-	tmp = (long double)dim_in / dim_out;
-	tmp_i = tmp * 4;
-
-	return tmp_i + (tmp_i%2);
-}
-
-/* Precise calculation of reverse map. */
-static long double map(long dim_in, long dim_out, long pos)
-{
-	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
-}
-
+/**
+ * shared test helpers
+ */
 static long double cubic(long double b, long double c, long double x)
 {
 	if (x<1.0l) {
@@ -86,7 +68,6 @@ unsigned char clamp(long double x)
 
 long double get_delta(long double expected, unsigned char actual)
 {
-
 	if (clamp(expected) != actual) {
 		return fabsl(expected - actual);
 	}
@@ -107,77 +88,6 @@ long double validate_sample(long taps, unsigned char *samples, long double *coef
 	return get_delta(sum, expected);
 }
 
-void strip_scale_check(unsigned char **in, long taps, long width,
-	unsigned char *out, int cmp, int opts, long double ty)
-{
-	long i, j, len;
-	long double *coeffs, delta;
-	unsigned char *samples;
-
-	len = width * cmp;
-	coeffs = malloc(taps * sizeof(long double));
-	samples = malloc(taps * sizeof(unsigned char));
-	calc_coeffs(coeffs, ty, taps);
-
-	for (i=0; i<len; i++) {
-		if (cmp == 4 && (opts & OIL_FILLER) && i%4 == 3) {
-			continue;
-		}
-		for (j=0; j<taps; j++) {
-			samples[j] = in[j][i];
-		}
-
-		delta = validate_sample(taps, samples, coeffs, out[i]);
-		if (delta) {
-			printf("(y) len: %ld, cmp: %d, ty: %.20Lf, delta: %.20Lf\n", len, cmp, ty, delta);
-		}
-	}
-
-	free(coeffs);
-	free(samples);
-}
-
-static void validate_scanline(unsigned char *in, long width_in,
-	unsigned char *out, long width_out, int cmp, int opts)
-{
-	long i, k, smp_i, smp_safe, taps;
-	long double *coeffs, smp, delta;
-	unsigned char *samples;
-	int j;
-
-	taps = calc_taps(width_in, width_out);
-	coeffs = malloc(taps * sizeof(long double));
-	samples = malloc(taps * sizeof(unsigned char));
-
-	for (i=0; i<1; i++) {
-		for (j=0; j<cmp; j++) {
-			if (cmp == 4 && (opts & OIL_FILLER) && j == 3) {
-				continue;
-			}
-			smp = map(width_in, width_out, i);
-			smp_i = floorl(smp);
-			calc_coeffs(coeffs, smp - smp_i, taps);
-			for (k=0; k<taps; k++) {
-				smp_safe = smp_i - taps / 2 + 1 + k;
-				if (smp_safe < 0) {
-					smp_safe = 0;
-				} else if (smp_safe >= width_in) {
-					smp_safe = width_in - 1;
-				}
-				samples[k] = in[smp_safe * cmp + j];
-			}
-
-			delta = validate_sample(taps, samples, coeffs, out[i * cmp + j]);
-			if (delta) {
-				printf("(x) in: %ld, out: %ld, cmp: %d, delta: %.20Lf\n", width_in, width_out, cmp, delta);
-			}
-		}
-	}
-
-	free(samples);
-	free(coeffs);
-}
-
 static void fill_rand(unsigned char *buf, long len)
 {
 	long i;
@@ -186,41 +96,22 @@ static void fill_rand(unsigned char *buf, long len)
 	}	
 }
 
-static void test_xscale(long width_in, long width_out, int cmp, int opts)
+/**
+ * calc_taps
+ */
+static long calc_taps_check(long dim_in, long dim_out)
 {
-	unsigned char *inbuf, *outbuf;
+	long double tmp;
+	int tmp_i;
 
-	inbuf = malloc(width_in * cmp);
-	fill_rand(inbuf, width_in * cmp);
-	outbuf = malloc(width_out * cmp);
+	if (dim_out >= dim_in) {
+		return 4;
+	}
 
-	xscale(inbuf, width_in, outbuf, width_out, cmp, opts);
-	validate_scanline(inbuf, width_in, outbuf, width_out, cmp, opts);
+	tmp = (long double)dim_in / dim_out;
+	tmp_i = tmp * 4;
 
-	free(outbuf);
-	free(inbuf);
-}
-
-static void test_xscale_fmt(long width_in, long width_out)
-{
-	test_xscale(width_in, width_out, 1, 0);
-	test_xscale(width_in, width_out, 2, 0);
-	test_xscale(width_in, width_out, 3, 0);
-	test_xscale(width_in, width_out, 4, 0);
-	test_xscale(width_in, width_out, 4, OIL_FILLER);
-}
-
-static void test_xscale_all()
-{
-	test_xscale_fmt(10000, 19);
-	test_xscale_fmt(10000, 10);
-	test_xscale_fmt(19, 10000);
-	test_xscale_fmt(10, 10);
-	test_xscale_fmt(1, 1);
-	test_xscale_fmt(10000, 1);
-	test_xscale_fmt(1, 10000);
-	test_xscale_fmt(10000, 9999);
-	test_xscale_fmt(9999, 10000);
+	return tmp_i + (tmp_i%2);
 }
 
 static void test_calc_taps2(long dim_in, long dim_out)
@@ -250,7 +141,14 @@ static void test_calc_taps()
 	test_calc_taps2(9999, 10000);
 }
 
-/* Precise calculation of bottom of scanline */
+/**
+ * split_map
+ */
+static long double map(long dim_in, long dim_out, long pos)
+{
+	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
+}
+
 static long double split_map_check(long dim_in, long dim_out, long pos,
 	long double *ty)
 {
@@ -302,6 +200,120 @@ static void test_split_map_all()
 	test_split_map(19, 10000);
 }
 
+/**
+ * xscale
+ */
+static void validate_scanline(unsigned char *in, long width_in,
+	unsigned char *out, long width_out, int cmp, int opts)
+{
+	long i, k, smp_i, smp_safe, taps;
+	float ty;
+	long double *coeffs, delta;
+	unsigned char *samples;
+	int j;
+
+	taps = calc_taps(width_in, width_out);
+	coeffs = malloc(taps * sizeof(long double));
+	samples = malloc(taps * sizeof(unsigned char));
+
+	for (i=0; i<1; i++) {
+		for (j=0; j<cmp; j++) {
+			if (cmp == 4 && (opts & OIL_FILLER) && j == 3) {
+				continue;
+			}
+			smp_i = split_map(width_in, width_out, i, &ty);
+			calc_coeffs(coeffs, ty, taps);
+			for (k=0; k<taps; k++) {
+				smp_safe = smp_i - taps / 2 + 1 + k;
+				if (smp_safe < 0) {
+					smp_safe = 0;
+				} else if (smp_safe >= width_in) {
+					smp_safe = width_in - 1;
+				}
+				samples[k] = in[smp_safe * cmp + j];
+			}
+
+			delta = validate_sample(taps, samples, coeffs, out[i * cmp + j]);
+			if (delta) {
+				printf("(x) in: %ld, out: %ld, cmp: %d, delta: %.20Lf\n", width_in, width_out, cmp, delta);
+			}
+		}
+	}
+
+	free(samples);
+	free(coeffs);
+}
+
+static void test_xscale(long width_in, long width_out, int cmp, int opts)
+{
+	unsigned char *inbuf, *outbuf;
+
+	inbuf = malloc(width_in * cmp);
+	fill_rand(inbuf, width_in * cmp);
+	outbuf = malloc(width_out * cmp);
+
+	xscale(inbuf, width_in, outbuf, width_out, cmp, opts);
+	validate_scanline(inbuf, width_in, outbuf, width_out, cmp, opts);
+
+	free(outbuf);
+	free(inbuf);
+}
+
+static void test_xscale_fmt(long width_in, long width_out)
+{
+	test_xscale(width_in, width_out, 1, 0);
+	test_xscale(width_in, width_out, 2, 0);
+	test_xscale(width_in, width_out, 3, 0);
+	test_xscale(width_in, width_out, 4, 0);
+	test_xscale(width_in, width_out, 4, OIL_FILLER);
+}
+
+static void test_xscale_all()
+{
+	test_xscale_fmt(10000, 19);
+	test_xscale_fmt(10000, 10);
+	test_xscale_fmt(19, 10000);
+	test_xscale_fmt(10, 10);
+	test_xscale_fmt(1, 1);
+	test_xscale_fmt(10000, 1);
+	test_xscale_fmt(1, 10000);
+	test_xscale_fmt(10000, 9999);
+	test_xscale_fmt(9999, 10000);
+}
+
+/**
+ * strip_scale
+ */
+void strip_scale_check(unsigned char **in, long taps, long width,
+	unsigned char *out, int cmp, int opts, long double ty)
+{
+	long i, j, len;
+	long double *coeffs, delta;
+	unsigned char *samples;
+
+	len = width * cmp;
+	coeffs = malloc(taps * sizeof(long double));
+	samples = malloc(taps * sizeof(unsigned char));
+	calc_coeffs(coeffs, ty, taps);
+
+	for (i=0; i<len; i++) {
+		if (cmp == 4 && (opts & OIL_FILLER) && i%4 == 3) {
+			continue;
+		}
+		for (j=0; j<taps; j++) {
+			samples[j] = in[j][i];
+		}
+
+		delta = validate_sample(taps, samples, coeffs, out[i]);
+		if (delta) {
+			printf("(y) len: %ld, cmp: %d, ty: %.20Lf, delta: %.20Lf\n", len, cmp, ty, delta);
+		}
+	}
+
+	free(coeffs);
+	free(samples);
+}
+
 static void test_yscale(long taps, long width, int cmp, int opts, float ty)
 {
 	unsigned char **scanlines, *out;
@@ -336,9 +348,10 @@ static void test_yscale_all()
 
 int main()
 {
-	test_xscale_all();
 	test_calc_taps();
 	test_split_map_all();
+	test_xscale_all();
 	test_yscale_all();
+	printf("All tests pass.\n");
 	return 0;
 }
