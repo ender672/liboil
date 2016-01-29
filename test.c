@@ -91,7 +91,7 @@ static void fill_rand(unsigned char *buf, long len)
 	long i;
 	for (i=0; i<len; i++) {
 		buf[i] = rand();
-	}	
+	}
 }
 
 /**
@@ -369,7 +369,7 @@ static void test_sl_rbuf()
 	assert(p == buf2);
 	assert(rb.count == 2);
 
-	virt = sl_rbuf_virt(&rb, 1);
+	virt = sl_rbuf_virt(&rb, 1); // 0, 0, 0, 1
 	assert(virt[0] == buf1);
 	assert(virt[1] == buf1);
 	assert(virt[2] == buf1);
@@ -387,13 +387,66 @@ static void test_sl_rbuf()
 	assert(p == buf1);
 	assert(rb.count == 5);
 
-	virt = sl_rbuf_virt(&rb, 5);
+	virt = sl_rbuf_virt(&rb, 5); // 2, 3, 4, 5
 	assert(virt[0] == buf3);
 	assert(virt[1] == buf4);
 	assert(virt[2] == buf1);
 	assert(virt[3] == buf1);
 
+	virt = sl_rbuf_virt(&rb, 3); // 0, 1, 2, 3 <= we don't have 0 anymore!
+	assert(virt == 0);
+
 	sl_rbuf_free(&rb);
+}
+
+/**
+ * yscaler
+ */
+static void test_yscaler()
+{
+	struct yscaler ys;
+	uint32_t i, j;
+	uint8_t *tmp, *buf;
+
+	buf = malloc(1024);
+	yscaler_init(&ys, 1000, 30, 1024);
+	j = 0;
+	for (i=0; i<30; i++) {
+		while((tmp = yscaler_next(&ys))) {
+			j++;
+			fill_rand(tmp, 1024);
+		}
+		yscaler_scale(&ys, buf, 256, 4, 0, i);
+	}
+	assert(j == 1000);
+	yscaler_free(&ys);
+	free(buf);
+}
+
+/**
+ * yscaler_prealloc_scale
+ */
+static void test_yscaler_prealloc_scale()
+{
+	uint32_t i;
+	uint8_t *buf_in, *buf_out, **virt;
+
+	buf_in = malloc(300 * 1024);
+	fill_rand(buf_in, 300 * 1024);
+	buf_out = malloc(12 * 1024);
+
+	virt = malloc(sizeof(uint8_t *) * 300);
+	for (i=0; i<300; i++) {
+		virt[i] = buf_in + i * 1024;
+	}
+
+	for (i=0; i<12; i++) {
+		yscaler_prealloc_scale(300, 12, virt, buf_out, i, 256, 4, 0);
+	}
+
+	free(virt);
+	free(buf_out);
+	free(buf_in);
 }
 
 int main()
@@ -403,6 +456,8 @@ int main()
 	test_xscale_all();
 	test_strip_scale_all();
 	test_sl_rbuf();
+	test_yscaler();
+	test_yscaler_prealloc_scale();
 	printf("All tests pass.\n");
 	return 0;
 }
