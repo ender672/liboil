@@ -149,20 +149,12 @@ uint64_t calc_taps(uint32_t dim_in, uint32_t dim_out)
 #define rgba_a(x) (((x) & 0xFF000000) >> 24)
 
 /**
- * Convert rgb values in fix33_30 types to a uint32_t.
- */
-static uint32_t fix33_30_to_rgbx(fix33_30 r, fix33_30 g, fix33_30 b)
-{
-	return clamp(r) + ((uint32_t)clamp(g) << 8) +
-		((uint32_t)clamp(b) << 16);
-}
-
-/**
  * Convert rgba values in fix33_30 types to a uint32_t.
  */
 static uint32_t fix33_30_to_rgba(fix33_30 r, fix33_30 g, fix33_30 b, fix33_30 a)
 {
-	return fix33_30_to_rgbx(r, g, b) + ((uint32_t)clamp(a) << 24);
+	return clamp(r) + ((uint32_t)clamp(g) << 8) +
+		((uint32_t)clamp(b) << 16) + ((uint32_t)clamp(a) << 24);
 }
 
 /**
@@ -214,80 +206,12 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 	}
 }
 
-/**
- * Generic yscaler, operates on arbitrary sized samples.
- */
-static void yscale_gen(uint32_t len, uint32_t height, fix1_30 *coeffs,
-	uint8_t **in, uint8_t *out)
-{
-	uint32_t i, j;
-	fix33_30 coeff, total;
-
-	for (i=0; i<len; i++) {
-		total = 0;
-		for (j=0; j<height; j++) {
-			coeff = coeffs[j];
-			total += coeff * in[j][i];
-		}
-		out[i] = clamp(total);
-	}
-}
-
-/**
- * RGBA yscaler, fetches 32-bytes at a time from memory to improve mem read
- * performance.
- */
-static void yscale_rgba(uint32_t width, uint32_t height, fix1_30 *coeffs,
-	uint32_t **sl_in, uint32_t *sl_out)
-{
-	uint32_t i, j, sample;
-	fix33_30 r, g, b, a, coeff;
-
-	for (i=0; i<width; i++) {
-		r = g = b = a = 0;
-		for (j=0; j<height; j++) {
-			coeff = coeffs[j];
-			sample = sl_in[j][i];
-			r += coeff * rgba_r(sample);
-			g += coeff * rgba_g(sample);
-			b += coeff * rgba_b(sample);
-			a += coeff * rgba_a(sample);
-		}
-		sl_out[i] = fix33_30_to_rgba(r, g, b, a);
-	}
-}
-
-/**
- * RGBX yscaler, fetches 32-bytes at a time from memory to improve mem read
- * performance and ignores the last value.
- */
-static void yscale_rgbx(uint32_t width, uint32_t height, fix1_30 *coeffs,
-	uint32_t **sl_in, uint32_t *sl_out)
-{
-	uint32_t i, j, sample;
-	fix33_30 r, g, b, coeff;
-
-	for (i=0; i<width; i++) {
-		r = g = b = 0;
-		for (j=0; j<height; j++) {
-			coeff = coeffs[j];
-			sample = sl_in[j][i];
-			r += coeff * rgba_r(sample);
-			g += coeff * rgba_g(sample);
-			b += coeff * rgba_b(sample);
-		}
-		sl_out[i] = fix33_30_to_rgbx(r, g, b);
-	}
-}
-
-int strip_scale(uint8_t **in, uint32_t strip_height, uint32_t width,
-	uint8_t *out, float ty, uint8_t cmp, int opts)
+int strip_scale(uint8_t **in, uint32_t strip_height, size_t len, uint8_t *out,
+	float ty)
 {
 	fix1_30 *coeffs;
-
-	if (!strip_height || !width || !cmp) {
-		return -1; // bad argument
-	}
+	uint32_t i, j;
+	fix33_30 coeff, total;
 
 	coeffs = malloc(strip_height * sizeof(fix1_30));
 	if (!coeffs) {
@@ -295,14 +219,13 @@ int strip_scale(uint8_t **in, uint32_t strip_height, uint32_t width,
 	}
 	calc_coeffs(coeffs, ty, strip_height);
 
-	if (cmp == 4 && (opts & OIL_FILLER)) {
-		yscale_rgbx(width, strip_height, coeffs, (uint32_t **)in,
-			(uint32_t *)out);
-	} else if (cmp == 4) {
-		yscale_rgba(width, strip_height, coeffs, (uint32_t **)in,
-			(uint32_t *)out);
-	} else {
-		yscale_gen(cmp * width, strip_height, coeffs, in, out);
+	for (i=0; i<len; i++) {
+		total = 0;
+		for (j=0; j<strip_height; j++) {
+			coeff = coeffs[j];
+			total += coeff * in[j][i];
+		}
+		out[i] = clamp(total);
 	}
 
 	free(coeffs);
@@ -345,28 +268,10 @@ static uint32_t sample_rgba(uint32_t taps, fix1_30 *coeffs, uint32_t *in)
 	return fix33_30_to_rgba(r, g, b, a);
 }
 
-static uint32_t sample_rgbx(uint32_t taps, fix1_30 *coeffs, uint32_t *in)
-{
-	uint32_t i, sample;
-	fix33_30 r, g, b, coeff;
-
-	r = g = b = 0;
-	for (i=0; i<taps; i++) {
-		coeff = coeffs[i];
-		sample = in[i];
-		r += coeff * rgba_r(sample);
-		g += coeff * rgba_g(sample);
-		b += coeff * rgba_b(sample);
-	}
-	return fix33_30_to_rgbx(r, g, b);
-}
-
 static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
-	uint8_t *out, uint8_t cmp, int opts)
+	uint8_t *out, uint8_t cmp)
 {
-	if (cmp == 4 && (opts & OIL_FILLER)) {
-		*(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
-	} else if (cmp == 4) {
+	if (cmp == 4) {
 		*(uint32_t *)out = sample_rgba(taps, coeffs, (uint32_t *)in);
 	} else {
 		sample_generic(cmp, taps, coeffs, in, out);
@@ -397,7 +302,7 @@ size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
 }
 
 int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
-	uint32_t out_width, uint8_t cmp, int opts)
+	uint32_t out_width, uint8_t cmp)
 {
 	float tx;
 	fix1_30 *coeffs;
@@ -428,7 +333,7 @@ int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
 		out_pos = out + i * cmp;
 		for (j=0; j<scale_gcd; j++) {
 			tmp = in + xsmp_i * cmp;
-			xscale_set_sample(taps, coeffs, tmp, out_pos, cmp, opts);
+			xscale_set_sample(taps, coeffs, tmp, out_pos, cmp);
 			out_pos += out_chunk * cmp;
 			xsmp_i += in_chunk;
 		}
@@ -439,7 +344,7 @@ int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
 }
 
 int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
-	uint8_t cmp, int opts)
+	uint8_t cmp)
 {
 	int ret;
 	uint8_t *psl_buf, *psl_pos0;
@@ -457,7 +362,7 @@ int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
 	psl_pos0 = psl_buf + psl_offset;
 	memcpy(psl_pos0, in, (size_t)in_width * cmp);
 	padded_sl_extend_edges(psl_buf, in_width, psl_offset, cmp);
-	ret = xscale_padded(psl_pos0, in_width, out, out_width, cmp, opts);
+	ret = xscale_padded(psl_pos0, in_width, out, out_width, cmp);
 	free(psl_buf);
 	return ret;
 }
@@ -542,20 +447,18 @@ unsigned char *yscaler_next(struct yscaler *ys)
 	return sl_rbuf_next(&ys->rb);
 }
 
-int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width, uint8_t cmp,
-	int opts, uint32_t pos)
+int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t pos)
 {
 	int ret;
 	uint8_t **virt;
 	virt = sl_rbuf_virt(&ys->rb, ys->target);
-	ret = strip_scale(virt, ys->rb.height, width, out, ys->ty, cmp, opts);
+	ret = strip_scale(virt, ys->rb.height, ys->rb.length, out, ys->ty);
 	yscaler_map_pos(ys, pos + 1);
 	return ret;
 }
 
 int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
-	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
-	int opts)
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp)
 {
 	uint32_t i, taps;
 	int32_t smp_i, strip_pos;
@@ -582,7 +485,7 @@ int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
 		strip_pos++;
 	}
 
-	ret = strip_scale(virt, taps, width, out, ty, cmp, opts);
+	ret = strip_scale(virt, taps, (size_t)width * cmp, out, ty);
 	free(virt);
 	return ret;
 }

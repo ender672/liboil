@@ -210,7 +210,7 @@ static void test_split_map_all()
  * xscale
  */
 static void validate_scanline(unsigned char *in, long width_in,
-	unsigned char *out, long width_out, int cmp, int opts)
+	unsigned char *out, long width_out, int cmp)
 {
 	long i, k, smp_i, smp_safe, taps;
 	float ty;
@@ -224,9 +224,6 @@ static void validate_scanline(unsigned char *in, long width_in,
 
 	for (i=0; i<1; i++) {
 		for (j=0; j<cmp; j++) {
-			if (cmp == 4 && (opts & OIL_FILLER) && j == 3) {
-				continue;
-			}
 			smp_i = split_map(width_in, width_out, i, &ty);
 			calc_coeffs(coeffs, ty, taps);
 			for (k=0; k<taps; k++) {
@@ -248,7 +245,7 @@ static void validate_scanline(unsigned char *in, long width_in,
 	free(coeffs);
 }
 
-static void test_xscale(long width_in, long width_out, int cmp, int opts)
+static void test_xscale(long width_in, long width_out, int cmp)
 {
 	unsigned char *inbuf, *outbuf;
 
@@ -256,8 +253,8 @@ static void test_xscale(long width_in, long width_out, int cmp, int opts)
 	fill_rand(inbuf, width_in * cmp);
 	outbuf = malloc(width_out * cmp);
 
-	xscale(inbuf, width_in, outbuf, width_out, cmp, opts);
-	validate_scanline(inbuf, width_in, outbuf, width_out, cmp, opts);
+	xscale(inbuf, width_in, outbuf, width_out, cmp);
+	validate_scanline(inbuf, width_in, outbuf, width_out, cmp);
 
 	free(outbuf);
 	free(inbuf);
@@ -265,11 +262,10 @@ static void test_xscale(long width_in, long width_out, int cmp, int opts)
 
 static void test_xscale_fmt(long width_in, long width_out)
 {
-	test_xscale(width_in, width_out, 1, 0);
-	test_xscale(width_in, width_out, 2, 0);
-	test_xscale(width_in, width_out, 3, 0);
-	test_xscale(width_in, width_out, 4, 0);
-	test_xscale(width_in, width_out, 4, OIL_FILLER);
+	test_xscale(width_in, width_out, 1);
+	test_xscale(width_in, width_out, 2);
+	test_xscale(width_in, width_out, 3);
+	test_xscale(width_in, width_out, 4);
 }
 
 static void test_xscale_all()
@@ -289,22 +285,18 @@ static void test_xscale_all()
 /**
  * strip_scale
  */
-void strip_scale_check(unsigned char **in, long taps, long width,
-	unsigned char *out, int cmp, int opts, long double ty)
+void strip_scale_check(unsigned char **in, long taps, size_t len,
+	unsigned char *out, long double ty)
 {
-	long i, j, len;
+	size_t i, j;
 	long double *coeffs, delta;
 	unsigned char *samples;
 
-	len = width * cmp;
 	coeffs = malloc(taps * sizeof(long double));
 	samples = malloc(taps * sizeof(unsigned char));
 	calc_coeffs(coeffs, ty, taps);
 
 	for (i=0; i<len; i++) {
-		if (cmp == 4 && (opts & OIL_FILLER) && i%4 == 3) {
-			continue;
-		}
 		for (j=0; j<taps; j++) {
 			samples[j] = in[j][i];
 		}
@@ -317,7 +309,7 @@ void strip_scale_check(unsigned char **in, long taps, long width,
 	free(samples);
 }
 
-static void test_strip_scale(long taps, long width, int cmp, int opts, float ty)
+static void test_strip_scale(long taps, long width, int cmp, float ty)
 {
 	unsigned char **scanlines, *out;
 	long i;
@@ -330,8 +322,8 @@ static void test_strip_scale(long taps, long width, int cmp, int opts, float ty)
 		fill_rand(scanlines[i], width * cmp);
 	}
 
-	strip_scale(scanlines, taps, width, out, ty, cmp, opts);
-	strip_scale_check(scanlines, taps, width, out, cmp, opts, ty);
+	strip_scale(scanlines, taps, (size_t)width * cmp, out, ty);
+	strip_scale_check(scanlines, taps, (size_t)width * cmp, out, ty);
 
 	for (i=0; i<taps; i++) {
 		free(scanlines[i]);
@@ -342,11 +334,11 @@ static void test_strip_scale(long taps, long width, int cmp, int opts, float ty)
 
 static void test_strip_scale_all()
 {
-	test_strip_scale(4, 1000, 4, 0, 0.2345);
-	test_strip_scale(8, 1000, 4, OIL_FILLER, 0.5);
-	test_strip_scale(12, 1000, 1, 0, 0.0);
-	test_strip_scale(12, 1000, 3, 0, 0.00005);
-	test_strip_scale(12, 1000, 2, 0, 0.99999);
+	test_strip_scale(4, 1000, 4, 0.2345);
+	test_strip_scale(8, 1000, 4, 0.5);
+	test_strip_scale(12, 1000, 1, 0.0);
+	test_strip_scale(12, 1000, 3, 0.00005);
+	test_strip_scale(12, 1000, 2, 0.99999);
 }
 
 /**
@@ -425,7 +417,7 @@ static void test_yscaler()
 			j++;
 			fill_rand(tmp, 1024);
 		}
-		yscaler_scale(&ys, buf, 256, 4, 0, i);
+		yscaler_scale(&ys, buf, i);
 	}
 	assert(j == 1000);
 	yscaler_free(&ys);
@@ -450,7 +442,7 @@ static void test_yscaler_prealloc_scale()
 	}
 
 	for (i=0; i<12; i++) {
-		yscaler_prealloc_scale(300, 12, virt, buf_out, i, 256, 4, 0);
+		yscaler_prealloc_scale(300, 12, virt, buf_out, i, 256, 4);
 	}
 
 	free(virt);

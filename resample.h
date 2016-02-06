@@ -26,15 +26,6 @@
 #include <stddef.h>
 
 /**
- * Use this for the opts argument to indicate that our samples have a 'filler'
- * component to improve memory alignment, for example RGBX.
- *
- * When given, this can result in a modest speed improvement since oil can
- * ignore the extra component.
- */
-#define OIL_FILLER 1
-
-/**
  * Scale scanline in to the scanline out. This is the simplest way to perform
  * x-scaling on a scanline, but it currently involves an extry memory allocation
  * and copy that may be avoidable if you use the lower-level padded_len_offset()
@@ -46,7 +37,6 @@
  *   at least (size_t)out_width * cmp bytes in length.
  * out_width - width in samles of output scanline
  * cmp - number of components per sample
- * opts - bit mask for options, i.e. OIL_FILLER. 0 for no options.
  *
  * returns 0 on success, otherwise a negative integer:
  *
@@ -54,7 +44,7 @@
  * -2 - unable to perform an allocation
  */
 int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
-	uint8_t cmp, int opts);
+	uint8_t cmp);
 
 /**
  * Calculate the required length for a padded scanline and get the offset at
@@ -87,7 +77,7 @@ void padded_sl_extend_edges(uint8_t *buf, uint32_t width, size_t pad_len,
  * Scale padded scanline in to scanline out.
  */
 int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
-	uint32_t out_width, uint8_t cmp, int opts);
+	uint32_t out_width, uint8_t cmp);
 
 /**
  * Indicate how many taps will be required to scale an image. The number of taps
@@ -111,9 +101,8 @@ int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest);
  * The strip_height parameter indicates how many scanlines we are passing in. It
  * must be a multiple of 4.
  *
- * The in parameter points to an array of scanlines, each with width samples in
- * sample_fmt format. There must be at least strip_height scanlines in the
- * array.
+ * The in parameter points to an array of scanlines, each len bytes. There must
+ * be at least strip_height scanlines in the array.
  *
  * The ty parameter indicates how far our mapped sampling position is from the
  * center of the strip.
@@ -122,8 +111,8 @@ int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest);
  * requires scanlines that are less than 0 or larger than the height of the
  * source image.
  */
-int strip_scale(uint8_t **in, uint32_t strip_height, uint32_t width,
-	uint8_t *out, float ty, uint8_t cmp, int opts);
+int strip_scale(uint8_t **in, uint32_t strip_height, size_t len, uint8_t *out,
+	float ty);
 
 /**
  * struct sl_rbuf manages scanlines for y scaling. It implements a ring buffer
@@ -195,18 +184,14 @@ uint8_t *yscaler_next(struct yscaler *ys);
  * Scaled scanline will be written to the out parameter.
  * The width parameter is the nuber of samples in each scanline.
  * The cmp parameter is the number of components per sample (3 for RGB).
- * The opts parameter is a bit mask for options. Currently OIL_FILLER is the
- *   only one.
  * The pos parameter is the position of the output scanline.
  */
-int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width, uint8_t cmp,
-	int opts, uint32_t pos);
+int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t pos);
 
 /**
  * Helper for scaling an image that sits fully in memory.
  */
 int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
-	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
-	int opts);
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp);
 
 #endif
