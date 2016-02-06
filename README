@@ -12,7 +12,7 @@ liboil provides separate methods for x-scaling and y-scaling. x-scaling is
 relatively straightforward since it translates one input scanline to one output
 scanline:
 
-    void xscale(*in, in_width, *out, out_width, cmp, opts);
+    void xscale(*in, in_width, *out, out_width, cmp);
 
 y-scaling works by translating multiple input scanlines to one output scanline.
 The number of input scanlines depends on the input and output sizes.
@@ -20,20 +20,18 @@ The number of input scanlines depends on the input and output sizes.
 The high-level yscaler API manages input scanlines for you:
 
     struct yscaler ys;
-    int opts;
-    uint32_t i, height_in, height_out, scanline_len;
+    uint32_t i, height_in, height_out;
+    size_t scanline_len;
     uint8_t *tmp, *scaled_scanline;
 
-    // set height_in, height_out, width (in samples), cmp (components), opts
-    // and scanline_len.
+    // set height_in, height_out, and scanline_len (in bytes)
     scaled_scanline = malloc(scanline_len);
-
     yscaler_init(&ys, height_in, height_out, scanline_len);
     for (i=0; i<height_out; i++) {
         while ((tmp = yscaler_next(&ys))) {
           // populate tmp buffer with the next input scanline
         }
-        yscaler_scale(&ys, scaled_scanline, width, cmp, opts, i);
+        yscaler_scale(&ys, scaled_scanline, i);
         // handle output in scaled_scanline
     }
     yscaler_free(&ys);
@@ -43,15 +41,16 @@ Beneath the hood, yscaler uses sl_rbuf, a circular buffer for managing
 scanlines. For fine-grained control, you can do the same:
 
     struct sl_rbuf rb;
-    int opts;
-    uint32_t i, height_in, height_out, scanline_len, taps;
-    long target;
+    uint32_t i, height_in, height_out, target, taps;
+    size_t scanline_len;
     float ty;
     uint8_t *tmp, *scaled_scanline, **virt;
 
-    // set height_in, height_out, width (in samples), cmp (components), opts
-    // and scanline_len.
+    // set height_in, height_out, width (in samples), and scanline_len.
     scaled_scanline = malloc(scanline_len);
+
+    // calculates how many input scanlines you will need to generate an output
+    // scanline
     taps = calc_taps(height_in, height_out);
 
     sl_rbuf_init(&rb, taps, scanline_len);
@@ -62,7 +61,7 @@ scanlines. For fine-grained control, you can do the same:
             // populate tmp buffer with the next input scanline
         }
         virt = sl_rbuf_virt(&rb, target);
-        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp, opts);
+        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp);
         // handle output in scaled_scanline
     }
     sl_rbuf_free(&rb);
@@ -71,14 +70,12 @@ scanlines. For fine-grained control, you can do the same:
 It is also possible to manage scanlines yourself, performing y-scaling using
 only the low-level primitives calc_taps(), split_map(), and strip_scale():
 
-    int opts;
-    uint32_t i, j, height_in, height_out, scanline_len, taps, rb_count, safe;
-    long target;
+    uint32_t i, j, height_in, height_out, taps, rb_count, safe, target;
+    size_t scanline_len;
     float ty;
     uint8_t *rbuf, *tmp, *scaled_scanline, **virt;
 
-    // set height_in, height_out, width (in samples), cmp (components), opts
-    // and scanline_len.
+    // set height_in, height_out, width (in samples), and scanline_len.
     scaled_scanline = malloc(scanline_len);
     taps = calc_taps(height_in, height_out);
 
@@ -97,7 +94,7 @@ only the low-level primitives calc_taps(), split_map(), and strip_scale():
             safe = safe > height_in ? height_in : safe;
             virt[taps - j - 1] = rbuf + (safe % taps) * scanline_len;
         }
-        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp, opts);
+        strip_scale(virt, taps, scanline_len, scaled_scanline, ty);
         // handle output in scaled_scanline
     }
     free(virt);
