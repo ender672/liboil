@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdint.h>
 #include "resample.h"
 
 /**
@@ -97,25 +98,16 @@ static void fill_rand(unsigned char *buf, long len)
 /**
  * calc_taps
  */
-static long calc_taps_check(long dim_in, long dim_out)
+static uint64_t calc_taps_check(uint32_t dim_in, uint32_t dim_out)
 {
-	long double tmp;
-	int tmp_i;
-
-	if (dim_out >= dim_in) {
-		return 4;
-	}
-
-	tmp = (long double)dim_in / dim_out;
-	tmp_i = tmp * 4;
-
+	uint64_t tmp_i;
+	tmp_i = (uint64_t)dim_in * 4 / dim_out;
 	return tmp_i + (tmp_i%2);
 }
 
 static void test_calc_taps2(long dim_in, long dim_out)
 {
 	long check, res;
-
 	res = calc_taps(dim_in, dim_out);
 	check = calc_taps_check(dim_in, dim_out);
 	assert(res == check);
@@ -123,20 +115,36 @@ static void test_calc_taps2(long dim_in, long dim_out)
 
 static void test_calc_taps()
 {
-	test_calc_taps2(100, 100);
-	test_calc_taps2(1, 1);
-	test_calc_taps2(1, 10000);
+	/* make sure our math matches the reference */
 	test_calc_taps2(10000, 1);
 	test_calc_taps2(400, 200);
-	test_calc_taps2(200, 400);
 	test_calc_taps2(600, 200);
-	test_calc_taps2(200, 600);
 	test_calc_taps2(10000, 10);
-	test_calc_taps2(10, 10000);
 	test_calc_taps2(10003, 17);
-	test_calc_taps2(17, 10003);
 	test_calc_taps2(10000, 9999);
-	test_calc_taps2(9999, 10000);
+
+	/* Test uint32_t overflow to uint64_t */
+	test_calc_taps2(0xFFFFFFFF, 1);
+
+	/* zoom -- always 4 */
+	assert(calc_taps(100, 100) == 4);
+	assert(calc_taps(1, 1) == 4);
+	assert(calc_taps(1, 10000) == 4);
+	assert(calc_taps(1, 0xFFFFFFFF) == 4);
+}
+
+/**
+ * padded_sl_len_offset()
+ */
+
+static void test_padded_sl_len_offset()
+{
+	size_t len, offset;
+	len = padded_sl_len_offset(100, 100, 4, &offset);
+	// (taps / 2 + 1) * cmp (taps should be 4)
+	assert(offset == 12);
+	// width * components + offset * 2
+	assert(len == 100 * 4 + 24);
 }
 
 /**
@@ -275,6 +283,7 @@ static void test_xscale_all()
 	test_xscale_fmt(1, 10000);
 	test_xscale_fmt(10000, 9999);
 	test_xscale_fmt(9999, 10000);
+	test_xscale_fmt(13000, 1000);
 }
 
 /**
@@ -454,6 +463,7 @@ int main()
 	test_calc_taps();
 	test_split_map_all();
 	test_xscale_all();
+	test_padded_sl_len_offset();
 	test_strip_scale_all();
 	test_sl_rbuf();
 	test_yscaler();

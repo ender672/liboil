@@ -63,9 +63,9 @@ typedef int32_t fix1_30;
 /**
  * Calculate the greatest common denominator between a and b.
  */
-static long gcd (long a, long b)
+static uint32_t gcd(uint32_t a, uint32_t b)
 {
-	long c;
+	uint32_t c;
 	while (a != 0) {
 		c = a;
 		a = b%a;
@@ -100,7 +100,7 @@ static unsigned char clamp(fix33_30 x)
  * The resulting coordinate can range from -0.5 to the maximum of the
  * destination image dimension.
  */
-static double map(long pos, double scale)
+static double map(uint32_t pos, double scale)
 {
 	return (pos + 0.5) / scale - 0.5;
 }
@@ -109,11 +109,10 @@ static double map(long pos, double scale)
  * Given input and output dimensions and an output position, return the
  * corresponding input position and put the sub-pixel remainder in rest.
  */
-long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
-	float *rest)
+int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest)
 {
 	double scale, smp;
-	long smp_i;
+	int32_t smp_i;
 
 	scale = dim_out / (double)dim_in;
 	smp = map(pos, scale);
@@ -129,17 +128,16 @@ long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
  * When we reduce an image by a factor of two, we need to scale our resampling
  * function by two as well in order to avoid aliasing.
  */
-long calc_taps(long dim_in, long dim_out)
+uint64_t calc_taps(uint32_t dim_in, uint32_t dim_out)
 {
-	long tmp;
-
-	if (dim_out > dim_in) {
+	uint64_t tmp;
+	if (dim_out >= dim_in) {
 		return TAPS;
 	}
-
-	tmp = dim_in * TAPS / dim_out;
+	tmp = ((uint64_t)dim_in * TAPS) / dim_out;
 	/* Round up to the nearest even integer */
-	return tmp + (tmp&1);
+	tmp += tmp&1;
+	return tmp;
 }
 
 /**
@@ -192,7 +190,7 @@ static fix1_30 f_to_fix1_30(float x)
  *
  * The coefficients are stored as fix1_30 fixed point ints in coeffs.
  */
-static void calc_coeffs(fix1_30 *coeffs, float tx, long taps)
+static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 {
 	long i;
 	float tmp, total, tap_mult;
@@ -308,11 +306,11 @@ void strip_scale(void **in, long strip_height, long width, void *out, float ty,
 
 /* Bicubic x scaler */
 
-static void sample_generic(int cmp, long taps, fix1_30 *coeffs,
-	unsigned char *in, unsigned char *out)
+static void sample_generic(uint8_t cmp, uint32_t taps, fix1_30 *coeffs,
+	uint8_t *in, uint8_t *out)
 {
-	int i;
-	long j;
+	uint8_t i;
+	uint32_t j;
 	fix33_30 total, coeff;
 
 	for (i=0; i<cmp; i++) {
@@ -325,11 +323,10 @@ static void sample_generic(int cmp, long taps, fix1_30 *coeffs,
 	}
 }
 
-static uint32_t sample_rgba(long taps, fix1_30 *coeffs, uint32_t *in)
+static uint32_t sample_rgba(uint32_t taps, fix1_30 *coeffs, uint32_t *in)
 {
-	long i;
+	uint32_t i, sample;
 	fix33_30 r, g, b, a, coeff;
-	uint32_t sample;
 
 	r = g = b = a = 0;
 	for (i=0; i<taps; i++) {
@@ -343,11 +340,10 @@ static uint32_t sample_rgba(long taps, fix1_30 *coeffs, uint32_t *in)
 	return fix33_30_to_rgba(r, g, b, a);
 }
 
-static uint32_t sample_rgbx(long taps, fix1_30 *coeffs, uint32_t *in)
+static uint32_t sample_rgbx(uint32_t taps, fix1_30 *coeffs, uint32_t *in)
 {
-	long i;
+	uint32_t i, sample;
 	fix33_30 r, g, b, coeff;
-	uint32_t sample;
 
 	r = g = b = 0;
 	for (i=0; i<taps; i++) {
@@ -360,8 +356,8 @@ static uint32_t sample_rgbx(long taps, fix1_30 *coeffs, uint32_t *in)
 	return fix33_30_to_rgbx(r, g, b);
 }
 
-static void xscale_set_sample(long taps, fix1_30 *coeffs, void *in, void *out,
-	int cmp, int opts)
+static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, void *in,
+	void *out, uint8_t cmp, uint8_t opts)
 {
 	if (cmp == 4 && (opts & OIL_FILLER)) {
 		*(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
@@ -374,89 +370,50 @@ static void xscale_set_sample(long taps, fix1_30 *coeffs, void *in, void *out,
 
 /* padded scanline */
 
-/**
- * Scanline with extra space at the beginning and end. This allows us to extend
- * a scanline to the left and right. This in turn allows resizing functions
- * to operate past the edges of the scanline without having to check for
- * boundaries.
- */
-struct padded_sl {
-	unsigned char *buf;
-	unsigned char *pad_left;
-	long inner_width;
-	long pad_width;
-	int cmp;
-};
-
-void padded_sl_init(struct padded_sl *psl, long inner_width, long pad_width,
-	int cmp)
+void padded_sl_extend_edges(uint8_t *buf, uint32_t width, size_t pad_len,
+	uint8_t cmp)
 {
-	psl->inner_width = inner_width;
-	psl->pad_width = pad_width;
-	psl->cmp = cmp;
-	psl->pad_left = malloc((inner_width + 2 * pad_width) * cmp);
-	psl->buf = psl->pad_left + pad_width * cmp;
+	uint8_t *pad_right;
+	size_t i;
+	pad_right = buf + pad_len + (size_t)width * cmp;
+	for (i=0; i<pad_len; i++) {
+		buf[i] = (buf + pad_len)[i % cmp];
+		pad_right[i] = (pad_right - cmp)[i % cmp];
+	}
 }
 
-void padded_sl_free(struct padded_sl *psl)
+size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
+	uint8_t cmp, size_t *offset)
 {
-	free(psl->pad_left);
+	uint64_t taps;
+	taps = calc_taps(in_width, out_width);
+	*offset = (taps / 2 + 1) * cmp;
+	return (size_t)in_width * cmp + *offset * 2;
 }
 
-/**
- * pad points to the first byte in the pad area.
- * src points to the sample that will be replicated in the pad area.
- * width is the number of samples in the pad area.
- * cmp is the number of components per sample.
- */
-static void padded_sl_pad(unsigned char *pad, unsigned char *src, int width,
-	int cmp)
-{
-	int i, j;
-
-	for (i=0; i<width; i++)
-		for (j=0; j<cmp; j++)
-			pad[i * cmp + j] = src[j];
-}
-
-static void padded_sl_extend_edges(struct padded_sl *psl)
-{
-	unsigned char *pad_right;
-
-	padded_sl_pad(psl->pad_left, psl->buf, psl->pad_width, psl->cmp);
-	pad_right = psl->buf + psl->inner_width * psl->cmp;
-	padded_sl_pad(pad_right, pad_right - psl->cmp, psl->pad_width, psl->cmp);
-}
-
-void xscale(unsigned char *in, long in_width, unsigned char *out,
-	long out_width, int cmp, int opts)
+int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
+	uint32_t out_width, uint8_t cmp, int opts)
 {
 	float tx;
 	fix1_30 *coeffs;
-	long i, j, xsmp_i, in_chunk, out_chunk, scale_gcd, taps;
-	unsigned char *out_pos, *rpadv, *tmp;
-	struct padded_sl psl;
+	uint32_t i, j, in_chunk, out_chunk, scale_gcd;
+	uint64_t taps;
+	int32_t xsmp_i;
+	uint8_t *out_pos, *tmp;
+
+	if (!in_width || !out_width || !cmp) {
+		return -1; // bad input parameter
+	}
 
 	taps = calc_taps(in_width, out_width);
 	coeffs = malloc(taps * sizeof(fix1_30));
+	if (!coeffs) {
+		return -2; // unable to allocate space for coefficients
+	}
 
 	scale_gcd = gcd(in_width, out_width);
 	in_chunk = in_width / scale_gcd;
 	out_chunk = out_width / scale_gcd;
-
-	if (in_width < taps * 2) {
-		padded_sl_init(&psl, in_width, taps / 2 + 1, cmp);
-		memcpy(psl.buf, in, in_width * cmp);
-		rpadv = psl.buf;
-	} else {
-		/* just the ends of the scanline with edges extended */
-		padded_sl_init(&psl, 2 * taps - 2, taps / 2 + 1, cmp);
-		memcpy(psl.buf, in, (taps - 1) * cmp);
-		memcpy(psl.buf + (taps - 1) * cmp, in + (in_width - taps + 1) * cmp, (taps - 1) * cmp);
-		rpadv = psl.buf + (2 * taps - 2 - in_width) * cmp;
-	}
-
-	padded_sl_extend_edges(&psl);
 
 	for (i=0; i<out_chunk; i++) {
 		xsmp_i = split_map(in_width, out_width, i, &tx);
@@ -465,23 +422,39 @@ void xscale(unsigned char *in, long in_width, unsigned char *out,
 		xsmp_i += 1 - taps / 2;
 		out_pos = out + i * cmp;
 		for (j=0; j<scale_gcd; j++) {
-			if (xsmp_i < 0) {
-				tmp = psl.buf;
-			} else if (xsmp_i > in_width - taps) {
-				tmp = rpadv;
-			} else {
-				tmp = in;
-			}
-			tmp += xsmp_i * cmp;
+			tmp = in + xsmp_i * cmp;
 			xscale_set_sample(taps, coeffs, tmp, out_pos, cmp, opts);
 			out_pos += out_chunk * cmp;
-
 			xsmp_i += in_chunk;
 		}
 	}
 
-	padded_sl_free(&psl);
 	free(coeffs);
+	return 0;
+}
+
+int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
+	uint8_t cmp, int opts)
+{
+	int ret;
+	uint8_t *psl_buf, *psl_pos0;
+	size_t psl_len, psl_offset;
+
+	if (!in_width || !out_width || !cmp) {
+		return -1; // bad input parameter
+	}
+
+	psl_len = padded_sl_len_offset(in_width, out_width, cmp, &psl_offset);
+	psl_buf = malloc(psl_len);
+	if (!psl_buf) {
+		return -2; // unable to allocate scanline
+	}
+	psl_pos0 = psl_buf + psl_offset;
+	memcpy(psl_pos0, in, (size_t)in_width * cmp);
+	padded_sl_extend_edges(psl_buf, in_width, psl_offset, cmp);
+	ret = xscale_padded(psl_pos0, in_width, out, out_width, cmp, opts);
+	free(psl_buf);
+	return ret;
 }
 
 void sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, uint32_t sl_len)

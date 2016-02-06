@@ -23,6 +23,7 @@
 #define RESAMPLE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /**
  * Use this for the opts argument to indicate that our samples have a 'filler'
@@ -34,23 +35,74 @@
 #define OIL_FILLER 1
 
 /**
- * Scale scanline in to the scanline out.
+ * Scale scanline in to the scanline out. This is the simplest way to perform
+ * x-scaling on a scanline, but it currently involves an extry memory allocation
+ * and copy that may be avoidable if you use the lower-level padded_len_offset()
+ * and xscale_padded() functions.
+ *
+ * in - pointer to input scanline
+ * in_width - width in samples of input scanline
+ * out - pointer to buffer where the output scanline will be written. It must be
+ *   at least (size_t)out_width * cmp bytes in length.
+ * out_width - width in samles of output scanline
+ * cmp - number of components per sample
+ * opts - bit mask for options, i.e. OIL_FILLER. 0 for no options.
+ *
+ * returns 0 on success, otherwise a negative integer:
+ *
+ * -1 - bad input parameter
+ * -2 - unable to perform an allocation
  */
-void xscale(unsigned char *in, long in_width, unsigned char *out,
-	long out_width, int cmp, int opts);
+int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
+	uint8_t cmp, int opts);
+
+/**
+ * Calculate the required length for a padded scanline and get the offset at
+ * which the image samples should be be filled in.
+ *
+ * in_width, out_width - input/output dimensions in samples.
+ * cmp - components per sample
+ * offset - the offset at which the image samples should be filled in is
+ *   returned
+ *
+ * Example use:
+ *   len = padded_sl_len_ofset(in_width, out_width, cmp, &offset);
+ *   buf = malloc(len);
+ *   psl_pos0 = buf + offset;
+ *   // populate with in_width samples starting at psl_pos0
+ *   padded_sl_extend_edges(buf, in_width, offset, cmp);
+ *   xscale_padded(psl_pos0, in_width, outbuf, out_width, cmp, 0);
+ *   ...
+ */
+size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
+	uint8_t cmp, size_t *offset);
+
+/**
+ * Extend the first and last sample into the padded area of a padded scanline.
+ */
+void padded_sl_extend_edges(uint8_t *buf, uint32_t width, size_t pad_len,
+	uint8_t cmp);
+
+/**
+ * Scale padded scanline in to scanline out.
+ */
+int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
+	uint32_t out_width, uint8_t cmp, int opts);
 
 /**
  * Indicate how many taps will be required to scale an image. The number of taps
  * required indicates how tall a strip needs to be.
+ *
+ * When dim_in is very large and dim_out is very small, this can exceed the max
+ * size of uint32_t, so returns a uint64_t.
  */
-long calc_taps(long dim_in, long dim_out);
+uint64_t calc_taps(uint32_t dim_in, uint32_t dim_out);
 
 /**
  * Given input & output dimensions and an output position, return the
  * corresponding input position and put the sub-pixel remainder in rest.
  */
-long split_map(unsigned long dim_in, unsigned long dim_out, unsigned long pos,
-	float *rest);
+int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest);
 
 /**
  * Scale a strip. The height parameter indicates the height of the strip, not
