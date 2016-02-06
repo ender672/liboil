@@ -77,7 +77,7 @@ static uint32_t gcd(uint32_t a, uint32_t b)
 /**
  * Round and clamp a fix33_30 value between 0 and 255. Returns an unsigned char.
  */
-static unsigned char clamp(fix33_30 x)
+static uint8_t clamp(fix33_30 x)
 {
 	if (x < 0) {
 		return 0;
@@ -192,7 +192,7 @@ static fix1_30 f_to_fix1_30(float x)
  */
 static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 {
-	long i;
+	uint32_t i;
 	float tmp, total, tap_mult;
 	fix1_30 tmp_fixed;
 
@@ -217,10 +217,10 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 /**
  * Generic yscaler, operates on arbitrary sized samples.
  */
-static void yscale_gen(long len, long height, fix1_30 *coeffs,
-	unsigned char **in, unsigned char *out)
+static void yscale_gen(uint32_t len, uint32_t height, fix1_30 *coeffs,
+	uint8_t **in, uint8_t *out)
 {
-	long i, j;
+	uint32_t i, j;
 	fix33_30 coeff, total;
 
 	for (i=0; i<len; i++) {
@@ -237,12 +237,11 @@ static void yscale_gen(long len, long height, fix1_30 *coeffs,
  * RGBA yscaler, fetches 32-bytes at a time from memory to improve mem read
  * performance.
  */
-static void yscale_rgba(long width, long height, fix1_30 *coeffs,
+static void yscale_rgba(uint32_t width, uint32_t height, fix1_30 *coeffs,
 	uint32_t **sl_in, uint32_t *sl_out)
 {
-	long i, j;
+	uint32_t i, j, sample;
 	fix33_30 r, g, b, a, coeff;
-	uint32_t sample;
 
 	for (i=0; i<width; i++) {
 		r = g = b = a = 0;
@@ -262,12 +261,11 @@ static void yscale_rgba(long width, long height, fix1_30 *coeffs,
  * RGBX yscaler, fetches 32-bytes at a time from memory to improve mem read
  * performance and ignores the last value.
  */
-static void yscale_rgbx(long width, long height, fix1_30 *coeffs,
+static void yscale_rgbx(uint32_t width, uint32_t height, fix1_30 *coeffs,
 	uint32_t **sl_in, uint32_t *sl_out)
 {
-	long i, j;
+	uint32_t i, j, sample;
 	fix33_30 r, g, b, coeff;
-	uint32_t sample;
 
 	for (i=0; i<width; i++) {
 		r = g = b = 0;
@@ -282,12 +280,19 @@ static void yscale_rgbx(long width, long height, fix1_30 *coeffs,
 	}
 }
 
-void strip_scale(void **in, long strip_height, long width, void *out, float ty,
-	int cmp, int opts)
+int strip_scale(uint8_t **in, uint32_t strip_height, uint32_t width,
+	uint8_t *out, float ty, uint8_t cmp, int opts)
 {
 	fix1_30 *coeffs;
 
+	if (!strip_height || !width || !cmp) {
+		return -1; // bad argument
+	}
+
 	coeffs = malloc(strip_height * sizeof(fix1_30));
+	if (!coeffs) {
+		return -2; // unable to allocate
+	}
 	calc_coeffs(coeffs, ty, strip_height);
 
 	if (cmp == 4 && (opts & OIL_FILLER)) {
@@ -297,11 +302,11 @@ void strip_scale(void **in, long strip_height, long width, void *out, float ty,
 		yscale_rgba(width, strip_height, coeffs, (uint32_t **)in,
 			(uint32_t *)out);
 	} else {
-		yscale_gen(cmp * width, strip_height, coeffs,
-			(unsigned char **)in, (unsigned char *)out);
+		yscale_gen(cmp * width, strip_height, coeffs, in, out);
 	}
 
 	free(coeffs);
+	return 0;
 }
 
 /* Bicubic x scaler */
@@ -356,8 +361,8 @@ static uint32_t sample_rgbx(uint32_t taps, fix1_30 *coeffs, uint32_t *in)
 	return fix33_30_to_rgbx(r, g, b);
 }
 
-static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, void *in,
-	void *out, uint8_t cmp, uint8_t opts)
+static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
+	uint8_t *out, uint8_t cmp, int opts)
 {
 	if (cmp == 4 && (opts & OIL_FILLER)) {
 		*(uint32_t *)out = sample_rgbx(taps, coeffs, (uint32_t *)in);
@@ -457,13 +462,21 @@ int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
 	return ret;
 }
 
-void sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, uint32_t sl_len)
+int sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, size_t sl_len)
 {
 	rb->height = height;
 	rb->count = 0;
 	rb->length = sl_len;
-	rb->buf = malloc(sl_len * rb->height);
-	rb->virt = malloc(sizeof(uint8_t *) * rb->height);
+	rb->buf = malloc(sl_len * height);
+	if (!rb->buf) {
+		return -2;
+	}
+	rb->virt = malloc(sizeof(uint8_t *) * height);
+	if (!rb->virt) {
+		free(rb->buf);
+		return -2;
+	}
+	return 0;
 }
 
 void sl_rbuf_free(struct sl_rbuf *rb)
@@ -477,7 +490,7 @@ uint8_t *sl_rbuf_next(struct sl_rbuf *rb)
 	return rb->buf + (rb->count++ % rb->height) * rb->length;
 }
 
-uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long last_target)
+uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, uint32_t last_target)
 {
 	uint32_t i, safe, height, last_idx;
 	height = rb->height;
@@ -503,15 +516,17 @@ static void yscaler_map_pos(struct yscaler *ys, uint32_t pos)
 	ys->target = target + ys->rb.height / 2;
 }
 
-void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
-	uint32_t scanline_len)
+int yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
+	size_t scanline_len)
 {
+	int ret;
 	uint32_t taps;
 	taps = calc_taps(in_height, out_height);
-	sl_rbuf_init(&ys->rb, taps, scanline_len);
 	ys->in_height = in_height;
 	ys->out_height = out_height;
+	ret = sl_rbuf_init(&ys->rb, taps, scanline_len);
 	yscaler_map_pos(ys, 0);
+	return ret;
 }
 
 void yscaler_free(struct yscaler *ys)
@@ -527,33 +542,39 @@ unsigned char *yscaler_next(struct yscaler *ys)
 	return sl_rbuf_next(&ys->rb);
 }
 
-void yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width,
-	uint8_t cmp, uint8_t opts, uint32_t pos)
+int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width, uint8_t cmp,
+	int opts, uint32_t pos)
 {
-	void **virt;
-	virt = (void **)sl_rbuf_virt(&ys->rb, ys->target);
-	strip_scale(virt, ys->rb.height, width, out, ys->ty, cmp, opts);
+	int ret;
+	uint8_t **virt;
+	virt = sl_rbuf_virt(&ys->rb, ys->target);
+	ret = strip_scale(virt, ys->rb.height, width, out, ys->ty, cmp, opts);
 	yscaler_map_pos(ys, pos + 1);
+	return ret;
 }
 
-void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
+int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
 	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
-	uint8_t opts)
+	int opts)
 {
 	uint32_t i, taps;
 	int32_t smp_i, strip_pos;
 	uint8_t **virt;
 	float ty;
+	int ret;
 
 	taps = calc_taps(in_height, out_height);
 	virt = malloc(taps * sizeof(uint8_t *));
+	if (!virt) {
+		return -2;
+	}
 	smp_i = split_map(in_height, out_height, pos, &ty);
 	strip_pos = smp_i + 1 - taps / 2;
 
 	for (i=0; i<taps; i++) {
 		if (strip_pos < 0) {
 			virt[i] = in[0];
-		} else if ((uint32_t)strip_pos > in_height - 1) {
+		} else if (strip_pos > in_height - 1) {
 			virt[i] = in[in_height - 1];
 		} else {
 			virt[i] = in[strip_pos];
@@ -561,6 +582,7 @@ void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
 		strip_pos++;
 	}
 
-	strip_scale((void **)virt, taps, width, (void *)out, ty, cmp, opts);
+	ret = strip_scale(virt, taps, width, out, ty, cmp, opts);
 	free(virt);
+	return ret;
 }

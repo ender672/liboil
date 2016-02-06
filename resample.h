@@ -122,8 +122,8 @@ int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest);
  * requires scanlines that are less than 0 or larger than the height of the
  * source image.
  */
-void strip_scale(void **in, long strip_height, long width, void *out, float ty,
-	int cmp, int opts);
+int strip_scale(uint8_t **in, uint32_t strip_height, uint32_t width,
+	uint8_t *out, float ty, uint8_t cmp, int opts);
 
 /**
  * struct sl_rbuf manages scanlines for y scaling. It implements a ring buffer
@@ -131,7 +131,7 @@ void strip_scale(void **in, long strip_height, long width, void *out, float ty,
  */
 struct sl_rbuf {
 	uint32_t height; // number of scanlines that the ring buffer can hold
-	uint32_t length; // width in bytes of each scanline in the buffer
+	size_t length; // width in bytes of each scanline in the buffer
 	uint32_t count; // total no. of scanlines that have been fed in
 	uint8_t *buf; // buffer for the ring buffer
 	uint8_t **virt; // space to provide scanline pointers for scaling
@@ -141,7 +141,7 @@ struct sl_rbuf {
  * Initialize a yscaler struct. Calculates how large the scanline ring buffer
  * will need to be and allocates it.
  */
-void sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, uint32_t sl_len);
+int sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, size_t sl_len);
 
 /**
  * Free a sl_rbuf struct, including the ring buffer.
@@ -157,7 +157,7 @@ uint8_t *sl_rbuf_next(struct sl_rbuf *rb);
 /**
  * Return an ordered array of scanline pointers for use in scaling.
  */
-uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, long target);
+uint8_t **sl_rbuf_virt(struct sl_rbuf *rb, uint32_t target);
 
 /**
  * Struct to hold state for y-scaling.
@@ -174,8 +174,8 @@ struct yscaler {
  * Initialize a yscaler struct. Calculates how large the scanline ring buffer
  * will need to be and allocates it.
  */
-void yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
-	uint32_t scanline_len);
+int yscaler_init(struct yscaler *ys, uint32_t in_height, uint32_t out_height,
+	size_t scanline_len);
 
 /**
  * Free a yscaler struct, including the ring buffer.
@@ -186,7 +186,7 @@ void yscaler_free(struct yscaler *ys);
  * Get a pointer to the next scanline to be filled in the ring buffer. Returns
  * null if no more scanlines are needed to perform scaling.
  */
-unsigned char *yscaler_next(struct yscaler *ys);
+uint8_t *yscaler_next(struct yscaler *ys);
 
 /**
  * Scale the buffered contents of the yscaler to produce the next scaled output
@@ -199,14 +199,14 @@ unsigned char *yscaler_next(struct yscaler *ys);
  *   only one.
  * The pos parameter is the position of the output scanline.
  */
-void yscaler_scale(struct yscaler *ys, uint8_t *out,  uint32_t width,
-	uint8_t cmp, uint8_t opts, uint32_t pos);
+int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t width, uint8_t cmp,
+	int opts, uint32_t pos);
 
 /**
  * Helper for scaling an image that sits fully in memory.
  */
-void yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
+int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
 	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
-	uint8_t opts);
+	int opts);
 
 #endif

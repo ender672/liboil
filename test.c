@@ -330,7 +330,7 @@ static void test_strip_scale(long taps, long width, int cmp, int opts, float ty)
 		fill_rand(scanlines[i], width * cmp);
 	}
 
-	strip_scale((void **)scanlines, taps, width, (void *)out, ty, cmp, opts);
+	strip_scale(scanlines, taps, width, out, ty, cmp, opts);
 	strip_scale_check(scanlines, taps, width, out, cmp, opts, ty);
 
 	for (i=0; i<taps; i++) {
