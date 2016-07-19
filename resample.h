@@ -26,27 +26,6 @@
 #include <stddef.h>
 
 /**
- * Scale scanline in to the scanline out. This is the simplest way to perform
- * x-scaling on a scanline, but it currently involves an extry memory allocation
- * and copy that may be avoidable if you use the lower-level padded_len_offset()
- * and xscale_padded() functions.
- *
- * in - pointer to input scanline
- * in_width - width in samples of input scanline
- * out - pointer to buffer where the output scanline will be written. It must be
- *   at least (size_t)out_width * cmp bytes in length.
- * out_width - width in samles of output scanline
- * cmp - number of components per sample
- *
- * returns 0 on success, otherwise a negative integer:
- *
- * -1 - bad input parameter
- * -2 - unable to perform an allocation
- */
-int xscale(uint8_t *in, uint32_t in_width, uint8_t *out, uint32_t out_width,
-	uint8_t cmp);
-
-/**
  * Calculate the required length for a padded scanline and get the offset at
  * which the image samples should be be filled in.
  *
@@ -68,6 +47,22 @@ size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
 	uint8_t cmp, size_t *offset);
 
 /**
+ * Scale scanline in to the scanline out. This is the simplest way to perform
+ * x-scaling on a scanline, but it currently involves an extry memory allocation
+ * and copy that may be avoidable if you use the lower-level padded_len_offset()
+ * and xscale_padded() functions.
+ *
+ * in - pointer to input scanline
+ * in_width - width in samples of input scanline
+ * out - pointer to buffer where the output scanline will be written. It must be
+ *   at least (size_t)out_width * cmp bytes in length.
+ * out_width - width in samles of output scanline
+ * cmp - number of components per sample
+ *
+ * returns 0 on success, otherwise a negative integer:
+ *
+ * -1 - bad input parameter
+ * -2 - unable to perform an allocation
  * Extend the first and last sample into the padded area of a padded scanline.
  */
 void padded_sl_extend_edges(uint8_t *buf, uint32_t width, size_t pad_len,
@@ -77,7 +72,7 @@ void padded_sl_extend_edges(uint8_t *buf, uint32_t width, size_t pad_len,
  * Scale padded scanline in to scanline out.
  */
 int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
-	uint32_t out_width, uint8_t cmp);
+	uint32_t out_width, uint8_t cmp, int filler);
 
 /**
  * Indicate how many taps will be required to scale an image. The number of taps
@@ -112,7 +107,25 @@ int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest);
  * source image.
  */
 int strip_scale(uint8_t **in, uint32_t strip_height, size_t len, uint8_t *out,
-	float ty);
+	float ty, uint8_t cmp, int filler);
+
+/**
+ * Struct to hold state for x-scaling.
+ */
+struct xscaler {
+	uint8_t *psl_buf;
+	size_t psl_offset;
+	uint32_t width_in;
+	uint32_t width_out;
+	uint8_t cmp;
+	int filler;
+};
+
+int xscaler_init(struct xscaler *xs, uint32_t width_in, uint32_t width_out,
+	uint8_t cmp, int filler);
+void xscaler_free(struct xscaler *xs);
+uint8_t *xscaler_psl_pos0(struct xscaler *xs);
+void xscaler_scale(struct xscaler *xs, uint8_t *out_buf);
 
 /**
  * struct sl_rbuf manages scanlines for y scaling. It implements a ring buffer
@@ -186,12 +199,21 @@ uint8_t *yscaler_next(struct yscaler *ys);
  * The cmp parameter is the number of components per sample (3 for RGB).
  * The pos parameter is the position of the output scanline.
  */
-int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t pos);
+int yscaler_scale(struct yscaler *ys, uint8_t *out, uint32_t pos, uint8_t cmp,
+	int filler);
 
 /**
  * Helper for scaling an image that sits fully in memory.
  */
 int yscaler_prealloc_scale(uint32_t in_height, uint32_t out_height,
-	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp);
+	uint8_t **in, uint8_t *out, uint32_t pos, uint32_t width, uint8_t cmp,
+	int filler);
+
+/**
+ * Utility helpers.
+ */
+void fix_ratio(uint32_t src_width, uint32_t src_height, uint32_t *out_width,
+	uint32_t *out_height);
+int cubic_scale_denom(uint32_t src_dim, uint32_t out_dim);
 
 #endif
