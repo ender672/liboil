@@ -159,18 +159,21 @@ static fix1_30 f_to_fix1_30(float x)
 static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 {
 	uint32_t i;
-	float tmp, tap_mult;
+	float tmp, tap_mult, fudge;
 	fix1_30 tmp_fixed;
 
 	tap_mult = (float)taps / TAPS;
 	tx = 1 - tx - taps / 2;
+	fudge = 1.0;
 
 	for (i=0; i<taps; i++) {
 		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
+		fudge -= tmp;
 		tmp_fixed = f_to_fix1_30(tmp);
 		coeffs[i] = tmp_fixed;
 		tx += 1;
 	}
+	coeffs[taps / 2] += f_to_fix1_30(fudge);
 }
 
 /* bicubic y-scaler */
