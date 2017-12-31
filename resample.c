@@ -592,11 +592,11 @@ int cubic_scale_denom(uint32_t src_dim, uint32_t out_dim)
 	uint32_t scale_factor;
 
 	scale_factor = src_dim / out_dim;
-	if (scale_factor >= 8 * 4) {
+	if (scale_factor >= 8 * 2) {
 		return 8;
-	} else if (scale_factor >= 4 * 4) {
+	} else if (scale_factor >= 4 * 2) {
 		return 4;
-	} else if (scale_factor >= 2 * 4) {
+	} else if (scale_factor >= 2 * 2) {
 		return 2;
 	} else {
 		return 1;
