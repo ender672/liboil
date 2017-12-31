@@ -360,35 +360,6 @@ size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
 	return (size_t)in_width * cmp + *offset * 2;
 }
 
-void xscale2(uint8_t *row_in, uint8_t *out, uint32_t width_in,
-	uint32_t width_out, uint32_t taps, uint32_t xpos, uint8_t cmp)
-{
-	double x, tx, coeff, sum[4];
-	uint32_t i, j, smp_i;
-	int32_t val;
-
-	sum[0] = sum[1] = sum[2] = sum[3] = 0.0;
-	smp_i = (uint64_t)xpos * width_in / width_out;
-	tx = ((uint64_t)xpos * width_in % width_out) / (double)width_out;
-
-	for (i=1; i<=taps*2; i++) {
-		x = (i > taps ? i - taps - tx : taps - i + tx) / (taps / 2);
-		if (x < 1) {
-			coeff = (3*x*x*x - 5*x*x + 2) / taps;
-		} else {
-			coeff = (-1*x*x*x + 5*x*x - 8*x + 4) / taps;
-		}
-		for (j=0; j<4; j++) {
-			sum[j] += row_in[smp_i * cmp + j] / 255.0 * coeff;
-		}
-	}
-
-	for (i=0; i<4; i++) {
-		val = 255 * sum[i];
-		out[i] = val < 0 ? 0 : (val > 255 ? 255 : val);
-	}
-}
-
 int xscale_padded(uint8_t *in, uint32_t in_width, uint8_t *out,
 	uint32_t out_width, uint8_t cmp, int filler)
 {
