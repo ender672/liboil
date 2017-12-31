@@ -183,15 +183,15 @@ void strip_scale_generic(uint8_t **in, uint32_t strip_height, size_t len,
 {
 	size_t i;
 	uint32_t j;
-	fix33_30 coeff, total;
+	fix33_30 coeff, sum;
 
 	for (i=0; i<len; i++) {
-		total = 0;
+		sum = 0;
 		for (j=0; j<strip_height; j++) {
 			coeff = coeffs[j];
-			total += coeff * in[j][i];
+			sum += coeff * in[j][i];
 		}
-		out[i] = clamp(total);
+		out[i] = clamp(sum);
 	}
 }
 
