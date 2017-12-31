@@ -199,22 +199,21 @@ void strip_scale_rgbx(uint8_t **in, uint32_t strip_height, size_t len,
 	uint8_t *out, fix1_30 *coeffs)
 {
 	size_t i;
-	uint32_t j, sample, **in32;
+	uint32_t j;
 	fix33_30 coeff, sum[3];
 
-	in32 = (uint32_t **)in;
-	for (i=0; i<len/4; i++) {
+	for (i=0; i<len; i+=4) {
 		sum[0] = sum[1] = sum[2] = 0;
 		for (j=0; j<strip_height; j++) {
 			coeff = coeffs[j];
-			sample = in32[j][i];
-			sum[0] += coeff *  (sample & 0x000000FF);
-			sum[1] += coeff * ((sample & 0x0000FF00) >> 8);
-			sum[2] += coeff * ((sample & 0x00FF0000) >> 16);
+			sum[0] += coeff * in[j][i];
+			sum[1] += coeff * in[j][i + 1];
+			sum[2] += coeff * in[j][i + 2];
 		}
-		((uint32_t *)out)[i] = clamp(sum[0]) +
-			((uint32_t)clamp(sum[1]) << 8) +
-			((uint32_t)clamp(sum[2]) << 16);
+		out[0] = clamp(sum[0]);
+		out[1] = clamp(sum[1]);
+		out[2] = clamp(sum[2]);
+		out += 4;
 	}
 }
 
@@ -222,24 +221,23 @@ void strip_scale_32(uint8_t **in, uint32_t strip_height, size_t len,
 	uint8_t *out, fix1_30 *coeffs)
 {
 	size_t i;
-	uint32_t j, sample, **in32;
+	uint32_t j;
 	fix33_30 coeff, sum[4];
 
-	in32 = (uint32_t **)in;
-	for (i=0; i<len/4; i++) {
+	for (i=0; i<len; i+=4) {
 		sum[0] = sum[1] = sum[2] = sum[3] = 0;
 		for (j=0; j<strip_height; j++) {
 			coeff = coeffs[j];
-			sample = in32[j][i];
-			sum[0] += coeff *  (sample & 0x000000FF);
-			sum[1] += coeff * ((sample & 0x0000FF00) >> 8);
-			sum[2] += coeff * ((sample & 0x00FF0000) >> 16);
-			sum[3] += coeff * ((sample & 0xFF000000) >> 24);
+			sum[0] += coeff * in[j][i];
+			sum[1] += coeff * in[j][i + 1];
+			sum[2] += coeff * in[j][i + 2];
+			sum[3] += coeff * in[j][i + 3];
 		}
-		((uint32_t *)out)[i] = clamp(sum[0]) +
-			((uint32_t)clamp(sum[1]) << 8) +
-			((uint32_t)clamp(sum[2]) << 16) +
-			((uint32_t)clamp(sum[3]) << 24);
+		out[0] = clamp(sum[0]);
+		out[1] = clamp(sum[1]);
+		out[2] = clamp(sum[2]);
+		out[3] = clamp(sum[3]);
+		out += 4;
 	}
 }
 
@@ -288,41 +286,41 @@ static void sample_generic(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
 static void sample_rgba(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
 	uint8_t *out)
 {
-	uint32_t i, sample;
+	uint32_t i;
 	fix33_30 sum[4], coeff;
 
 	sum[0] = sum[1] = sum[2] = sum[3] = 0;
 	for (i=0; i<taps; i++) {
 		coeff = coeffs[i];
-		sample = ((uint32_t *)in)[i];
-		sum[0] += coeff *  (sample & 0x000000FF);
-		sum[1] += coeff * ((sample & 0x0000FF00) >> 8);
-		sum[2] += coeff * ((sample & 0x00FF0000) >> 16);
-		sum[3] += coeff * ((sample & 0xFF000000) >> 24);
+		sum[0] += coeff * in[0];
+		sum[1] += coeff * in[1];
+		sum[2] += coeff * in[2];
+		sum[3] += coeff * in[3];
+		in += 4;
 	}
-	*(uint32_t *)out = clamp(sum[0]) +
-		((uint32_t)clamp(sum[1]) << 8) +
-		((uint32_t)clamp(sum[2]) << 16) +
-		((uint32_t)clamp(sum[3]) << 24);
+	out[0] = clamp(sum[0]);
+	out[1] = clamp(sum[1]);
+	out[2] = clamp(sum[2]);
+	out[3] = clamp(sum[3]);
 }
 
 static void sample_rgbx(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
 	uint8_t *out)
 {
-	uint32_t i, sample;
+	uint32_t i;
 	fix33_30 sum[3], coeff;
 
 	sum[0] = sum[1] = sum[2] = 0;
 	for (i=0; i<taps; i++) {
 		coeff = coeffs[i];
-		sample = ((uint32_t *)in)[i];
-		sum[0] += coeff *  (sample & 0x000000FF);
-		sum[1] += coeff * ((sample & 0x0000FF00) >> 8);
-		sum[2] += coeff * ((sample & 0x00FF0000) >> 16);
+		sum[0] += coeff * in[0];
+		sum[1] += coeff * in[1];
+		sum[2] += coeff * in[2];
+		in += 4;
 	}
-	*(uint32_t *)out = clamp(sum[0]) +
-		((uint32_t)clamp(sum[1]) << 8) +
-		((uint32_t)clamp(sum[2]) << 16);
+	out[0] = clamp(sum[0]);
+	out[1] = clamp(sum[1]);
+	out[2] = clamp(sum[2]);
 }
 
 static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, uint8_t *in,
