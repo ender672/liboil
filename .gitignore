@@ -1,5 +1,9 @@
 *.o
 test
+pngscale
+jpgscale
+tools/srgb_to_linear_table
+*.jpg
 
 # OSX
 test.dSYM
