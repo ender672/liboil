@@ -174,15 +174,15 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 
 static uint8_t linear_sample_to_srgb(uint16_t in)
 {
-	double in_f, result, tmp;
-	in_f = in / 65535.0;
-	if (in_f <= 0.0031308) {
-		result = in_f * 12.92;
-	} else {
-		tmp = pow(in_f, 1/2.4);
-		result = 1.055 * tmp - 0.055;
+	double in_f, s1, s2, s3;
+	if (in <= 248) {
+		return (in * 3295 + 32768) >> 16;
 	}
-	return result * 255 + 0.5;
+	in_f = in / 65535.0;
+	s1 = sqrt(in_f);
+	s2 = sqrt(s1);
+	s3 = sqrt(s2);
+	return (0.0427447 + 0.547242 * s1 + 0.928361 * s2 - 0.518123 * s3) * 255 + 0.5;
 }
 
 static void strip_scale_rgbx(uint16_t **in, uint32_t strip_height, size_t len,
