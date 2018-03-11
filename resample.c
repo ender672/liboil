@@ -133,7 +133,7 @@ static float catrom(float x)
 	if (x<1) {
 		return ((3*x - 5)*x*x + 2) / 2;
 	}
-	return (((-1*x + 5)*x - 8)*x + 4) / 2;
+	return (((5 - x)*x - 8)*x + 4) / 2;
 }
 
 /**
