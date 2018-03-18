@@ -2,13 +2,41 @@ liboil
 ======
 
 A C library for resizing images. It currently does all resizing with a
-catmull-rom interpolator. This library aims for fast performance, low memory
-use, and accuracy.
+bicubic (catmull-rom) interpolator. This library aims for fast performance, low
+memory use, and accuracy.
 
-Usage
------
+Purpose
+-------
 
-liboil provides separate methods for x-scaling and y-scaling. x-scaling is
+liboil aims to provide excellent general-purpose image thumbnailing and is
+optimize for low memory and CPU use.
+
+liboil is not very configurable -- it currently only has one interpolator
+(catmull-rom). It is not suited for scenarios where you want to customize your
+settings by hand for each image.
+
+An example use-case is a web server that thumbnails user-uploaded images.
+
+Features
+--------
+  * The interpolator is scaled when shrinking images, reducing aliasing effects.
+  * liboil is sRGB-aware and adjusts gamma before manipulating images.
+  * Interpolation is internally performed in 16-bit linear RGB space.
+
+jpgscale & pngscale
+-------------------
+
+The liboil repository includes command-line tools for resizing JPEG and PNG
+images.
+
+For example, to resize in.jpg to fit in a 400x800 box while preserving the
+aspect ratio:
+  jpgscale 400 800 < in.jpg > out.jpg
+
+Usage as a C Library
+------------------
+
+resample.h provides separate methods for x-scaling and y-scaling. x-scaling is
 relatively straightforward since it translates one input scanline to one output
 scanline:
 

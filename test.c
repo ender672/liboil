@@ -287,9 +287,7 @@ static void validate_scanline16(uint16_t *oil, uint16_t *ref, size_t len)
 	uint16_t diff;
 	for (i=0; i<len; i++) {
 		diff = labs((long)oil[i] - ref[i]);
-		if (diff > 1) {
-			fprintf(stderr, "oil got: %d, reference was %d\n", oil[i], ref[i]);
-		}
+		assert(diff <= 1);
 	}
 }
 
@@ -590,8 +588,8 @@ static void test_srgb_to_linear()
 
 static void test_linear_to_srgb()
 {
-	uint8_t reference, actual;
-	uint32_t input, num_errors;
+	int reference, actual, num_errors;
+	uint32_t input;
 
 	num_errors = 0;
 
@@ -601,9 +599,8 @@ static void test_linear_to_srgb()
 		if (actual != reference) {
 			num_errors++;
 		}
-		assert(abs((int)actual - reference) <= 1);
+		assert(abs(actual - reference) <= 1);
 	}
-
 	assert(num_errors <= 1449);
 }
 

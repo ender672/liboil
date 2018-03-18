@@ -158,7 +158,7 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 
 	tap_mult = (float)taps / TAPS;
 	tx = 1 - tx - taps / 2;
-	fudge = 1.0;
+	fudge = 1.0f;
 
 	for (i=0; i<taps; i++) {
 		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
@@ -174,15 +174,16 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 
 static uint8_t linear_sample_to_srgb(uint16_t in)
 {
-	double in_f, s1, s2, s3;
+	float in_f, s1, s2, s3, s4;
 	if (in <= 248) {
-		return (in * 3295 + 32768) >> 16;
+		return (in * 3295 + (1<<15)) >> 16;
 	}
-	in_f = in / 65535.0;
-	s1 = sqrt(in_f);
-	s2 = sqrt(s1);
-	s3 = sqrt(s2);
-	return (0.0427447 + 0.547242 * s1 + 0.928361 * s2 - 0.518123 * s3) * 255 + 0.5;
+	in_f = in / 65535.0f;
+	s1 = sqrtf(in_f);
+	s2 = sqrtf(s1);
+	s3 = sqrtf(s2);
+	s4 = 0.0427447f + 0.547242f * s1 + 0.928361f * s2 - 0.518123f * s3;
+	return s4 * 255 + 0.5f;
 }
 
 static void strip_scale_rgbx(uint16_t **in, uint32_t strip_height, size_t len,
