@@ -97,7 +97,7 @@ static uint8_t clamp8(fix33_30 x)
  * The resulting coordinate can range from -0.5 to the maximum of the
  * destination image dimension.
  */
-int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest)
+static int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest)
 {
 	double smp;
 	int32_t smp_i;
@@ -115,7 +115,7 @@ int32_t split_map(uint32_t dim_in, uint32_t dim_out, uint32_t pos, float *rest)
  * When we reduce an image by a factor of two, we need to scale our resampling
  * function by two as well in order to avoid aliasing.
  */
-uint64_t calc_taps(uint32_t dim_in, uint32_t dim_out)
+static uint64_t calc_taps(uint32_t dim_in, uint32_t dim_out)
 {
 	uint64_t tmp;
 	if (dim_out > dim_in) {
@@ -172,8 +172,31 @@ static void calc_coeffs(fix1_30 *coeffs, float tx, uint32_t taps)
 
 /* bicubic y-scaler */
 
+/**
+ * By default, use a root function that approximates the linear to sRGB spec.
+ * This approximation is close enough to allow all intensities to successfully
+ * round-trip when converting from sRGB -> linear -> sRGB. It is also much
+ * faster than adhering exactly to the sRGB spec.
+ *
+ * Alternatively, you can set define the SRGBEXACT macro to use an exact linear
+ * to sRGB function.
+ */
 static uint8_t linear_sample_to_srgb(uint16_t in)
 {
+#ifdef SRGBEXACT
+	float in_f, s1, s2, s3;
+	if (in <= 205) {
+		return (in * 3295 + 32768) >> 16;
+	}
+	in_f = in / 65535.0f;
+
+	// x^(1/2.4) = x^(5/12) = x^(1/3) * x^(1/12)
+	s1 = cbrtf(in_f);
+	s2 = s1 * sqrtf(sqrtf(s1));
+
+	s3 = 1.055f * s2 - 0.055f;
+	return s3 * 255 + 0.5f;
+#else
 	float in_f, s1, s2, s3, s4;
 	if (in <= 248) {
 		return (in * 3295 + (1<<15)) >> 16;
@@ -184,6 +207,7 @@ static uint8_t linear_sample_to_srgb(uint16_t in)
 	s3 = sqrtf(s2);
 	s4 = 0.0427447f + 0.547242f * s1 + 0.928361f * s2 - 0.518123f * s3;
 	return s4 * 255 + 0.5f;
+#endif
 }
 
 static void strip_scale_rgbx(uint16_t **in, uint32_t strip_height, size_t len,
@@ -408,7 +432,7 @@ static void xscale_set_sample(uint32_t taps, fix1_30 *coeffs, uint16_t *in,
 	}
 }
 
-void padded_sl_extend_edges(uint16_t *buf, uint32_t width, size_t pad_len,
+static void padded_sl_extend_edges(uint16_t *buf, uint32_t width, size_t pad_len,
 	uint8_t cmp)
 {
 	uint16_t *pad_right;
@@ -420,7 +444,7 @@ void padded_sl_extend_edges(uint16_t *buf, uint32_t width, size_t pad_len,
 	}
 }
 
-size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
+static size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
 	uint8_t cmp, size_t *offset)
 {
 	uint64_t taps;
@@ -429,7 +453,7 @@ size_t padded_sl_len_offset(uint32_t in_width, uint32_t out_width,
 	return ((size_t)in_width * cmp + *offset * 2) * sizeof(uint16_t);
 }
 
-int xscale_padded(uint16_t *in, uint32_t in_width, uint16_t *out,
+static int xscale_padded(uint16_t *in, uint32_t in_width, uint16_t *out,
 	uint32_t out_width, enum oil_colorspace cs)
 {
 	float tx;
@@ -475,7 +499,7 @@ int xscale_padded(uint16_t *in, uint32_t in_width, uint16_t *out,
 
 /* scanline ring buffer */
 
-int sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, size_t sl_len)
+static int sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, size_t sl_len)
 {
 	rb->height = height;
 	rb->count = 0;
@@ -492,18 +516,18 @@ int sl_rbuf_init(struct sl_rbuf *rb, uint32_t height, size_t sl_len)
 	return 0;
 }
 
-void sl_rbuf_free(struct sl_rbuf *rb)
+static void sl_rbuf_free(struct sl_rbuf *rb)
 {
 	free(rb->buf);
 	free(rb->virt);
 }
 
-uint16_t *sl_rbuf_next(struct sl_rbuf *rb)
+static uint16_t *sl_rbuf_next(struct sl_rbuf *rb)
 {
 	return rb->buf + (rb->count++ % rb->height) * rb->length;
 }
 
-uint16_t **sl_rbuf_virt(struct sl_rbuf *rb, uint32_t last_target)
+static uint16_t **sl_rbuf_virt(struct sl_rbuf *rb, uint32_t last_target)
 {
 	uint32_t i, safe, height, last_idx;
 	height = rb->height;
@@ -524,7 +548,7 @@ uint16_t **sl_rbuf_virt(struct sl_rbuf *rb, uint32_t last_target)
 
 /* xscaler */
 
-int xscaler_init(struct xscaler *xs, uint32_t width_in, uint32_t width_out,
+static int xscaler_init(struct xscaler *xs, uint32_t width_in, uint32_t width_out,
 	enum oil_colorspace cs)
 {
 	size_t psl_len, psl_offset;
@@ -546,12 +570,12 @@ int xscaler_init(struct xscaler *xs, uint32_t width_in, uint32_t width_out,
 	return 0;
 }
 
-void xscaler_free(struct xscaler *xs)
+static void xscaler_free(struct xscaler *xs)
 {
 	free(xs->psl_buf);
 }
 
-void xscaler_scale(struct xscaler *xs, uint16_t *out_buf)
+static void xscaler_scale(struct xscaler *xs, uint16_t *out_buf)
 {
 	padded_sl_extend_edges(xs->psl_buf, xs->width_in, xs->psl_offset, CS_TO_CMP(xs->cs));
 	xscale_padded(xs->psl_pos0, xs->width_in, out_buf, xs->width_out, xs->cs);
