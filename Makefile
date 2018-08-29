@@ -4,9 +4,9 @@ all: test jpgscale pngscale tools/linear_to_srgb_table tools/srgb_to_linear_tabl
 test: test.c resample.c
 	$(CC) $(CFLAGS) test.c -o $@ -lm
 jpgscale: resample.o jpgscale.c
-	$(CC) $(CFLAGS) resample.o jpgscale.c -o $@ -ljpeg -lm
+	$(CC) $(CFLAGS) resample.o jpgscale.c -o $@ $(LDFLAGS) -ljpeg -lm
 pngscale: resample.o pngscale.c
-	$(CC) $(CFLAGS) resample.o pngscale.c -o $@ -lpng -lm
+	$(CC) $(CFLAGS) resample.o pngscale.c -o $@ $(LDFLAGS) -lpng -lm
 tools/linear_to_srgb_table:
 	$(CC) $(CFLAGS) tools/linear_to_srgb_table.c -o $@ -lm
 tools/srgb_to_linear_table:
