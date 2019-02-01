@@ -2,8 +2,6 @@
 test
 pngscale
 jpgscale
-tools/srgb_to_linear_table
-tools/linear_to_srgb_table
 *.jpg
 
 # OSX

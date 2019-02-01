@@ -4,24 +4,23 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdint.h>
-#include "resample.c"
+#include "oil_resample.c"
 
-static uint8_t linear_sample_to_srgb_reference(uint16_t in)
+static long double linear_sample_to_srgb_reference(long double in_f)
 {
-	long double in_f, result, tmp;
-	in_f = in / 65535.0L;
+	long double tmp;
+	if (in_f <= 0.0L) {
+		return 0.0L;
+	}
+	if (in_f >= 1.0L) {
+		return 1.0L;
+	}
 	if (in_f <= 0.00313066844250063L) {
-		result = in_f * 12.92L;
+		return in_f * 12.92L;
 	} else {
 		tmp = powl(in_f, 1/2.4L);
-		result = 1.055L * tmp - 0.055L;
+		return 1.055L * tmp - 0.055L;
 	}
-	return round(result * 255);
-}
-
-static uint8_t clamp_16_to_8(uint16_t in)
-{
-	return round((in / 65535.0) * 255);
 }
 
 /**
@@ -67,11 +66,19 @@ static void ref_calc_coeffs(long double *coeffs, long double offset, long taps)
 	coeffs[taps / 2] += fudge;
 }
 
-static void fill_rand(uint16_t *buf, long len)
+static void fill_rand(float *buf, long len)
 {
 	long i;
 	for (i=0; i<len; i++) {
-		buf[i] = rand();
+		buf[i] = (float)rand()/RAND_MAX;
+	}
+}
+
+static void fill_rand8(uint8_t *buf, long len)
+{
+	long i;
+	for (i=0; i<len; i++) {
+		buf[i] = rand() % 256;
 	}
 }
 
@@ -103,34 +110,16 @@ static void test_calc_taps()
 	test_calc_taps2(10003, 17);
 	test_calc_taps2(10000, 9999);
 
-	/* Test uint32_t overflow to uint64_t */
-	test_calc_taps2(0xFFFFFFFF, 1);
-
 	/* zoom -- always 4 */
 	assert(calc_taps(100, 100) == 4);
 	assert(calc_taps(1, 1) == 4);
 	assert(calc_taps(1, 10000) == 4);
-	assert(calc_taps(1, 0xFFFFFFFF) == 4);
-}
-
-/**
- * padded_sl_len_offset()
- */
-
-static void test_padded_sl_len_offset()
-{
-	size_t len, offset;
-	len = padded_sl_len_offset(100, 100, 4, &offset);
-	// (taps / 2 + 1) * cmp (taps should be 4)
-	assert(offset == 12);
-	// width * components + offset * 2
-	assert(len == (100 * 4 + 24) * 2);
 }
 
 /**
  * split_map
  */
-static long double map(long dim_in, long dim_out, long pos)
+static long double ref_map(long dim_in, long dim_out, long pos)
 {
 	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
 }
@@ -141,7 +130,7 @@ static long double split_map_check(long dim_in, long dim_out, long pos,
 	long double smp;
 	long smp_i;
 
-	smp = map(dim_in, dim_out, pos);
+	smp = ref_map(dim_in, dim_out, pos);
 	smp_i = floorl(smp);
 	*ty = smp - smp_i;
 	return smp_i;
@@ -186,14 +175,7 @@ static void test_split_map_all()
 	test_split_map(19, 10000);
 }
 
-static uint16_t fto16(long double x)
-{
-	x = fmin(1, x);
-	x = fmax(0, x);
-	return round(x * 65535);
-}
-
-static void ref_sample_generic(long taps, long double *coeffs, uint16_t *in, uint16_t *out, uint8_t cmp)
+static void ref_sample_generic(long taps, long double *coeffs, long double *in, long double *out, uint8_t cmp)
 {
 	uint8_t i;
 	long j;
@@ -202,31 +184,31 @@ static void ref_sample_generic(long taps, long double *coeffs, uint16_t *in, uin
 	for (i=0; i<cmp; i++) {
 		sum = 0;
 		for (j=0; j<taps; j++) {
-			sum += coeffs[j] * (in[j * cmp + i] / 65535.0L);
+			sum += coeffs[j] * (in[j * cmp + i]);
 		}
-		out[i] = fto16(sum);
+		out[i] = sum;
 	}
 }
 
-static void ref_sample_rgbx(long taps, long double *coeffs, uint16_t *in, uint16_t *out)
+static void ref_sample_rgbx(long taps, long double *coeffs, long double *in, long double *out)
 {
 	long j;
 	long double sums[3];
 
 	sums[0] = sums[1] = sums[2] = 0;
 	for (j=0; j<taps; j++) {
-		sums[0] += coeffs[j] * (in[j * 4] / 65535.0L);
-		sums[1] += coeffs[j] * (in[j * 4 + 1] / 65535.0L);
-		sums[2] += coeffs[j] * (in[j * 4 + 2] / 65535.0L);
+		sums[0] += coeffs[j] * (in[j * 4]);
+		sums[1] += coeffs[j] * (in[j * 4 + 1]);
+		sums[2] += coeffs[j] * (in[j * 4 + 2]);
 	}
-	out[0] = fto16(sums[0]);
-	out[1] = fto16(sums[1]);
-	out[2] = fto16(sums[2]);
+	out[0] = sums[0];
+	out[1] = sums[1];
+	out[2] = sums[2];
 	out[3] = 0;
 }
 
-static void ref_set_sample(long taps, long double *coeffs, uint16_t *in,
-	uint16_t *out, enum oil_colorspace cs)
+static void ref_set_sample(long taps, long double *coeffs, long double *in,
+	long double *out, enum oil_colorspace cs)
 {
 	switch(cs) {
 	case OIL_CS_RGBX:
@@ -237,133 +219,57 @@ static void ref_set_sample(long taps, long double *coeffs, uint16_t *in,
 	case OIL_CS_RGB:
 	case OIL_CS_RGBA:
 	case OIL_CS_CMYK:
-		ref_sample_generic(taps, coeffs, in, out, CS_TO_CMP(cs));
+		ref_sample_generic(taps, coeffs, in, out, OIL_CMP(cs));
 		break;
 	}
 }
 
-/**
- * xscale
- */
-static void ref_xscale(uint16_t *in, long width_in, uint16_t *out,
-	long width_out, enum oil_colorspace cs)
+static void validate_scanline8(uint8_t *oil, long double *ref, size_t width, int cmp)
 {
-	long i, k, smp_i, smp_safe, taps;
-	float ty;
-	long double *coeffs;
-	uint8_t cmp;
-	uint16_t *samples;
-	int j;
-
-	taps = calc_taps(width_in, width_out);
-	coeffs = malloc(taps * sizeof(long double));
-	cmp = CS_TO_CMP(cs);
-	samples = malloc(taps * sizeof(uint16_t) * cmp);
-
-	for (i=0; i<width_out; i++) {
-		smp_i = split_map(width_in, width_out, i, &ty);
-		ref_calc_coeffs(coeffs, ty, taps);
-		for (k=0; k<taps; k++) {
-			smp_safe = smp_i - taps / 2 + 1 + k;
-			if (smp_safe < 0) {
-				smp_safe = 0;
-			} else if (smp_safe >= width_in) {
-				smp_safe = width_in - 1;
-			}
-			for (j=0; j<cmp; j++) {
-				samples[k * cmp + j] = in[smp_safe * cmp + j];
+	int i, j, ref_i, pos;
+	long double error, ref_f;
+	for (i=0; i<width; i++) {
+		for (j=0; j<cmp; j++) {
+			pos = i * cmp + j;
+			ref_f = ref[pos] * 255.0L;
+			ref_i = lroundl(ref_f);
+			error = fabsl(oil[pos] - ref_f);
+			if (error > 0.5001L) {
+				fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
 			}
 		}
-		ref_set_sample(taps, coeffs, samples, out + i * cmp, cs);
 	}
-
-	free(samples);
-	free(coeffs);
-}
-
-static void validate_scanline16(uint16_t *oil, uint16_t *ref, size_t len)
-{
-	size_t i;
-	uint16_t diff;
-	for (i=0; i<len; i++) {
-		diff = labs((long)oil[i] - ref[i]);
-		assert(diff <= 1);
-	}
-}
-
-static void validate_scanline8(uint8_t *oil, uint8_t *ref, size_t len)
-{
-	size_t i;
-	uint16_t diff;
-	for (i=0; i<len; i++) {
-		diff = labs((int)oil[i] - ref[i]);
-		if (diff > 1) {
-			fprintf(stderr, "%zu: oil got: %d, reference was %d\n", i, oil[i], ref[i]);
-		}
-	}
-}
-
-static void test_xscale(long width_in, long width_out, enum oil_colorspace cs)
-{
-	uint8_t cmp;
-	uint16_t *psl_buf, *inbuf, *outbuf, *ref_outbuf;
-	size_t psl_len, psl_offset;
-
-	cmp = CS_TO_CMP(cs);
-	psl_len = padded_sl_len_offset(width_in, width_out, cmp, &psl_offset);
-	psl_buf = malloc(psl_len);
-	inbuf = psl_buf + psl_offset;
-	fill_rand(inbuf, width_in * cmp);
-	outbuf = malloc(width_out * cmp * sizeof(uint16_t));
-	ref_outbuf = malloc(width_out * cmp * sizeof(uint16_t));
-
-	padded_sl_extend_edges(psl_buf, width_in, psl_offset, cmp);
-	xscale_padded(inbuf, width_in, outbuf, width_out, cs);
-	ref_xscale(inbuf, width_in, ref_outbuf, width_out, cs);
-	validate_scanline16(outbuf, ref_outbuf, width_out * cmp);
-
-	free(ref_outbuf);
-	free(outbuf);
-	free(psl_buf);
-}
-
-static void test_xscale_fmt(long width_in, long width_out)
-{
-	test_xscale(width_in, width_out, OIL_CS_G);
-	test_xscale(width_in, width_out, OIL_CS_GA);
-	test_xscale(width_in, width_out, OIL_CS_RGB);
-	test_xscale(width_in, width_out, OIL_CS_RGBA);
-	test_xscale(width_in, width_out, OIL_CS_RGBX);
-	test_xscale(width_in, width_out, OIL_CS_CMYK);
-}
-
-static void test_xscale_all()
-{
-	test_xscale_fmt(10000, 19);
-	test_xscale_fmt(10000, 10);
-	test_xscale_fmt(19, 10000);
-	test_xscale_fmt(10, 10);
-	test_xscale_fmt(1, 1);
-	test_xscale_fmt(10000, 1);
-	test_xscale_fmt(1, 10000);
-	test_xscale_fmt(10000, 9999);
-	test_xscale_fmt(9999, 10000);
-	test_xscale_fmt(13000, 1000);
 }
 
 /**
  * strip_scale
  */
 
-static void postprocess(uint16_t *in, uint8_t *out, enum oil_colorspace cs)
+static long double clamp_f(long double in)
 {
+	if (in <= 0.0L) {
+		return 0.0L;
+	}
+	if (in >= 1.0L) {
+		return 1.0L;
+	}
+	return in;
+}
+
+static void postprocess(long double *in, long double *out, enum oil_colorspace cs)
+{
+	long double alpha;
 	switch (cs) {
 	case OIL_CS_G:
-		out[0] = clamp_16_to_8(in[0]);
+		out[0] = clamp_f(in[0]);
 		break;
 	case OIL_CS_GA:
-		out[0] = clamp_16_to_8(in[0]);
-		out[1] = clamp_16_to_8(in[1]);
+		alpha = clamp_f(in[1]);
+		if (alpha != 0.0L) {
+			in[0] /= alpha;
+		}
+		out[0] = clamp_f(in[0]);
+		out[1] = alpha;
 		break;
 	case OIL_CS_RGB:
 		out[0] = linear_sample_to_srgb_reference(in[0]);
@@ -377,48 +283,47 @@ static void postprocess(uint16_t *in, uint8_t *out, enum oil_colorspace cs)
 		out[3] = 0;
 		break;
 	case OIL_CS_RGBA:
+		alpha = clamp_f(in[3]);
+		if (alpha != 0.0L) {
+			in[0] /= alpha;
+			in[1] /= alpha;
+			in[2] /= alpha;
+		}
 		out[0] = linear_sample_to_srgb_reference(in[0]);
 		out[1] = linear_sample_to_srgb_reference(in[1]);
 		out[2] = linear_sample_to_srgb_reference(in[2]);
-		out[3] = clamp_16_to_8(in[3]);
+		out[3] = alpha;
 		break;
 	case OIL_CS_CMYK:
-		out[0] = clamp_16_to_8(in[0]);
-		out[1] = clamp_16_to_8(in[1]);
-		out[2] = clamp_16_to_8(in[2]);
-		out[3] = clamp_16_to_8(in[3]);
+		out[0] = clamp_f(in[0]);
+		out[1] = clamp_f(in[1]);
+		out[2] = clamp_f(in[2]);
+		out[3] = clamp_f(in[3]);
 		break;
 	}
 }
 
-static void ref_strip_scale(uint16_t **in, long taps, long width, uint8_t *out,
-	long double ty, enum oil_colorspace cs_out)
+static void ref_strip_scale(float **in, long taps, long width, long double *out,
+	long double ty, enum oil_colorspace cs)
 {
-	size_t i, j;
-	long double *coeffs;
-	uint16_t *tmp, *samples;
-	uint8_t k, cmp_in;
-	enum oil_colorspace cs_in;
+	long double *coeffs, *samples, *tmp;
+	int i, j, k, cmp;
 
-	cs_in = cs_out;
-	if (cs_in == OIL_CS_RGB) {
-		cs_in = OIL_CS_RGBX;
-	}
-	cmp_in = CS_TO_CMP(cs_in);
+	cmp = OIL_CMP(cs);
 	coeffs = malloc(taps * sizeof(long double));
-	samples = malloc(taps * cmp_in * sizeof(uint16_t));
-	tmp = malloc(cmp_in * sizeof(uint16_t));
+	samples = malloc(taps * cmp * sizeof(long double));
+	tmp = malloc(cmp * sizeof(long double));
 	ref_calc_coeffs(coeffs, ty, taps);
 
 	for (i=0; i<width; i++) {
-		for (k=0; k<cmp_in; k++) {
+		for (k=0; k<cmp; k++) {
 			for (j=0; j<taps; j++) {
-				samples[j * cmp_in + k] = in[j][i * cmp_in + k];
+				samples[j * cmp + k] = in[j][i * cmp + k];
 			}
 		}
-		ref_set_sample(taps, coeffs, samples, tmp, cs_in);
-		postprocess(tmp, out, cs_out);
-		out += CS_TO_CMP(cs_out);
+		ref_set_sample(taps, coeffs, samples, tmp, cs);
+		postprocess(tmp, out, cs);
+		out += OIL_CMP(cs);
 	}
 
 	free(tmp);
@@ -429,31 +334,30 @@ static void ref_strip_scale(uint16_t **in, long taps, long width, uint8_t *out,
 static void test_strip_scale(long taps, long width, float ty,
 	enum oil_colorspace cs)
 {
-	uint8_t cmp_in, cmp_out, *out_oil, *out_ref;
-	uint16_t **scanlines;
-	long i;
+	long double *out_ref;
+	unsigned char *out_oil;
+	long i, cmp;
+	float *coeffs, **scanlines;
 
-	cmp_out = CS_TO_CMP(cs);
-	cmp_in = cmp_out;
-	if (cs == OIL_CS_RGB) {
-		cmp_in = 4;
-	}
-	scanlines = malloc(taps * sizeof(uint16_t *));
-	out_oil = malloc(width * cmp_out * sizeof(uint8_t));
-	out_ref = malloc(width * cmp_out * sizeof(uint8_t));
+	cmp = OIL_CMP(cs);
+	scanlines = malloc(taps * sizeof(float *));
+	out_oil = malloc(width * cmp * sizeof(unsigned char));
+	out_ref = malloc(width * cmp * sizeof(long double));
 
 	for (i=0; i<taps; i++) {
-		scanlines[i] = malloc(width * cmp_in * sizeof(uint16_t));
-		fill_rand(scanlines[i], width * cmp_in);
+		scanlines[i] = malloc(width * cmp * sizeof(float));
+		fill_rand(scanlines[i], width * cmp);
 	}
 
-	strip_scale(scanlines, taps, width * cmp_in, out_oil, ty, cs);
+	coeffs = malloc(taps * sizeof(float));
+	strip_scale(scanlines, taps, width * cmp, out_oil, coeffs, ty, cs);
 	ref_strip_scale(scanlines, taps, width, out_ref, ty, cs);
-	validate_scanline8(out_oil, out_ref, width * cmp_out);
+	validate_scanline8(out_oil, out_ref, width, cmp);
 
 	for (i=0; i<taps; i++) {
 		free(scanlines[i]);
 	}
+	free(coeffs);
 	free(out_ref);
 	free(out_oil);
 	free(scanlines);
@@ -471,149 +375,105 @@ static void test_strip_scale_each_cs(long taps, long width, float ty)
 
 static void test_strip_scale_all()
 {
-	test_strip_scale_each_cs(4, 1000,  0.2345);
+	test_strip_scale_each_cs(49, 1000,  0.2345f);
 	test_strip_scale_each_cs(8, 1000,  0.5);
 	test_strip_scale_each_cs(12, 1000, 0.0);
 	test_strip_scale_each_cs(12, 1000, 0.00005);
 	test_strip_scale_each_cs(12, 1000, 0.99999);
 }
 
-/**
- * sl_rbuf
- */
-static void test_sl_rbuf()
+static void test_yscale_transparent()
 {
-	uint16_t *p, *buf1, *buf2, *buf3, *buf4, **virt;
-	struct sl_rbuf rb;
-	sl_rbuf_init(&rb, 4, 1024);
-	assert(rb.count == 0);
+	unsigned char *out_oil;
+	long i, j, taps, width, cmp;
+	float ty, *coeffs, **scanlines;
+	long double *out_ref;
+	enum oil_colorspace cs;
 
-	buf1 = rb.buf;
-	buf2 = rb.buf + 1024;
-	buf3 = rb.buf + 1024 * 2;
-	buf4 = rb.buf + 1024 * 3;
+	cs = OIL_CS_RGBA;
+	taps = 8;
+	width = 100;
+	ty = 0.5;
 
-	p = sl_rbuf_next(&rb);
-	assert(p == buf1);
-	assert(rb.count == 1);
+	cmp = OIL_CMP(cs);
+	scanlines = malloc(taps * sizeof(float *));
+	out_oil = malloc(width * cmp * sizeof(uint8_t));
+	out_ref = malloc(width * cmp * sizeof(long double));
 
-	virt = sl_rbuf_virt(&rb, 0);
-	assert(virt[0] == buf1);
-	assert(virt[1] == buf1);
-	assert(virt[2] == buf1);
-	assert(virt[3] == buf1);
+	for (i=0; i<taps; i++) {
+		scanlines[i] = malloc(width * cmp * sizeof(float));
+		fill_rand(scanlines[i], width * cmp);
+		for (j=0; j<width; j++) {
+			scanlines[i][j*3+3] = 0.0f;
+		}
+	}
 
-	p = sl_rbuf_next(&rb);
-	assert(p == buf2);
-	assert(rb.count == 2);
+	coeffs = malloc(taps * sizeof(float));
+	strip_scale(scanlines, taps, width * cmp, out_oil, coeffs, ty, cs);
+	ref_strip_scale(scanlines, taps, width, out_ref, ty, cs);
+	validate_scanline8(out_oil, out_ref, width, cmp);
 
-	virt = sl_rbuf_virt(&rb, 1); // 0, 0, 0, 1
-	assert(virt[0] == buf1);
-	assert(virt[1] == buf1);
-	assert(virt[2] == buf1);
-	assert(virt[3] == buf2);
-
-	p = sl_rbuf_next(&rb);
-	assert(p == buf3);
-	assert(rb.count == 3);
-
-	p = sl_rbuf_next(&rb);
-	assert(p == buf4);
-	assert(rb.count == 4);
-
-	p = sl_rbuf_next(&rb);
-	assert(p == buf1);
-	assert(rb.count == 5);
-
-	virt = sl_rbuf_virt(&rb, 5); // 2, 3, 4, 5
-	assert(virt[0] == buf3);
-	assert(virt[1] == buf4);
-	assert(virt[2] == buf1);
-	assert(virt[3] == buf1);
-
-	virt = sl_rbuf_virt(&rb, 3); // 0, 1, 2, 3 <= we don't have 0 anymore!
-	assert(virt == 0);
-
-	sl_rbuf_free(&rb);
+	for (i=0; i<taps; i++) {
+		free(scanlines[i]);
+	}
+	free(coeffs);
+	free(out_oil);
+	free(out_ref);
+	free(scanlines);
 }
 
 /**
  * yscaler
  */
-static void test_yscaler()
-{
-	struct yscaler ys;
-	uint32_t i, j;
-	uint16_t *tmp;
-	uint8_t *buf;
 
-	buf = malloc(1024 * 4);
-	yscaler_init(&ys, 1000, 30, 1024, OIL_CS_RGBA);
-	j = 0;
-	for (i=0; i<30; i++) {
-		while((tmp = yscaler_next(&ys))) {
-			j++;
-			fill_rand(tmp, 1024 * 4);
-		}
-		yscaler_scale(&ys, buf, i);
-	}
-	assert(j == 1000);
-	yscaler_free(&ys);
-	free(buf);
-}
-
-static uint16_t srgb_sample_to_linear_reference(uint8_t in)
+static long double srgb_sample_to_linear_reference(int in)
 {
-	long double in_f, result, tmp;
+	long double in_f, tmp;
 	in_f = in / 255.0L;
 	if (in_f <= 0.0404482362771082L) {
-		result = in_f / 12.92L;
+		return in_f / 12.92L;
 	} else {
 		tmp = ((in_f + 0.055L)/1.055L);
-		result = powl(tmp, 2.4L);
+		return powl(tmp, 2.4L);
 	}
-	return round(result * 65535);
 }
 
 static void test_srgb_to_linear()
 {
-	uint16_t input, reference, actual;
+	long double reference, actual, diff;
+	int i;
 
-	for (input=0; input<=255; input++) {
-		reference = srgb_sample_to_linear_reference(input);
-		actual = srgb_sample_to_linear(input);
-		assert(actual == reference);
+	for (i=0; i<=255; i++) {
+		reference = srgb_sample_to_linear_reference(i);
+		actual = s2l_map_f[i];
+		diff = fabsl(actual - reference);
+		assert(diff < 0.0000001L);
 	}
 }
 
 static void test_linear_to_srgb()
 {
-	int reference, actual, num_errors;
-	uint32_t input;
-
-	num_errors = 0;
+	int actual, ref_i, input;
+	long double reference, ref_f, i_f;
 
 	for (input=0; input<65536; input++) {
-		reference = linear_sample_to_srgb_reference(input);
-		actual = linear_sample_to_srgb(input);
-		if (actual != reference) {
-			num_errors++;
-		}
-		assert(abs(actual - reference) <= 1);
+		i_f = input / 65535.0L;
+		reference = linear_sample_to_srgb_reference(i_f);
+		actual = linear_sample_to_srgb(i_f);
+		ref_f = reference * 255.0L;
+		ref_i = lroundl(ref_f);
+		assert(ref_i == actual);
 	}
-	assert(num_errors <= 1449);
 }
 
 static void test_roundtrip()
 {
-	uint16_t input, linear, back_to_srgb;
-
-	back_to_srgb = 0;
-
-	for (input=0; input<=255; input++) {
-		linear = srgb_sample_to_linear(input);
+	int i;
+	float linear, back_to_srgb;
+	for (i=0; i<=255; i++) {
+		linear = s2l_map_f[i];
 		back_to_srgb = linear_sample_to_srgb(linear);
-		assert(back_to_srgb == input);
+		assert(back_to_srgb == i);
 	}
 }
 
@@ -624,16 +484,182 @@ static void test_colorspace_helpers()
 	test_roundtrip();
 }
 
+static void test_xscale_limit(long width_in, long width_out,
+	enum oil_colorspace cs)
+{
+	unsigned char *buf_in;
+	unsigned short *buf_out;
+	size_t len_in, len_out;
+	struct oil_scale os;
+
+	len_in = (size_t)width_in * OIL_CMP(cs) * sizeof(unsigned char);
+	buf_in = malloc(len_in);
+	assert(buf_in);
+
+	len_out = (size_t)width_out * OIL_CMP(cs) * sizeof(unsigned short);
+	buf_out = malloc(len_out);
+	assert(buf_out);
+
+	fill_rand8(buf_in, len_in);
+	oil_scale_init(&os, 1, 1, width_in, width_out, cs);
+	oil_scale_in(&os, buf_in);
+	oil_scale_free(&os);
+
+	free(buf_in);
+	free(buf_out);
+}
+
+static void test_xscale_limits()
+{
+	test_xscale_limit(1000000, 1, OIL_CS_RGBX);
+	test_xscale_limit(1000000, 1, OIL_CS_RGBA);
+	test_xscale_limit(1000000, 1, OIL_CS_CMYK);
+}
+
+static void test_yscale_limit(long height_in, long width,
+	long height_out, enum oil_colorspace cs)
+{
+	long i, k;
+	float *tmp;
+	uint8_t *buf_out;
+	size_t len;
+	struct oil_scale ys;
+	int res;
+
+	len = (size_t)width * OIL_CMP(cs) * sizeof(uint8_t);
+	buf_out = malloc(len);
+	assert(buf_out);
+
+	res = oil_scale_init(&ys, height_in, height_out, width, width, cs);
+	assert(res==0);
+
+	for (i=0; i<height_out; i++) {
+		for (k=oil_scale_slots(&ys); k>0; k--) {
+			tmp = ys.rb + (ys.in_pos % ys.taps) * ys.sl_len;
+			ys.in_pos++;
+			fill_rand(tmp, len);
+		}
+		oil_scale_out(&ys, buf_out);
+	}
+
+	free(buf_out);
+	oil_scale_free(&ys);
+}
+
+static void test_yscale_limits()
+{
+	test_yscale_limit(1000000, 10, 1, OIL_CS_RGBX);
+}
+
+static void test_xscale_down_coeffs(int in_width, int out_width)
+{
+	float *coeff_buf, *cur_coeff, *sample_coeffs[4], *tmp;
+	long double tot;
+	int i, j, k, *border_buf, taps, sample_pos[4];
+
+	taps = calc_taps(in_width, out_width);
+
+	coeff_buf = cur_coeff = malloc(4 * in_width * sizeof(float));
+	border_buf = malloc(out_width * sizeof(int));
+	for (i=0; i<4; i++) {
+		sample_pos[i] = 0;
+		sample_coeffs[i] = malloc(2 * taps * sizeof(float));
+	}
+
+	xscale_calc_coeffs(in_width, out_width, coeff_buf, border_buf);
+
+	for (i=0; i<out_width; i++) {
+		for (j=border_buf[i]; j>0; j--) {
+			for (k=0; k<4; k++) {
+				sample_coeffs[k][sample_pos[k]] = cur_coeff[k];
+				sample_pos[k] += 1;
+			}
+			cur_coeff += 4;
+		}
+
+		tot = 0.0;
+		for (k=0; k<sample_pos[0]; k++) {
+			tot += sample_coeffs[0][k];
+		}
+
+		if (fabsl(1.0F - tot) > 0.00001F) {
+			fprintf(stderr, "[%9Lf] ", tot);
+			fprintf(stderr, "%4d: ", i);
+			for (k=0; k<sample_pos[0]; k++) {
+				fprintf(stderr, "%6.3f, ", sample_coeffs[0][k]);
+			}
+			fprintf(stderr, "\n");
+		}
+
+		tmp = sample_coeffs[0];
+		sample_coeffs[0] = sample_coeffs[1];
+		sample_coeffs[1] = sample_coeffs[2];
+		sample_coeffs[2] = sample_coeffs[3];
+		sample_coeffs[3] = tmp;
+
+		sample_pos[0] = sample_pos[1];
+		sample_pos[1] = sample_pos[2];
+		sample_pos[2] = sample_pos[3];
+		sample_pos[3] = 0;
+	}
+	free(coeff_buf);
+	free(border_buf);
+	for (i=0; i<4; i++) {
+		free(sample_coeffs[i]);
+	}
+}
+
+static void test_xscale_down_borders(int in_width, int out_width)
+{
+	float *coeff_buf;
+	int i, *border_buf, tot;
+
+	tot = 0;
+
+	coeff_buf = malloc(4 * in_width * sizeof(float));
+	border_buf = malloc(out_width * sizeof(int));
+	xscale_calc_coeffs(in_width, out_width, coeff_buf, border_buf);
+
+	for (i=0; i<out_width; i++) {
+		tot += border_buf[i];
+	}
+	assert(tot == in_width);
+
+	free(coeff_buf);
+	free(border_buf);
+}
+
+static void test_xscale_coeffs_dimensions(int in_width, int out_width)
+{
+	test_xscale_down_coeffs(in_width, out_width);
+	test_xscale_down_borders(in_width, out_width);
+}
+
+static void test_xscale_coeffs()
+{
+	test_xscale_coeffs_dimensions(100, 1);
+	test_xscale_coeffs_dimensions(100, 99);
+	test_xscale_coeffs_dimensions(2398423, 23423);
+	test_xscale_coeffs_dimensions(1000000, 303);
+	test_xscale_coeffs_dimensions(100, 70);
+	test_xscale_coeffs_dimensions(1000000, 999999);
+}
+
 int main()
 {
+	int t = 1531289551;
+	//int t = time(NULL);
+	printf("seed: %d\n", t);
+	srand(t);
+	oil_global_init();
 	test_calc_taps();
 	test_split_map_all();
-	test_xscale_all();
-	test_padded_sl_len_offset();
 	test_strip_scale_all();
-	test_sl_rbuf();
-	test_yscaler();
 	test_colorspace_helpers();
+	test_xscale_limits();
+	test_yscale_limits();
+	test_yscale_transparent();
+	test_xscale_coeffs();
 	printf("All tests pass.\n");
 	return 0;
 }

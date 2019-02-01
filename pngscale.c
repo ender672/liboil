@@ -1,8 +1,5 @@
-#include "resample.h"
-#include <stdint.h>
-#include <stdio.h>
+#include "oil_resample.h"
 #include <stdlib.h>
-#include <string.h>
 #include <png.h>
 
 static enum oil_colorspace png_cs_to_oil(png_byte cs)
@@ -25,12 +22,9 @@ static enum oil_colorspace png_cs_to_oil(png_byte cs)
 static void png_interlaced(png_structp rpng, png_infop rinfo, png_structp wpng,
 	png_infop winfo)
 {
-	uint8_t **sl, *outbuf;
-	uint16_t *tmp;
-	uint32_t i, n, in_width, in_height, out_width, out_height;
-	size_t buf_len;
-	struct preprocess_xscaler pxs;
-	struct yscaler ys;
+	unsigned char **sl, *outbuf;
+	int i, j, n, in_width, in_height, out_width, out_height, buf_len, ret;
+	struct oil_scale ys;
 	enum oil_colorspace cs;
 
 	in_width = png_get_image_width(rpng, rinfo);
@@ -39,25 +33,37 @@ static void png_interlaced(png_structp rpng, png_infop rinfo, png_structp wpng,
 	out_height = png_get_image_height(wpng, winfo);
 
 	/* Allocate space for the full input image and fill it. */
-	sl = malloc(in_height * sizeof(uint8_t *));
+	sl = malloc(in_height * sizeof(unsigned char *));
+	if (!sl) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
 	buf_len = png_get_rowbytes(rpng, rinfo);
 	for (i=0; i<in_height; i++) {
 		sl[i] = malloc(buf_len);
+		if (!sl[i]) {
+			fprintf(stderr, "Unable to allocate buffers.\n");
+			exit(1);
+		}
 	}
 	png_read_image(rpng, sl);
 
 	cs = png_cs_to_oil(png_get_color_type(rpng, rinfo));
-	outbuf = malloc(out_width * CS_TO_CMP(cs));
+	outbuf = malloc(out_width * OIL_CMP(cs));
 
-	preprocess_xscaler_init(&pxs, in_width, out_width, cs);
-	yscaler_init(&ys, in_height, out_height, pxs.xs.width_out, cs);
+	ret = oil_scale_init(&ys, in_height, out_height, in_width, out_width,
+		cs);
+	if (ret!=0) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
 
 	n = 0;
 	for(i=0; i<out_height; i++) {
-		while ((tmp = yscaler_next(&ys))) {
-			preprocess_xscaler_scale(&pxs, sl[n++], tmp);
+		for (j=oil_scale_slots(&ys); j>0; j--) {
+			oil_scale_in(&ys, sl[n++]);
 		}
-		yscaler_scale(&ys, outbuf, i);
+		oil_scale_out(&ys, outbuf);
 		png_write_row(wpng, outbuf);
 	}
 
@@ -66,18 +72,15 @@ static void png_interlaced(png_structp rpng, png_infop rinfo, png_structp wpng,
 	}
 	free(sl);
 	free(outbuf);
-	yscaler_free(&ys);
-	preprocess_xscaler_free(&pxs);
+	oil_scale_free(&ys);
 }
 
 static void png_noninterlaced(png_structp rpng, png_infop rinfo,
 	png_structp wpng, png_infop winfo)
 {
-	uint32_t i, in_width, in_height, out_width, out_height;
-	uint16_t *tmp;
-	uint8_t *inbuf, *outbuf;
-	struct preprocess_xscaler pxs;
-	struct yscaler ys;
+	int i, j, in_width, in_height, out_width, out_height, ret;
+	unsigned char *inbuf, *outbuf;
+	struct oil_scale ys;
 	enum oil_colorspace cs;
 
 	in_width = png_get_image_width(rpng, rinfo);
@@ -87,28 +90,38 @@ static void png_noninterlaced(png_structp rpng, png_infop rinfo,
 
 	cs = png_cs_to_oil(png_get_color_type(rpng, rinfo));
 
-	inbuf = malloc(in_width * CS_TO_CMP(cs));
-	outbuf = malloc(out_width * CS_TO_CMP(cs));
+	inbuf = malloc(in_width * OIL_CMP(cs));
+	if (!inbuf) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
+	outbuf = malloc(out_width * OIL_CMP(cs));
+	if (!outbuf) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
 
-	preprocess_xscaler_init(&pxs, in_width, out_width, cs);
-	yscaler_init(&ys, in_height, out_height, pxs.xs.width_out, cs);
-
+	ret = oil_scale_init(&ys, in_height, out_height, in_width, out_width,
+		cs);
+	if (ret!=0) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
 	for(i=0; i<out_height; i++) {
-		while ((tmp = yscaler_next(&ys))) {
+		for (j=oil_scale_slots(&ys); j>0; j--) {
 			png_read_row(rpng, inbuf, NULL);
-			preprocess_xscaler_scale(&pxs, inbuf, tmp);
+			oil_scale_in(&ys, inbuf);
 		}
-		yscaler_scale(&ys, outbuf, i);
+		oil_scale_out(&ys, outbuf);
 		png_write_row(wpng, outbuf);
 	}
 
 	free(outbuf);
 	free(inbuf);
-	yscaler_free(&ys);
-	preprocess_xscaler_free(&pxs);
+	oil_scale_free(&ys);
 }
 
-static void png(FILE *input, FILE *output, uint32_t width, uint32_t height)
+static void png(FILE *input, FILE *output, int width, int height)
 {
 	png_structp rpng, wpng;
 	png_infop rinfo, winfo;
@@ -136,7 +149,7 @@ static void png(FILE *input, FILE *output, uint32_t width, uint32_t height)
 
 	in_width = png_get_image_width(rpng, rinfo);
 	in_height = png_get_image_height(rpng, rinfo);
-	fix_ratio(in_width, in_height, &width, &height);
+	oil_fix_ratio(in_width, in_height, &width, &height);
 
 	wpng = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	winfo = png_create_info_struct(wpng);
@@ -163,7 +176,7 @@ static void png(FILE *input, FILE *output, uint32_t width, uint32_t height)
 
 int main(int argc, char *argv[])
 {
-	uint32_t width, height;
+	int width, height;
 	char *end;
 
 	if (argc != 3) {

@@ -9,7 +9,7 @@ Purpose
 -------
 
 liboil aims to provide excellent general-purpose image thumbnailing and is
-optimize for low memory and CPU use.
+optimized for low memory and CPU use.
 
 liboil is not very configurable -- it currently only has one interpolator
 (catmull-rom). It is not suited for scenarios where you want to customize your
@@ -19,120 +19,58 @@ An example use-case is a web server that thumbnails user-uploaded images.
 
 Features
 --------
-  * The interpolator is scaled when shrinking images, reducing aliasing effects.
-  * liboil is sRGB-aware and adjusts gamma before manipulating images.
-  * Interpolation is internally performed in 16-bit linear RGB space.
+  * Antialiasing - the interpolator is scaled when shrinking images.
+  * Color space aware - liboil converts images to linear RGB for processing.
+  * Pre-multiplied alpha - avoids artifacts when resizing with transparency.
 
 jpgscale & pngscale
 -------------------
 
 The liboil repository includes command-line tools for resizing JPEG and PNG
-images.
+images. These resizers read the original image from stdin and write the
+resized image to stdout.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the
 aspect ratio:
   jpgscale 400 800 < in.jpg > out.jpg
 
-Usage as a C Library
-------------------
+Example usage as a C library
+----------------------------
 
-resample.h provides separate methods for x-scaling and y-scaling. x-scaling is
-relatively straightforward since it translates one input scanline to one output
-scanline:
+#include "oil_resample.h"
 
-    void xscale(*in, in_width, *out, out_width, cmp);
+unsigned char *inbuf, *outbuf;
+int i, j, ret;
+struct oil_scale os;
 
-y-scaling works by translating multiple input scanlines to one output scanline.
-The number of input scanlines depends on the input and output sizes.
+oil_fix_ratio(in_width, in_height, &out_width, &out_height);
+inbuf = malloc(in_width * 3);
+outbuf = malloc(out_width * 3);
 
-The high-level yscaler API manages input scanlines for you:
+ret = oil_scale_init(&os, in_height, out_height, in_width, out_width, OIL_CS_RGB);
+if (ret!=0) {
+    fprintf(stderr, "Unable to allocate buffers.");
+    exit(1);
+}
 
-    struct yscaler ys;
-    uint32_t i, height_in, height_out;
-    size_t scanline_len;
-    uint8_t *tmp, *scaled_scanline;
-
-    // set height_in, height_out, and scanline_len (in bytes)
-    scaled_scanline = malloc(scanline_len);
-    yscaler_init(&ys, height_in, height_out, scanline_len);
-    for (i=0; i<height_out; i++) {
-        while ((tmp = yscaler_next(&ys))) {
-          // populate tmp buffer with the next input scanline
-        }
-        yscaler_scale(&ys, scaled_scanline, i);
-        // handle output in scaled_scanline
+for(i=0; i<out_height; i++) {
+    for (j=oil_scale_slots(&os); j>0; j--) {
+        fill_with_next_scanline_from_source_image(inbuf);
+        oil_scale_in(&os, inbuf);
     }
-    yscaler_free(&ys);
-    free(scaled_scanline);
+    oil_scale_out(&os, outbuf);
+    write_to_next_scanline_of_destination_image(outbuf);
+}
 
-Beneath the hood, yscaler uses sl_rbuf, a circular buffer for managing
-scanlines. For fine-grained control, you can do the same:
+Reference Documentation
+-----------------------
 
-    struct sl_rbuf rb;
-    uint32_t i, height_in, height_out, target, taps;
-    size_t scanline_len;
-    float ty;
-    uint8_t *tmp, *scaled_scanline, **virt;
-
-    // set height_in, height_out, width (in samples), and scanline_len.
-    scaled_scanline = malloc(scanline_len);
-
-    // calculates how many input scanlines you will need to generate an output
-    // scanline
-    taps = calc_taps(height_in, height_out);
-
-    sl_rbuf_init(&rb, taps, scanline_len);
-    for (i=0; i<height_out; i++) {
-        target = split_map(height_in, height_out, i, &ty) + taps / 2;
-        while (rb.count <= target && rb.count < height_in) {
-            tmp = sl_rbuf_next(&rb);
-            // populate tmp buffer with the next input scanline
-        }
-        virt = sl_rbuf_virt(&rb, target);
-        strip_scale((void **)virt, taps, width, scaled_scanline, ty, cmp);
-        // handle output in scaled_scanline
-    }
-    sl_rbuf_free(&rb);
-    free(scaled_scanline);
-
-It is also possible to manage scanlines yourself, performing y-scaling using
-only the low-level primitives calc_taps(), split_map(), and strip_scale():
-
-    uint32_t i, j, height_in, height_out, taps, rb_count, safe, target;
-    size_t scanline_len;
-    float ty;
-    uint8_t *rbuf, *tmp, *scaled_scanline, **virt;
-
-    // set height_in, height_out, width (in samples), and scanline_len.
-    scaled_scanline = malloc(scanline_len);
-    taps = calc_taps(height_in, height_out);
-
-    rbuf = malloc(scanline_len * taps);
-    rb_count = 0;
-    virt = malloc(sizeof(uint8_t *) * taps);
-
-    for (i=0; i<height_out; i++) {
-        target = split_map(height_in, height_out, i, &ty) + taps / 2;
-        while (rb_count <= target && rb_count < height_in) {
-            tmp = rbuf + (rb_count++ % taps) * scanline_len;
-            // populate tmp buffer with the next input scanline
-        }
-        for (j=0; j<taps; j++) {
-            safe = target < j ? 0 : target - j;
-            safe = safe > height_in ? height_in : safe;
-            virt[taps - j - 1] = rbuf + (safe % taps) * scanline_len;
-        }
-        strip_scale(virt, taps, scanline_len, scaled_scanline, ty);
-        // handle output in scaled_scanline
-    }
-    free(virt);
-    free(rbuf);
-    free(scaled_scanline);
+Refer to oil_resample.h for reference documentation.
 
 Testing
 -------
 
-Oil includes a test binary that compares the output of the resizer to a
+liboil includes a test binary that compares the output of the resizer to a
 reference implementation. You can build it with:
 
     $ make test
