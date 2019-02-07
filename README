@@ -32,7 +32,8 @@ resized image to stdout.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the
 aspect ratio:
-  jpgscale 400 800 < in.jpg > out.jpg
+
+    $ LD_LIBRARY_PATH=. ./oilscalejpg 400 800 < in.jpg > out.jpg
 
 Example usage as a C library
 ----------------------------
@@ -82,3 +83,13 @@ And run it with:
 It is recommended to run it with valgrind as well:
 
     $ valgrind ./test
+
+Example
+-------
+
+    $ LD_LIBRARY_PATH=. ./oilscalepng 2048 2048 < lena.png > lena.x4.png
+    $ LD_LIBRARY_PATH=. ./oilscalejpg 2048 2048 < lena.jpg > lena.x4.jpg
+
+ABOUT
+=====
+https://github.com/ender672/liboil

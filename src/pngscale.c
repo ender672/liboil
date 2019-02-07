@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
 	char *end;
 
 	if (argc != 3) {
-		fprintf(stderr, "Usage: %s WIDTH HEIGHT\n", argv[0]);
+		fprintf(stderr, "Usage: %s WIDTH HEIGHT < in.png > scale.png\n", argv[0]);
 		return 1;
 	}
 

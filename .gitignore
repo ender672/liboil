@@ -1,9 +1,10 @@
 *.o
-test
-pngscale
-jpgscale
+oiltest
+oilscalejpg
+oilscalepng
+liboilresample.*
 *.jpg
 
 # OSX
-test.dSYM
+oiltest.dSYM
 .DS_Store
