@@ -78,17 +78,21 @@ reference implementation. You can build it with:
 
 And run it with:
 
-    $ ./test
+    $ ./oiltest
 
 It is recommended to run it with valgrind as well:
 
-    $ valgrind ./test
+    $ valgrind ./oiltest
 
 Example
 -------
 
+![Example image](images/lena.jpg)
+
     $ LD_LIBRARY_PATH=. ./oilscalepng 2048 2048 < lena.png > lena.x4.png
     $ LD_LIBRARY_PATH=. ./oilscalejpg 2048 2048 < lena.jpg > lena.x4.jpg
+
+![Example scale image](images/lena.x4.jpg)
 
 ABOUT
 =====

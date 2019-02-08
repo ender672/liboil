@@ -3,7 +3,6 @@ oiltest
 oilscalejpg
 oilscalepng
 liboilresample.*
-*.jpg
 
 # OSX
 oiltest.dSYM
