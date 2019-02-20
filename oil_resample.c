@@ -351,6 +351,8 @@ static void strip_scale(float **in, int strip_height, int len,
 	case OIL_CS_CMYK:
 		strip_scale_cmyk(in, strip_height, len, out, coeffs);
 		break;
+	case OIL_CS_UNKNOWN:
+		break;
 	}
 }
 
@@ -631,6 +633,8 @@ static void oil_xscale_down(unsigned char *in, int width_in, float *out,
 	case OIL_CS_GA:
 		xscale_down_ga(in, width_in, out, width_out, coeff_buf, border_buf);
 		break;
+	case OIL_CS_UNKNOWN:
+		break;
 	}
 }
 
@@ -809,6 +813,8 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 		break;
 	case OIL_CS_GA:
 		xscale_up_ga(in, width_in, out, width_out);
+		break;
+	case OIL_CS_UNKNOWN:
 		break;
 	}
 }

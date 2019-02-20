@@ -214,11 +214,7 @@ static void ref_set_sample(long taps, long double *coeffs, long double *in,
 	case OIL_CS_RGBX:
 		ref_sample_rgbx(taps, coeffs, in, out);
 		break;
-	case OIL_CS_G:
-	case OIL_CS_GA:
-	case OIL_CS_RGB:
-	case OIL_CS_RGBA:
-	case OIL_CS_CMYK:
+	default:
 		ref_sample_generic(taps, coeffs, in, out, OIL_CMP(cs));
 		break;
 	}
@@ -299,6 +295,8 @@ static void postprocess(long double *in, long double *out, enum oil_colorspace c
 		out[1] = clamp_f(in[1]);
 		out[2] = clamp_f(in[2]);
 		out[3] = clamp_f(in[3]);
+		break;
+	case OIL_CS_UNKNOWN:
 		break;
 	}
 }

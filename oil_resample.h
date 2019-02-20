@@ -26,6 +26,9 @@
  * Color spaces currently supported by oil.
  */
 enum oil_colorspace {
+	// error
+	OIL_CS_UNKNOWN = 0,
+
 	// greyscale - no color space conversions
 	OIL_CS_G       = 0x0001,
 
@@ -48,7 +51,7 @@ enum oil_colorspace {
 /**
  * Macro to get the number of components from an oil color space.
  */
-#define OIL_CMP(x) (x&0xFF)
+#define OIL_CMP(x) ((x)&0xFF)
 
 /**
  * Struct to hold state for scaling.
@@ -81,8 +84,7 @@ struct oil_scale {
 void oil_global_init();
 
 /**
- * Initialize a yscaler struct. Calculates how large the scanline ring buffer
- * will need to be and allocates it.
+ * Initialize an oil scaler struct.
  * @os: Pointer to the scaler struct to be initialized.
  * @in_height: Height, in pixels, of the input image.
  * @out_height: Height, in pixels, of the output image.
