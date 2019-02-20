@@ -122,15 +122,18 @@ static void calc_coeffs(float *coeffs, float tx, int taps)
 
 	tap_mult = (float)taps / TAPS;
 	tx = 1 - tx - taps / 2;
-	fudge = 1.0f;
+	fudge = 0.0f;
 
 	for (i=0; i<taps; i++) {
 		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
-		fudge -= tmp;
+		fudge += tmp;
 		coeffs[i] = tmp;
 		tx += 1;
 	}
-	coeffs[taps / 2] += fudge;
+	fudge = 1 / fudge;
+	for (i=0; i<taps; i++) {
+		coeffs[i] *= fudge;
+	}
 }
 
 /**

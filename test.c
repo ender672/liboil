@@ -54,16 +54,21 @@ static long double ref_catrom(long double x)
 static void ref_calc_coeffs(long double *coeffs, long double offset, long taps)
 {
 	long i;
-	long double tap_offset, tap_mult, fudge;
+	long double tap_offset, tap_mult, fudge, total_check;
 
 	tap_mult = (long double)taps / 4;
-	fudge = 1.0;
+	fudge = 0.0;
 	for (i=0; i<taps; i++) {
 		tap_offset = 1 - offset - taps / 2 + i;
 		coeffs[i] = ref_catrom(fabsl(tap_offset) / tap_mult) / tap_mult;
-		fudge -= coeffs[i];
+		fudge += coeffs[i];
 	}
-	coeffs[taps / 2] += fudge;
+	total_check = 0.0;
+	for (i=0; i<taps; i++) {
+		coeffs[i] /= fudge;
+		total_check += coeffs[i];
+	}
+	assert(abs(total_check - 1.0) < 0.0000000001L);
 }
 
 static void fill_rand(float *buf, long len)
