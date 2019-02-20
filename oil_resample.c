@@ -604,7 +604,7 @@ static void xscale_down_ga(unsigned char *in, int in_width, float *out,
 			alpha = in[1] / 255.0f;
 			add_sample_to_sum_f(in[0] * alpha, coeff_buf, sum[0]);
 			add_sample_to_sum_f(alpha, coeff_buf, sum[1]);
-			in += 4;
+			in += 2;
 			coeff_buf += 4;
 		}
 		dump_out(out, sum, 2);
