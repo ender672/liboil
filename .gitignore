@@ -1,6 +1,7 @@
 *.o
 test
 imgscale
+oilview
 *.jpg
 *.png
 
