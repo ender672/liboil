@@ -1,8 +1,8 @@
 *.o
 test
-pngscale
-jpgscale
+imgscale
 *.jpg
+*.png
 
 # OSX
 test.dSYM
