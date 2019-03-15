@@ -112,7 +112,7 @@ void oil_libpng_free(struct oil_libpng *ol)
 	oil_scale_free(&ol->os);
 }
 
-static void read_scanline_interlaced(struct oil_libpng *ol, unsigned char *outbuf)
+static void read_scanline_interlaced(struct oil_libpng *ol)
 {
 	int i;
 
@@ -121,7 +121,7 @@ static void read_scanline_interlaced(struct oil_libpng *ol, unsigned char *outbu
 	}
 }
 
-static void read_scanline(struct oil_libpng *ol, unsigned char *outbuf)
+static void read_scanline(struct oil_libpng *ol)
 {
 	int i;
 
@@ -135,10 +135,10 @@ void oil_libpng_read_scanline(struct oil_libpng *ol, unsigned char *outbuf)
 {
 	switch (png_get_interlace_type(ol->rpng, ol->rinfo)) {
 	case PNG_INTERLACE_NONE:
-		read_scanline(ol, outbuf);
+		read_scanline(ol);
 		break;
 	case PNG_INTERLACE_ADAM7:
-		read_scanline_interlaced(ol, outbuf);
+		read_scanline_interlaced(ol);
 		break;
 	}
 	oil_scale_out(&ol->os, outbuf);
