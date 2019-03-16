@@ -145,7 +145,7 @@ static float l2s_rights[256];
 /**
  * Populates l2s_rights.
  */
-static void build_l2s_rights()
+static void build_l2s_rights(void)
 {
 	int i;
 	double srgb_f, tmp, val;
@@ -370,7 +370,7 @@ static float s2l_map_f[256];
 /**
  * Populates s2l_map_f.
  */
-static void build_s2l()
+static void build_s2l(void)
 {
 	int input;
 	double in_f, tmp, val;
@@ -491,7 +491,7 @@ static void dump_out(float *out, float sum[][4], int n)
 	}
 }
 
-static void xscale_down_rgbx(unsigned char *in, int in_width, float *out,
+static void xscale_down_rgbx(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j, k;
@@ -512,7 +512,7 @@ static void xscale_down_rgbx(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void xscale_down_rgb(unsigned char *in, int in_width, float *out,
+static void xscale_down_rgb(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j, k;
@@ -532,7 +532,7 @@ static void xscale_down_rgb(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void xscale_down_g(unsigned char *in, int in_width, float *out,
+static void xscale_down_g(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -551,7 +551,7 @@ static void xscale_down_g(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void xscale_down_cmyk(unsigned char *in, int in_width, float *out,
+static void xscale_down_cmyk(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j, k;
@@ -571,7 +571,7 @@ static void xscale_down_cmyk(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void xscale_down_rgba(unsigned char *in, int in_width, float *out,
+static void xscale_down_rgba(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j, k;
@@ -593,7 +593,7 @@ static void xscale_down_rgba(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void xscale_down_ga(unsigned char *in, int in_width, float *out,
+static void xscale_down_ga(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -613,28 +613,28 @@ static void xscale_down_ga(unsigned char *in, int in_width, float *out,
 	}
 }
 
-static void oil_xscale_down(unsigned char *in, int width_in, float *out,
+static void oil_xscale_down(unsigned char *in, float *out,
 	int width_out, enum oil_colorspace cs_in, float *coeff_buf,
 	int *border_buf)
 {
 	switch(cs_in) {
 	case OIL_CS_RGBX:
-		xscale_down_rgbx(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_rgbx(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_RGB:
-		xscale_down_rgb(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_rgb(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_G:
-		xscale_down_g(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_g(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_CMYK:
-		xscale_down_cmyk(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_cmyk(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_RGBA:
-		xscale_down_rgba(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_rgba(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_GA:
-		xscale_down_ga(in, width_in, out, width_out, coeff_buf, border_buf);
+		xscale_down_ga(in, out, width_out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -960,8 +960,8 @@ void oil_scale_in(struct oil_scale *os, unsigned char *in)
 	tmp = os->rb + (os->in_pos % os->taps) * os->sl_len;
 	os->in_pos++;
 	if (os->coeffs_x) {
-		oil_xscale_down(in, os->in_width, tmp, os->out_width, os->cs,
-			os->coeffs_x, os->borders);
+		oil_xscale_down(in, tmp, os->out_width, os->cs, os->coeffs_x,
+			os->borders);
 	} else {
 		oil_xscale_up(in, os->in_width, tmp, os->out_width, os->cs);
 	}

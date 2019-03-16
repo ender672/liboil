@@ -81,7 +81,7 @@ struct oil_scale {
  * so explicityly calling oil_global_init() is only needed if there are
  * concurrency concerns.
  */
-void oil_global_init();
+void oil_global_init(void);
 
 /**
  * Initialize an oil scaler struct.
