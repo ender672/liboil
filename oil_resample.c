@@ -498,7 +498,7 @@ static void xscale_down_rgbx(unsigned char *in, float *out,
 	float sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map_f[in[k]], coeff_buf, sum[k]);
 			}
@@ -508,7 +508,6 @@ static void xscale_down_rgbx(unsigned char *in, float *out,
 		dump_out(out, sum, 3);
 		out[3] = 0;
 		out += 4;
-		border_buf++;
 	}
 }
 
@@ -519,7 +518,7 @@ static void xscale_down_rgb(unsigned char *in, float *out,
 	float sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map_f[in[k]], coeff_buf, sum[k]);
 			}
@@ -528,7 +527,6 @@ static void xscale_down_rgb(unsigned char *in, float *out,
 		}
 		dump_out(out, sum, 3);
 		out += 3;
-		border_buf++;
 	}
 }
 
@@ -539,7 +537,7 @@ static void xscale_down_g(unsigned char *in, float *out,
 	float sum[4] = { 0.0f };
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			add_sample_to_sum_f(in[0] / 255.0f, coeff_buf, sum);
 			in += 1;
 			coeff_buf += 4;
@@ -547,7 +545,6 @@ static void xscale_down_g(unsigned char *in, float *out,
 		out[0] = sum[0];
 		shift_left_f(sum);
 		out += 1;
-		border_buf++;
 	}
 }
 
@@ -558,7 +555,7 @@ static void xscale_down_cmyk(unsigned char *in, float *out,
 	float sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			for (k=0; k<4; k++) {
 				add_sample_to_sum_f(in[k] / 255.0f, coeff_buf, sum[k]);
 			}
@@ -567,7 +564,6 @@ static void xscale_down_cmyk(unsigned char *in, float *out,
 		}
 		dump_out(out, sum, 4);
 		out += 4;
-		border_buf++;
 	}
 }
 
@@ -578,7 +574,7 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 	float alpha, sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			alpha = in[3] / 255.0f;
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map_f[in[k]] * alpha, coeff_buf, sum[k]);
@@ -589,7 +585,6 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 		}
 		dump_out(out, sum, 4);
 		out += 4;
-		border_buf++;
 	}
 }
 
@@ -600,7 +595,7 @@ static void xscale_down_ga(unsigned char *in, float *out,
 	float alpha, sum[2][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[0]; j>0; j--) {
+		for (j=border_buf[i]; j>0; j--) {
 			alpha = in[1] / 255.0f;
 			add_sample_to_sum_f(in[0] * alpha, coeff_buf, sum[0]);
 			add_sample_to_sum_f(alpha, coeff_buf, sum[1]);
@@ -609,7 +604,6 @@ static void xscale_down_ga(unsigned char *in, float *out,
 		}
 		dump_out(out, sum, 2);
 		out += 2;
-		border_buf++;
 	}
 }
 
