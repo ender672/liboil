@@ -65,15 +65,15 @@ struct oil_scale {
 	enum oil_colorspace cs; // color space of input & output.
 	int in_pos; // current row of input image.
 	int out_pos; // current row of output image.
-	int taps; // number of taps required to perform scaling.
-	int target; // where the ring buffer should be on next scaling.
+
 	int sl_len; // length in bytes of a row.
-	float ty; // sub-pixel offset for next scaling.
 	float *coeffs_y; // buffer for holding temporary y-coefficients.
 	float *coeffs_x; // buffer for holding precalculated coefficients.
-	int *borders; // holds precalculated coefficient rotation points.
+	int *borders_x; // holds precalculated coefficient rotation points.
+	int *borders_y; // coefficient rotation points for y-scaling.
+	float *sums_y; // buffer of intermediate sums for y-scaling.
 	float *rb; // ring buffer holding scanlines.
-	float **virt; // space to provide scanline pointers for scaling.
+	int rows_in_rb; // number of rows currently in the ring buffer.
 };
 
 /**
