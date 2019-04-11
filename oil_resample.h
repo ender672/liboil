@@ -39,13 +39,13 @@ enum oil_colorspace {
 	OIL_CS_RGB     = 0x0003,
 
 	// sRGB w/ padding - same as OIL_CS_RGB, but padded with an extra byte
-	OIL_CS_RGBX    = 0x0004, // sRGB w/ padding
+	OIL_CS_RGBX    = 0x0004,
 
 	// sRGB w/ alpha - sRGB to linear conversion and premultiplied alpha
-	OIL_CS_RGBA    = 0x0104, // sRGB w/ alpha
+	OIL_CS_RGBA    = 0x0104,
 
 	// CMYK - no color space conversions
-	OIL_CS_CMYK    = 0x0204, // four color CMYK
+	OIL_CS_CMYK    = 0x0204,
 };
 
 /**
@@ -54,7 +54,8 @@ enum oil_colorspace {
 #define OIL_CMP(x) ((x)&0xFF)
 
 /**
- * Struct to hold state for scaling.
+ * Struct to hold state for scaling. Changing these will produce unpredictable
+ * results.
  */
 struct oil_scale {
 	int in_height; // input image height.
@@ -106,13 +107,14 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 void oil_scale_free(struct oil_scale *os);
 
 /**
- * Get a pointer to the next scanline to be filled in the ring buffer.
- * @ys: Pointer to the yscaler struct to advance.
+ * Return the number of input scanlines needed before the next output scanline
+ * can be produced.
+ * @os: Pointer to the oil scaler struct.
  *
  * Returns 0 if no more input lines are needed to produce the next output line.
  * Otherwise, returns the number of input lines that are needed.
  */
-int oil_scale_slots(struct oil_scale *ys);
+int oil_scale_slots(struct oil_scale *os);
 
 /**
  * Ingest & buffer an input scanline. Input is unsigned chars.
