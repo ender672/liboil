@@ -115,23 +115,23 @@ static float catrom(float x)
 /**
  * Given an offset tx, calculate taps coefficients.
  */
-static void calc_coeffs(float *coeffs, float tx, int taps)
+static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 {
 	int i;
 	float tmp, tap_mult, fudge;
 
 	tap_mult = (float)taps / TAPS;
-	tx = 1 - tx - taps / 2;
+	tx = 1 - tx - taps / 2 + ltrim;
 	fudge = 0.0f;
 
-	for (i=0; i<taps; i++) {
+	for (i=ltrim; i<taps-rtrim; i++) {
 		tmp = catrom(fabsf(tx) / tap_mult) / tap_mult;
 		fudge += tmp;
 		coeffs[i] = tmp;
 		tx += 1;
 	}
 	fudge = 1 / fudge;
-	for (i=0; i<taps; i++) {
+	for (i=ltrim; i<taps-rtrim; i++) {
 		coeffs[i] *= fudge;
 	}
 }
@@ -333,7 +333,7 @@ static void strip_scale_cmyk(float **in, int strip_height, int len,
 static void strip_scale(float **in, int strip_height, int len,
 	unsigned char *out, float *coeffs, float ty, enum oil_colorspace cs)
 {
-	calc_coeffs(coeffs, ty, strip_height);
+	calc_coeffs(coeffs, ty, strip_height, 0, 0);
 
 	switch(cs) {
 	case OIL_CS_G:
@@ -399,58 +399,49 @@ static void build_s2l(void)
  * samples to process before the next output sample is finished.
  */
 static void xscale_calc_coeffs(int in_width, int out_width, float *coeff_buf,
-	int *border_buf)
+	int *border_buf, float *tmp_coeffs)
 {
-	struct {
-		float tx;
-		float fudge;
-		float *center;
-	} out_s[4];
-	int i, j, out_pos, border, taps;
-	float tap_mult_f, tx;
+	int smp_i, i, j, taps, offset, pos, ltrim, rtrim, smp_end, smp_start,
+		ends[4];
+	float tx;
 
-	out_pos = 0;
-	border = 0;
 	taps = calc_taps(in_width, out_width);
-	tap_mult_f = (float)TAPS / taps;
-
 	for (i=0; i<4; i++) {
-		out_s[i].tx = -1 * map(in_width, out_width, i) * tap_mult_f;
-		out_s[i].fudge = 1.0f;
+		ends[i] = -1;
 	}
 
-	for (i=0; i<in_width; i++) {
-		for (j=0; j<4; j++) {
-			tx = fabsf(out_s[j].tx);
-			coeff_buf[j] = catrom(tx) * tap_mult_f;
-			out_s[j].fudge -= coeff_buf[j];
-			if (tx < tap_mult_f) {
-				out_s[j].center = coeff_buf + j;
+	for (i=0; i<out_width; i++) {
+		smp_i = split_map(in_width, out_width, i, &tx);
+
+		smp_start = smp_i - (taps/2 - 1);
+		smp_end = smp_i + taps/2;
+		if (smp_end >= in_width) {
+			smp_end = in_width - 1;
+		}
+		ends[i%4] = smp_end;
+		border_buf[i] = smp_end - ends[(i+3)%4];
+
+		ltrim = 0;
+		if (smp_start < 0) {
+			ltrim = -1 * smp_start;
+		}
+		rtrim = smp_start + (taps - 1) - smp_end;
+		calc_coeffs(tmp_coeffs, tx, taps, ltrim, rtrim);
+
+		for (j=ltrim; j<taps - rtrim; j++) {
+			pos = smp_start + j;
+
+			offset = 3;
+			if (pos > ends[(i+3)%4]) {
+				offset = 0;
+			} else if (pos > ends[(i+2)%4]) {
+				offset = 1;
+			} else if (pos > ends[(i+1)%4]) {
+				offset = 2;
 			}
-			out_s[j].tx += tap_mult_f;
+
+			coeff_buf[pos * 4 + offset] = tmp_coeffs[j];
 		}
-		border++;
-		coeff_buf += 4;
-		if (out_s[0].tx >= 2.0f) {
-			out_s[0].center[0] += out_s[0].fudge;
-
-			out_s[0] = out_s[1];
-			out_s[1] = out_s[2];
-			out_s[2] = out_s[3];
-
-			out_s[3].tx = (i + 1 - map(in_width, out_width, out_pos + 4)) * tap_mult_f;
-			out_s[3].fudge = 1.0f;
-
-			border_buf[out_pos] = border;
-			border = 0;
-			out_pos++;
-		}
-	}
-
-	for (i=0; i + out_pos < out_width; i++) {
-		out_s[i].center[0] += out_s[i].fudge;
-		border_buf[i + out_pos] = border;
-		border = 0;
 	}
 }
 
@@ -655,7 +646,7 @@ static void xscale_up_rgbx(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum[0] = sum[1] = sum[2] = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1) * 4;
@@ -680,7 +671,7 @@ static void xscale_up_rgb(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum[0] = sum[1] = sum[2] = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1) * 3;
@@ -704,7 +695,7 @@ static void xscale_up_cmyk(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum[0] = sum[1] = sum[2] = sum[3] = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1) * 4;
@@ -728,7 +719,7 @@ static void xscale_up_rgba(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum[0] = sum[1] = sum[2] = sum[3] = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1) * 4;
@@ -754,7 +745,7 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum[0] = sum[1] = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1) * 2;
@@ -778,7 +769,7 @@ static void xscale_up_g(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_out; i++) {
 		smp_i = split_map(width_in, width_out, i, &tx) - 1;
-		calc_coeffs(coeffs, tx, 4);
+		calc_coeffs(coeffs, tx, 4, 0, 0);
 		sum = 0.0f;
 		for (j=0; j<4; j++) {
 			in_pos = in + dim_safe(smp_i + j, width_in - 1);
@@ -857,6 +848,8 @@ void oil_global_init()
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {
+	float *tmp_coeffs;
+
 	if (!os || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
 		in_height < 1 || out_height < 1 ||
 		in_width > MAX_DIMENSION || out_width > MAX_DIMENSION ||
@@ -896,8 +889,11 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 			oil_scale_free(os);
 			return -2;
 		}
+
+		tmp_coeffs = malloc(sizeof(float) * os->taps);
 		xscale_calc_coeffs(in_width, out_width, os->coeffs_x,
-			os->borders);
+			os->borders, tmp_coeffs);
+		free(tmp_coeffs);
 	}
 
 	os->rb = malloc((long)os->sl_len * os->taps * sizeof(float));
