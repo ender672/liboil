@@ -8,4 +8,4 @@ imgscale: oil_resample.o oil_libjpeg.o oil_libpng.o imgscale.c
 oilview: oil_resample.o oil_libjpeg.o oil_libpng.o oilview.c
 	$(CC) $(CFLAGS) `pkg-config --cflags gtk+-3.0` oil_resample.o oil_libjpeg.o oil_libpng.o oilview.c -o $@ $(LDFLAGS) `pkg-config --libs gtk+-3.0` -ljpeg -lpng -lm -lX11
 clean:
-	rm -rf test test.dSYM oil_resample.o imgscale oilview
+	rm -rf test test.dSYM oil_resample.o oil_libpng.o oil_libjpeg.o imgscale oilview
