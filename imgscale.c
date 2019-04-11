@@ -112,6 +112,9 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out)
 	ret = oil_libjpeg_init(&ol, &dinfo, width_out, height_out);
 	if (ret!=0) {
 		fprintf(stderr, "Unable to initialize scaler.");
+		jpeg_destroy_decompress(&dinfo);
+		fclose(input);
+		fclose(output);
 		exit(1);
 	}
 
