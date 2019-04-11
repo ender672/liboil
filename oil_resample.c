@@ -51,11 +51,20 @@ static float clampf(float x) {
 }
 
 /**
+ * Convert a float to an int. When compiling on x86 without march=native, this
+ * performs much better than roundf().
+ */
+static int f2i(float x)
+{
+	return x + 0.5f;
+}
+
+/**
  * Convert a float to 8-bit integer.
  */
 static int clamp8(float x)
 {
-	return round(clampf(x) * 255.0f);
+	return f2i(clampf(x) * 255.0f);
 }
 
 /**
@@ -300,7 +309,7 @@ static void yscale_down_ga(float *in, int strip_height, int len,
 		}
 		out[0] = clamp8(sums[0]);
 		shift_left_f(sums);
-		out[1] = round(alpha * 255.0f);
+		out[1] = f2i(alpha * 255.0f);
 		shift_left_f(sums + 4);
 		sums += 8;
 		out += 2;
@@ -421,7 +430,7 @@ static void yscale_up_ga(float **in, int len, float *coeffs,
 			sums[0] /= alpha;
 		}
 		out[i] = clamp8(sums[0]);
-		out[i + 1] = round(alpha * 255.0f);
+		out[i + 1] = f2i(alpha * 255.0f);
 	}
 }
 
@@ -478,7 +487,7 @@ static void yscale_up_rgba(float **in, int len, float *coeffs,
 			}
 			out[i + j] = linear_sample_to_srgb(sums[j]);
 		}
-		out[i + 3] = round(alpha * 255.0f);
+		out[i + 3] = f2i(alpha * 255.0f);
 	}
 }
 
