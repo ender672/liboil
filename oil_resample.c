@@ -26,9 +26,9 @@
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
- * reach the limits of single-precision floats, and the xscaler will get stuck
- * in an infinite loop. Limit input dimensions to one million by one million
- * pixels to avoid this issue as well as overflow issues with 32-bit ints.
+ * reach the limits of single-precision floats. Limit input dimensions to one
+ * million by one million pixels to avoid this issue as well as overflow issues
+ * with 32-bit ints.
  */
 #define MAX_DIMENSION 1000000
 
