@@ -14,7 +14,6 @@ struct img_decode_context {
 	char *path;
 	int width;
 	int height;
-	enum oil_colorspace cs;
 	pthread_t worker_thread;
 	sem_t surface_set_sem;
 	guint redraw_tag;
@@ -350,7 +349,6 @@ static void png_worker_thread(struct img_decode_context *ctx, FILE *io)
 
 	ctx->width = in_width;
 	ctx->height = in_height;
-	ctx->cs = png_cs_to_oil(png_get_color_type(rpng, rinfo));
 
 	invoke_header_read(ctx);
 
@@ -359,13 +357,13 @@ static void png_worker_thread(struct img_decode_context *ctx, FILE *io)
 	oil_libpng_init(&ol, rpng, rinfo, buf_desc.width, buf_desc.height);
 	pthread_cleanup_push(png_cleanup_oil_scale, (void *)&ol);
 
-	outbuf = malloc(buf_desc.width * OIL_CMP(ctx->cs));
+	outbuf = malloc(buf_desc.width * OIL_CMP(ol.os.cs));
 	pthread_cleanup_push(thread_cleanup_free_buf, (void *)outbuf);
 
 	for(i=0; i<buf_desc.height; i++) {
 		oil_libpng_read_scanline(&ol, outbuf);
 		tmp = buf_desc.buf + i * buf_desc.stride;
-		translate(outbuf, tmp, buf_desc.width, ctx->cs);
+		translate(outbuf, tmp, buf_desc.width, ol.os.cs);
 	}
 
 	pthread_cleanup_pop(1);
@@ -430,7 +428,6 @@ static void jpg_worker_thread(struct img_decode_context *ctx, FILE *io)
 
 	ctx->width = dinfo.output_width;
 	ctx->height = dinfo.output_height;
-	ctx->cs = jpeg_cs_to_oil(dinfo.out_color_space);
 	invoke_header_read(ctx);
 	surface_to_write_buffer(ctx->sfc, dinfo.output_width,
 		dinfo.output_height, &buf_desc);
