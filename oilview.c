@@ -227,6 +227,7 @@ static int decode_complete(void *arg)
 	struct img_decode_context *ctx;
 
 	ctx = (struct img_decode_context *)arg;
+	pthread_join(ctx->worker_thread, NULL);
 	ctx->worker_thread = 0;
 	if (ctx->sfc_complete) {
 		cairo_surface_destroy(ctx->sfc_complete);
