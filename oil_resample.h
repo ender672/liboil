@@ -66,7 +66,6 @@ struct oil_scale {
 	int in_pos; // current row of input image.
 	int out_pos; // current row of output image.
 
-	int sl_len; // length in bytes of a row.
 	float *coeffs_y; // buffer for holding temporary y-coefficients.
 	float *coeffs_x; // buffer for holding precalculated coefficients.
 	int *borders_x; // holds precalculated coefficient rotation points.
@@ -74,6 +73,7 @@ struct oil_scale {
 	float *sums_y; // buffer of intermediate sums for y-scaling.
 	float *rb; // ring buffer holding scanlines.
 	int rows_in_rb; // number of rows currently in the ring buffer.
+	float *tmp_coeffs; // temporary buffer for calculating coeffs.
 };
 
 /**

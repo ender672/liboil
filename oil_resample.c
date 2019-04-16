@@ -974,11 +974,35 @@ void oil_global_init()
 	build_l2s_rights();
 }
 
+static int calc_coeffs_len(int in_dim, int out_dim)
+{
+	if (out_dim <= in_dim) {
+		return 4 * in_dim * sizeof(float);
+	}
+	return 4 * out_dim * sizeof(float);
+}
+
+static int calc_borders_len(int in_dim, int out_dim)
+{
+	return (out_dim <= in_dim ? out_dim : in_dim) * sizeof(int);
+}
+
+static void set_coeffs(int in_dim, int out_dim, float *coeffs, int *borders,
+	float *tmp)
+{
+	if (out_dim <= in_dim) {
+		xscale_calc_coeffs(in_dim, out_dim, coeffs, borders, tmp);
+	} else {
+		scale_up_coeffs(in_dim, out_dim, coeffs, borders);
+	}
+}
+
+
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {
-	int taps;
-	float *tmp_coeffs;
+	int taps_x, taps_y, coeffs_x_len, coeffs_y_len, borders_x_len,
+		borders_y_len, rb_len, sums_len, tmp_len;
 
 	if (!os || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
 		in_height < 1 || out_height < 1 ||
@@ -987,76 +1011,49 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 		return -1;
 	}
 
-	/* Lazy perform global init */
+	// Lazy perform global init, in case oil_global_ini() hasn't been
+	// called yet.
 	if (!s2l_map_f[128]) {
 		oil_global_init();
 	}
 
-	memset(os, 0, sizeof(struct oil_scale));
+	taps_x = calc_taps(in_width, out_width);
+	taps_y = calc_taps(in_height, out_height);
 
+	coeffs_x_len = calc_coeffs_len(in_width, out_width);
+	borders_x_len = calc_borders_len(in_width, out_width);
+	coeffs_y_len = calc_coeffs_len(in_height, out_height);
+	borders_y_len = calc_borders_len(in_height, out_height);
+	rb_len = out_width * OIL_CMP(cs) * taps_y * sizeof(float);
+	tmp_len = (taps_x > taps_y ? taps_x : taps_y) * sizeof(float);
+	sums_len = 0;
+	if (out_height <= in_height) {
+		sums_len = out_width * OIL_CMP(cs) * 4 * sizeof(float);
+	}
+
+	memset(os, 0, sizeof(struct oil_scale));
 	os->in_height = in_height;
 	os->out_height = out_height;
 	os->in_width = in_width;
 	os->out_width = out_width;
 	os->cs = cs;
-	os->sl_len = out_width * OIL_CMP(cs);
+	os->coeffs_x = calloc(1, coeffs_x_len);
+	os->borders_x = calloc(1, borders_x_len);
+	os->coeffs_y = calloc(1, coeffs_y_len);
+	os->borders_y = calloc(1, borders_y_len);
+	os->rb = calloc(1, rb_len);
+	os->sums_y = calloc(1, sums_len);
+	os->tmp_coeffs = malloc(tmp_len);
 
-	/**
-	 * Allocate & pre-calculate coefficients.
-	 */
-	if (out_width <= in_width) {
-		os->coeffs_x = calloc(1, 4 * sizeof(float) * in_width);
-		os->borders_x = malloc(sizeof(int) * out_width);
-		taps = calc_taps(in_width, out_width);
-		tmp_coeffs = malloc(sizeof(float) * taps);
-		if (!os->coeffs_x || !os->borders_x || !tmp_coeffs) {
-			oil_scale_free(os);
-			return -2;
-		}
-		xscale_calc_coeffs(in_width, out_width, os->coeffs_x,
-			os->borders_x, tmp_coeffs);
-		free(tmp_coeffs);
-	} else {
-		os->coeffs_x = calloc(1, 4 * sizeof(float) * out_width);
-		os->borders_x = calloc(1, sizeof(int) * in_width);
-		if (!os->coeffs_x || !os->borders_x) {
-			oil_scale_free(os);
-			return -2;
-		}
-		scale_up_coeffs(in_width, out_width, os->coeffs_x,
-			os->borders_x);
-	}
-
-	if (out_height <= in_height) {
-		taps = calc_taps(in_height, out_height);
-		os->coeffs_y = calloc(1, 4 * in_height * sizeof(float));
-		os->sums_y = calloc(1, OIL_CMP(cs) * sizeof(float) * 4 * out_width);
-		os->borders_y = malloc(sizeof(int) * out_height);
-		tmp_coeffs = malloc(sizeof(float) * taps);
-		if (!os->coeffs_y || !os->sums_y || !tmp_coeffs) {
-			oil_scale_free(os);
-			return -2;
-		}
-		os->rb = malloc((long)os->sl_len * taps * sizeof(float));
-		xscale_calc_coeffs(in_height, out_height, os->coeffs_y,
-			os->borders_y, tmp_coeffs);
-		free(tmp_coeffs);
-	} else {
-		os->coeffs_y = calloc(1, 4 * out_height * sizeof(float));
-		os->borders_y = calloc(1, sizeof(int) * in_height);
-		if (!os->coeffs_y || !os->borders_y) {
-			oil_scale_free(os);
-			return -2;
-		}
-		os->rb = calloc(1, (long)os->sl_len * 4 * sizeof(float));
-		scale_up_coeffs(in_height, out_height, os->coeffs_y,
-			os->borders_y);
-	}
-
-	if (!os->rb) {
+	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y ||
+		!os->borders_y || !os->rb || !os->tmp_coeffs ||
+		(sums_len && !os->sums_y)) {
 		oil_scale_free(os);
 		return -2;
 	}
+
+	set_coeffs(in_width, out_width, os->coeffs_x, os->borders_x, os->tmp_coeffs);
+	set_coeffs(in_height, out_height, os->coeffs_y, os->borders_y, os->tmp_coeffs);
 
 	return 0;
 }
@@ -1066,31 +1063,21 @@ void oil_scale_free(struct oil_scale *os)
 	if (!os) {
 		return;
 	}
-	if (os->rb) {
-		free(os->rb);
-		os->rb = NULL;
-	}
-	if (os->coeffs_y) {
-		free(os->coeffs_y);
-		os->coeffs_y = NULL;
-	}
 
-	if (os->coeffs_x) {
-		free(os->coeffs_x);
-		os->coeffs_x = NULL;
-	}
-	if (os->borders_x) {
-		free(os->borders_x);
-		os->borders_x = NULL;
-	}
-	if (os->borders_y) {
-		free(os->borders_y);
-		os->borders_y = NULL;
-	}
-	if (os->sums_y) {
-		free(os->sums_y);
-		os->sums_y = NULL;
-	}
+	free(os->rb);
+	os->rb = NULL;
+	free(os->coeffs_y);
+	os->coeffs_y = NULL;
+	free(os->coeffs_x);
+	os->coeffs_x = NULL;
+	free(os->borders_x);
+	os->borders_x = NULL;
+	free(os->borders_y);
+	os->borders_y = NULL;
+	free(os->sums_y);
+	os->sums_y = NULL;
+	free(os->tmp_coeffs);
+	os->tmp_coeffs = NULL;
 }
 
 int oil_scale_slots(struct oil_scale *ys)
@@ -1114,12 +1101,14 @@ int oil_scale_slots(struct oil_scale *ys)
 
 void oil_scale_in(struct oil_scale *os, unsigned char *in)
 {
+	int sl_len;
 	float *tmp;
 
+	sl_len = OIL_CMP(os->cs) * os->out_width;
 	if (os->out_height <= os->in_height) {
-		tmp = os->rb + os->rows_in_rb * os->sl_len;
+		tmp = os->rb + os->rows_in_rb * sl_len;
 	} else {
-		tmp = os->rb + (os->in_pos % 4) * os->sl_len;
+		tmp = os->rb + (os->in_pos % 4) * sl_len;
 	}
 	if (os->out_width <= os->in_width) {
 		oil_xscale_down(in, tmp, os->out_width, os->cs,
@@ -1132,26 +1121,27 @@ void oil_scale_in(struct oil_scale *os, unsigned char *in)
 	os->in_pos++;
 }
 
-void oil_scale_out(struct oil_scale *ys, unsigned char *out)
+void oil_scale_out(struct oil_scale *os, unsigned char *out)
 {
-	int i;
+	int i, sl_len;
 	float *coeffs, *in[4];
 
-	if (ys->out_height <= ys->in_height) {
-		coeffs = ys->coeffs_y + (ys->in_pos - ys->rows_in_rb) * 4;
-		yscale_down(ys->rb, ys->rows_in_rb, ys->sl_len, out, coeffs,
-			ys->sums_y, ys->cs);
-		ys->rows_in_rb = 0;
+	sl_len = OIL_CMP(os->cs) * os->out_width;
+	if (os->out_height <= os->in_height) {
+		coeffs = os->coeffs_y + (os->in_pos - os->rows_in_rb) * 4;
+		yscale_down(os->rb, os->rows_in_rb, sl_len, out, coeffs,
+			os->sums_y, os->cs);
+		os->rows_in_rb = 0;
 	} else {
 		for (i=0; i<4; i++) {
-			in[i] = ys->rb + ((ys->in_pos + i) % 4) * ys->sl_len;
+			in[i] = os->rb + ((os->in_pos + i) % 4) * sl_len;
 		}
-		yscale_up(in, ys->sl_len, ys->coeffs_y + ys->out_pos * 4, out,
-			ys->cs);
-		ys->borders_y[ys->in_pos - 1] -= 1;
+		yscale_up(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
+			os->cs);
+		os->borders_y[os->in_pos - 1] -= 1;
 	}
 
-	ys->out_pos++;
+	os->out_pos++;
 }
 
 int oil_fix_ratio(int src_width, int src_height, int *out_width,
