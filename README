@@ -23,16 +23,16 @@ Features
   * Color space aware - liboil converts images to linear RGB for processing.
   * Pre-multiplied alpha - avoids artifacts when resizing with transparency.
 
-jpgscale & pngscale
+imgscale
 -------------------
 
-The liboil repository includes command-line tools for resizing JPEG and PNG
-images. These resizers read the original image from stdin and write the
+The liboil repository include a command-line tool for resizing JPEG and PNG
+images. This resizer reads the original image from stdin and writes the
 resized image to stdout.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the
 aspect ratio:
-  jpgscale 400 800 < in.jpg > out.jpg
+  imgscale 400 800 < in.jpg > out.jpg
 
 Example usage as a C library
 ----------------------------
