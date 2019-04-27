@@ -83,7 +83,7 @@ static void ref_calc_coeffs(long double *coeffs, long double offset, long taps,
 		coeffs[i] /= fudge;
 		total_check += coeffs[i];
 	}
-	assert(abs(total_check - 1.0) < 0.0000000001L);
+	assert(fabsl(total_check - 1.0) < 0.0000000001L);
 }
 
 static void fill_rand8(unsigned char *buf, long len)
