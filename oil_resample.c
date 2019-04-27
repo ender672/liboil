@@ -507,10 +507,10 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
  * Holds pre-calculated mapping of sRGB chars to linear RGB floating point
  * values.
  */
-static float s2l_map_f[256];
+static float s2l_map[256];
 
 /**
- * Populates s2l_map_f.
+ * Populates s2l_map.
  */
 static void build_s2l(void)
 {
@@ -525,7 +525,7 @@ static void build_s2l(void)
 			tmp = ((in_f + 0.055)/1.055);
 			val = pow(tmp, 2.4);
 		}
-		s2l_map_f[input] = val;
+		s2l_map[input] = val;
 	}
 }
 
@@ -656,7 +656,7 @@ static void xscale_down_rgbx(unsigned char *in, float *out,
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map_f[in[k]], coeff_buf, sum[k]);
+				add_sample_to_sum_f(s2l_map[in[k]], coeff_buf, sum[k]);
 			}
 			in += 4;
 			coeff_buf += 4;
@@ -676,7 +676,7 @@ static void xscale_down_rgb(unsigned char *in, float *out,
 	for (i=0; i<out_width; i++) {
 		for (j=border_buf[i]; j>0; j--) {
 			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map_f[in[k]], coeff_buf, sum[k]);
+				add_sample_to_sum_f(s2l_map[in[k]], coeff_buf, sum[k]);
 			}
 			in += 3;
 			coeff_buf += 4;
@@ -733,7 +733,7 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 		for (j=0; j<border_buf[i]; j++) {
 			alpha = in[3] / 255.0f;
 			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map_f[in[k]] * alpha, coeff_buf, sum[k]);
+				add_sample_to_sum_f(s2l_map[in[k]] * alpha, coeff_buf, sum[k]);
 			}
 			add_sample_to_sum_f(alpha, coeff_buf, sum[3]);
 			in += 4;
@@ -812,7 +812,7 @@ static void xscale_up_rgbx(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_in; i++) {
 		for (j=0; j<3; j++) {
-			push_f(smp[j], s2l_map_f[in[j]]);
+			push_f(smp[j], s2l_map[in[j]]);
 		}
 		for (j=border_buf[i]; j>0; j--) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 3);
@@ -832,7 +832,7 @@ static void xscale_up_rgb(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_in; i++) {
 		for (j=0; j<3; j++) {
-			push_f(smp[j], s2l_map_f[in[j]]);
+			push_f(smp[j], s2l_map[in[j]]);
 		}
 		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 3);
@@ -871,7 +871,7 @@ static void xscale_up_rgba(unsigned char *in, int width_in, float *out,
 	for (i=0; i<width_in; i++) {
 		push_f(smp[3], in[3] / 255.0f);
 		for (j=0; j<3; j++) {
-			push_f(smp[j], smp[3][3] * s2l_map_f[in[j]]);
+			push_f(smp[j], smp[3][3] * s2l_map[in[j]]);
 		}
 		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 4);
@@ -993,7 +993,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 
 	// Lazy perform global init, in case oil_global_ini() hasn't been
 	// called yet.
-	if (!s2l_map_f[128]) {
+	if (!s2l_map[128]) {
 		oil_global_init();
 	}
 
