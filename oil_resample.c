@@ -349,26 +349,6 @@ static void yscale_down_rgba(float *in, int strip_height, int len,
 }
 
 /**
- * Resizes a strip of CMYK scanlines to a single scanline.
- */
-static void yscale_down_cmyk(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
-{
-	int i, j;
-
-	for (i=0; i<len; i+=4) {
-		reduce_strip(in, strip_height, len, coeffs, sums, 4);
-		for (j=0; j<4; j++) {
-			out[j] = clamp8(sums[j * 4]);
-			shift_left_f(sums + j * 4);
-		}
-		sums += 16;
-		out += 4;
-		in += 4;
-	}
-}
-
-/**
  * Downscale a strip of scanlines. Branches to the correct interpolator using
  * the given colorspace.
  */
@@ -377,6 +357,7 @@ static void yscale_down(float *in, int strip_height, int len,
 {
 	switch(cs) {
 	case OIL_CS_G:
+	case OIL_CS_CMYK:
 		yscale_down_g(in, strip_height, len, out, coeffs, sums);
 		break;
 	case OIL_CS_GA:
@@ -390,9 +371,6 @@ static void yscale_down(float *in, int strip_height, int len,
 		break;
 	case OIL_CS_RGBA:
 		yscale_down_rgba(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_CMYK:
-		yscale_down_cmyk(in, strip_height, len, out, coeffs, sums);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
