@@ -113,9 +113,6 @@ static int calc_taps(int dim_in, int dim_out)
  */
 static float catrom(float x)
 {
-	if (x>2) {
-		return 0;
-	}
 	if (x<1) {
 		return (1.5f*x - 2.5f)*x*x + 1;
 	}
