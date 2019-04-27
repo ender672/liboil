@@ -472,7 +472,6 @@ static void yscale_up_rgba(float **in, int len, float *coeffs,
 	}
 }
 
-
 /**
  * Upscale a strip of scanlines. Branches to the correct interpolator using
  * the given colorspace.
@@ -655,7 +654,7 @@ static void xscale_down_rgbx(unsigned char *in, float *out,
 	float sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map_f[in[k]], coeff_buf, sum[k]);
 			}
@@ -694,7 +693,7 @@ static void xscale_down_g(unsigned char *in, float *out,
 	float sum[4] = { 0.0f };
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			add_sample_to_sum_f(in[0] / 255.0f, coeff_buf, sum);
 			in += 1;
 			coeff_buf += 4;
@@ -712,7 +711,7 @@ static void xscale_down_cmyk(unsigned char *in, float *out,
 	float sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<4; k++) {
 				add_sample_to_sum_f(in[k] / 255.0f, coeff_buf, sum[k]);
 			}
@@ -731,7 +730,7 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 	float alpha, sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			alpha = in[3] / 255.0f;
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map_f[in[k]] * alpha, coeff_buf, sum[k]);
@@ -752,7 +751,7 @@ static void xscale_down_ga(unsigned char *in, float *out,
 	float alpha, sum[2][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			alpha = in[1] / 255.0f;
 			add_sample_to_sum_f(in[0] / 255.0f * alpha, coeff_buf, sum[0]);
 			add_sample_to_sum_f(alpha, coeff_buf, sum[1]);
@@ -835,7 +834,7 @@ static void xscale_up_rgb(unsigned char *in, int width_in, float *out,
 		for (j=0; j<3; j++) {
 			push_f(smp[j], s2l_map_f[in[j]]);
 		}
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 3);
 			out += 3;
 			coeff_buf += 4;
@@ -854,7 +853,7 @@ static void xscale_up_cmyk(unsigned char *in, int width_in, float *out,
 		for (j=0; j<4; j++) {
 			push_f(smp[j], in[j] / 255.0f);
 		}
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 4);
 			out += 4;
 			coeff_buf += 4;
@@ -874,7 +873,7 @@ static void xscale_up_rgba(unsigned char *in, int width_in, float *out,
 		for (j=0; j<3; j++) {
 			push_f(smp[j], smp[3][3] * s2l_map_f[in[j]]);
 		}
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 4);
 			out += 4;
 			coeff_buf += 4;
@@ -892,7 +891,7 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 	for (i=0; i<width_in; i++) {
 		push_f(smp[1], in[1] / 255.0f);
 		push_f(smp[0], smp[1][3] * in[0] / 255.0f);
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 2);
 			out += 2;
 			coeff_buf += 4;
@@ -909,7 +908,7 @@ static void xscale_up_g(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_in; i++) {
 		push_f(smp, in[0] / 255.0f);
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			out[0] = 0;
 			for (k=0; k<4; k++) {
 				out[0] += smp[k] * coeff_buf[k];
