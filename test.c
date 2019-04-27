@@ -419,47 +419,92 @@ static void do_oil_scale(unsigned char **input_image, long in_width,
 	oil_scale_free(&os);
 }
 
-static void test_scale(long in_dim, long out_dim, enum oil_colorspace cs)
+static void test_scale(long in_width, long in_height,
+	unsigned char **input_image, long out_width, long out_height,
+	enum oil_colorspace cs)
 {
-	long i, in_row_stride, out_row_stride;
-	unsigned char **input_image, **oil_output_image;
+	long i, out_row_stride;
+	unsigned char **oil_output_image;
 	long double **ref_output_image;
 
+	out_row_stride = OIL_CMP(cs) * out_width;
+
+	/* oil scaling */
+	oil_output_image = alloc_2d_uchar(out_row_stride, out_height);
+	do_oil_scale(input_image, in_width, in_height, oil_output_image,
+		out_width, out_height, cs);
+
+	/* reference scaling */
+	ref_output_image = alloc_2d_ld(out_row_stride, out_height);
+	ref_scale(input_image, in_width, in_height, ref_output_image, out_width,
+		out_height, cs);
+
+	/* compare the two */
+	for (i=0; i<out_height; i++) {
+		validate_scanline8(oil_output_image[i], ref_output_image[i],
+			out_width, OIL_CMP(cs));
+	}
+
+	free_2d_uchar(oil_output_image, out_height);
+	free_2d_ld(ref_output_image, out_height);
+}
+
+static void test_scale_square_rand(long in_dim, long out_dim,
+	enum oil_colorspace cs)
+{
+	long i, in_row_stride;
+	unsigned char **input_image;
+
 	in_row_stride = OIL_CMP(cs) * in_dim;
-	out_row_stride = OIL_CMP(cs) * out_dim;
 
 	/* Allocate & populate input image */
 	input_image = alloc_2d_uchar(in_row_stride, in_dim);
 	for (i=0; i<in_dim; i++) {
 		fill_rand8(input_image[i], in_row_stride);
 	}
-
-	/* oil scaling */
-	oil_output_image = alloc_2d_uchar(out_row_stride, out_dim);
-	do_oil_scale(input_image, in_dim, in_dim, oil_output_image, out_dim, out_dim, cs);
-
-	/* reference scaling */
-	ref_output_image = alloc_2d_ld(out_row_stride, out_dim);
-	ref_scale(input_image, in_dim, in_dim, ref_output_image, out_dim, out_dim, cs);
-
-	/* compare the two */
-	for (i=0; i<out_dim; i++) {
-		validate_scanline8(oil_output_image[i], ref_output_image[i], out_dim, OIL_CMP(cs));
-	}
-
+	test_scale(in_dim, in_dim, input_image, out_dim, out_dim, cs);
 	free_2d_uchar(input_image, in_dim);
-	free_2d_uchar(oil_output_image, out_dim);
-	free_2d_ld(ref_output_image, out_dim);
+}
+
+static void test_scale_catrom_extremes()
+{
+	unsigned char **input_image;
+
+	/* Allocate & populate input image */
+	input_image = alloc_2d_uchar(4, 4);
+
+	input_image[0][0] = 0;
+	input_image[0][1] = 0;
+	input_image[0][2] = 0;
+	input_image[0][3] = 0;
+
+	input_image[1][0] = 0;
+	input_image[1][1] = 255;
+	input_image[1][2] = 255;
+	input_image[1][3] = 0;
+
+	input_image[2][0] = 0;
+	input_image[2][1] = 255;
+	input_image[2][2] = 255;
+	input_image[2][3] = 0;
+
+	input_image[3][0] = 0;
+	input_image[3][1] = 0;
+	input_image[3][2] = 0;
+	input_image[3][3] = 0;
+
+	test_scale(4, 4, input_image, 7, 7, OIL_CS_G);
+	free_2d_uchar(input_image, 4);
 }
 
 static void test_scale_each_cs(long dim_a, long dim_b)
 {
-	test_scale(dim_a, dim_b, OIL_CS_G);
-	test_scale(dim_a, dim_b, OIL_CS_GA);
-	test_scale(dim_a, dim_b, OIL_CS_RGB);
-	test_scale(dim_a, dim_b, OIL_CS_RGBX);
-	test_scale(dim_a, dim_b, OIL_CS_RGBA);
-	test_scale(dim_a, dim_b, OIL_CS_CMYK);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_G);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_GA);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGB);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBA);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_CMYK);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX);
 }
 
 static void test_scale_all_permutations(long dim_a, long dim_b)
@@ -472,6 +517,7 @@ static void test_scale_all()
 {
 	test_scale_all_permutations(5, 1);
 	test_scale_all_permutations(8, 1);
+	test_scale_all_permutations(8, 3);
 	test_scale_all_permutations(100, 1);
 	test_scale_all_permutations(100, 99);
 	test_scale_all_permutations(2, 1);
@@ -485,6 +531,7 @@ int main()
 	srand(t);
 	oil_global_init();
 	test_scale_all();
+	test_scale_catrom_extremes();
 	printf("worst error: %Lf\n", worst);
 	printf("All tests pass.\n");
 	return 0;
