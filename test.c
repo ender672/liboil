@@ -121,6 +121,8 @@ static long double split_map_check(long dim_in, long dim_out, long pos,
 	return smp_i;
 }
 
+static long double worst;
+
 static void validate_scanline8(unsigned char *oil, long double *ref,
 	size_t width, int cmp)
 {
@@ -131,8 +133,11 @@ static void validate_scanline8(unsigned char *oil, long double *ref,
 			pos = i * cmp + j;
 			ref_f = ref[pos] * 255.0L;
 			ref_i = lroundl(ref_f);
-			error = fabsl(oil[pos] - ref_f);
-			if (error > 0.501L) {
+			error = fabsl(oil[pos] - ref_f) - 0.5L;
+			if (error > worst) {
+				worst = error;
+			}
+			if (error > 0.06L) {
 				fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
 			}
 		}
@@ -480,6 +485,7 @@ int main()
 	srand(t);
 	oil_global_init();
 	test_scale_all();
+	printf("worst error: %Lf\n", worst);
 	printf("All tests pass.\n");
 	return 0;
 }
