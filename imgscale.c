@@ -88,6 +88,16 @@ static void prepare_jpeg_decompress(FILE *input,
 	jpeg_save_markers(dinfo, JPEG_APP0+15, 0xFFFF);
 	jpeg_read_header(dinfo, TRUE);
 
+	/* For testing purposes, you can run with the environment variable
+	 * OILRGBX in order to trigger libjpeg turbo's JCS_RGBX color space.
+	 */
+#ifdef JCS_EXTENSIONS
+	if (getenv("OILRGBX") != NULL && dinfo->out_color_space == JCS_RGB) {
+		dinfo->out_color_space = JCS_EXT_RGBX;
+		jpeg_calc_output_dimensions(dinfo);
+	}
+#endif
+
 	jpeg_start_decompress(dinfo);
 }
 
