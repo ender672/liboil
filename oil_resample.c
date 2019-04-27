@@ -1102,16 +1102,21 @@ int oil_scale_slots(struct oil_scale *ys)
 	}
 }
 
-void oil_scale_in(struct oil_scale *os, unsigned char *in)
+static float *get_rb_line(struct oil_scale *os, int line)
 {
 	int sl_len;
+	sl_len = OIL_CMP(os->cs) * os->out_width;
+	return os->rb + line * sl_len;
+}
+
+void oil_scale_in(struct oil_scale *os, unsigned char *in)
+{
 	float *tmp;
 
-	sl_len = OIL_CMP(os->cs) * os->out_width;
 	if (os->out_height <= os->in_height) {
-		tmp = os->rb + os->rows_in_rb * sl_len;
+		tmp = get_rb_line(os, os->rows_in_rb);
 	} else {
-		tmp = os->rb + (os->in_pos % 4) * sl_len;
+		tmp = get_rb_line(os, os->in_pos % 4);
 	}
 	if (os->out_width <= os->in_width) {
 		oil_xscale_down(in, tmp, os->out_width, os->cs,
@@ -1137,7 +1142,7 @@ void oil_scale_out(struct oil_scale *os, unsigned char *out)
 		os->rows_in_rb = 0;
 	} else {
 		for (i=0; i<4; i++) {
-			in[i] = os->rb + ((os->in_pos + i) % 4) * sl_len;
+			in[i] = get_rb_line(os, (os->in_pos + i) % 4);
 		}
 		yscale_up(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
 			os->cs);
