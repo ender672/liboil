@@ -32,7 +32,7 @@ resized image to stdout.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the
 aspect ratio:
-  imgscale 400 800 < in.jpg > out.jpg
+  ./imgscale 400 800 in.jpg out.jpg
 
 Example usage as a C library
 ----------------------------
