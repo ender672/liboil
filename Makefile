@@ -1,4 +1,4 @@
-CFLAGS += -O3 -march=native -Wall -pedantic
+CFLAGS += -O3 -Wall -pedantic
 
 all: test imgscale
 test: test.c oil_resample.o
