@@ -977,7 +977,6 @@ static void set_coeffs(int in_dim, int out_dim, float *coeffs, int *borders,
 	}
 }
 
-
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {

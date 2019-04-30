@@ -2,6 +2,7 @@
 test
 imgscale
 oilview
+benchmark
 *.jpg
 *.png
 
