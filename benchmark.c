@@ -53,13 +53,13 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 		png_set_rgb_to_gray(rpng, 1, -1, -1);
 		break;
 	case OIL_CS_RGB:
-	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
 		png_set_strip_alpha(rpng);
 		break;
 	case OIL_CS_RGBX:
 		png_set_strip_alpha(rpng);
 		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
 		break;
+	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
 	case OIL_CS_RGBA:
 	case OIL_CS_UNKNOWN:
 		break;
@@ -90,11 +90,9 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 	return bench_image;
 }
 
-int time_to_us(clock_t t)
+double time_to_ms(clock_t t)
 {
-	double time_taken;
-	time_taken = (double)t / (CLOCKS_PER_SEC / 1000 / 1000);
-	return round(time_taken);
+	return (double)t / (CLOCKS_PER_SEC / 1000);
 }
 
 clock_t resize(struct bench_image image, int out_width, int out_height)
@@ -137,14 +135,14 @@ void do_bench(struct bench_image image, double ratio)
 	oil_fix_ratio(image.width, image.height, &out_width, &out_height);
 
 	t_min = 0;
-	for (i=0; i<260; i++) {
+	for (i=0; i<100; i++) {
 		t_tmp = resize(image, out_width, out_height);
 		if (!t_min || t_tmp < t_min) {
 			t_min = t_tmp;
 		}
 	}
 
-	printf("    to %4dx%4d %6dus\n", out_width, out_height, time_to_us(t_min));
+	printf("    to %4dx%4d %6.2fms\n", out_width, out_height, time_to_ms(t_min));
 }
 
 void do_bench_sizes(char *name, char *path, enum oil_colorspace cs)
@@ -153,7 +151,7 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs)
 
 	image = png(path, cs);
 
-	printf("Scale %dx%d %s image\n", image.width, image.height, name);
+	printf("%dx%d %s\n", image.width, image.height, name);
 
 	do_bench(image, 0.01);
 	do_bench(image, 0.125);
@@ -166,23 +164,55 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs)
 int main(int argc, char *argv[])
 {
 	clock_t t;
+	size_t i, num_spaces;
 
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s <path>\n", argv[0]);
+	enum oil_colorspace spaces[] = {
+		OIL_CS_G,
+		OIL_CS_GA,
+		OIL_CS_RGB,
+		OIL_CS_RGBX,
+		OIL_CS_RGBA,
+		OIL_CS_CMYK,
+	};
+
+	char *space_names[] = {
+		"G",
+		"GA",
+		"RGB",
+		"RGBX",
+		"RGBA",
+		"CMYK",
+	};
+
+	if (argc < 2 || argc > 3) {
+		fprintf(stderr, "Usage: %s <path> [colorspace]\n", argv[0]);
 		return 1;
 	}
 
 	t = clock();
 	oil_global_init();
 	t = clock() - t;
-	printf("global init: %6dus\n", time_to_us(t));
+	printf("global init: %6.2fms\n", time_to_ms(t));
 
-	do_bench_sizes("G", argv[1], OIL_CS_G);
-	do_bench_sizes("GA", argv[1], OIL_CS_GA);
-	do_bench_sizes("RGB", argv[1], OIL_CS_RGB);
-	do_bench_sizes("RGBX", argv[1], OIL_CS_RGBX);
-	do_bench_sizes("RGBA", argv[1], OIL_CS_RGBA);
-	do_bench_sizes("CMYK", argv[1], OIL_CS_CMYK);
+	num_spaces = sizeof(spaces)/sizeof(spaces[0]);
+	if (argc == 2) {
+		for (i=0; i<num_spaces; i++) {
+			do_bench_sizes(space_names[i], argv[1], spaces[i]);
+		}
+		return 0;
+	}
 
+	for (i=0; i<num_spaces; i++) {
+		if (strcmp(space_names[i], argv[2]) == 0) {
+			break;
+		}
+	}
+
+	if (i >= num_spaces) {
+		fprintf(stderr, "Colorspace not recognized.\n");
+		return 1;
+	}
+
+	do_bench_sizes(space_names[i], argv[1], spaces[i]);
 	return 0;
 }

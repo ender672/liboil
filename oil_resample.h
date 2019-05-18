@@ -29,7 +29,7 @@ enum oil_colorspace {
 	// error
 	OIL_CS_UNKNOWN = 0,
 
-	// greyscale - no color space conversions
+	// greyscale - no sRGB gamma space conversions
 	OIL_CS_G       = 0x0001,
 
 	// greyscale w/ alpha - uses premultiplied alpha
@@ -44,7 +44,7 @@ enum oil_colorspace {
 	// sRGB w/ alpha - sRGB to linear conversion and premultiplied alpha
 	OIL_CS_RGBA    = 0x0104,
 
-	// CMYK - no color space conversions
+	// no color space conversions
 	OIL_CS_CMYK    = 0x0204,
 };
 
