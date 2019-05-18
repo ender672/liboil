@@ -685,7 +685,7 @@ static void xscale_down_rgb(unsigned char *in, float *out,
 	float sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map[in[k]], coeff_buf, sum[k]);
 			}
@@ -825,7 +825,7 @@ static void xscale_up_rgbx(unsigned char *in, int width_in, float *out,
 		for (j=0; j<3; j++) {
 			push_f(smp[j], s2l_map[in[j]]);
 		}
-		for (j=border_buf[i]; j>0; j--) {
+		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 3);
 			out[3] = 0;
 			out += 4;
