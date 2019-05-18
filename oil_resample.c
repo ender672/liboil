@@ -529,6 +529,17 @@ static void build_s2l(void)
 	}
 }
 
+static float i2f_map[256];
+
+static void build_i2f(void)
+{
+	int i;
+
+	for (i=0; i<=255; i++) {
+		i2f_map[i] = i / 255.0f;
+	}
+}
+
 /**
  * Given input & output dimensions, populate a buffer of coefficients and
  * border counters.
@@ -694,7 +705,7 @@ static void xscale_down_g(unsigned char *in, float *out,
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
-			add_sample_to_sum_f(in[0] / 255.0f, coeff_buf, sum);
+			add_sample_to_sum_f(i2f_map[in[0]], coeff_buf, sum);
 			in += 1;
 			coeff_buf += 4;
 		}
@@ -713,7 +724,7 @@ static void xscale_down_cmyk(unsigned char *in, float *out,
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<4; k++) {
-				add_sample_to_sum_f(in[k] / 255.0f, coeff_buf, sum[k]);
+				add_sample_to_sum_f(i2f_map[in[k]], coeff_buf, sum[k]);
 			}
 			in += 4;
 			coeff_buf += 4;
@@ -731,7 +742,7 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
-			alpha = in[3] / 255.0f;
+			alpha = i2f_map[in[3]];
 			for (k=0; k<3; k++) {
 				add_sample_to_sum_f(s2l_map[in[k]] * alpha, coeff_buf, sum[k]);
 			}
@@ -752,8 +763,8 @@ static void xscale_down_ga(unsigned char *in, float *out,
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
-			alpha = in[1] / 255.0f;
-			add_sample_to_sum_f(in[0] / 255.0f * alpha, coeff_buf, sum[0]);
+			alpha = i2f_map[in[1]];
+			add_sample_to_sum_f(i2f_map[in[0]] * alpha, coeff_buf, sum[0]);
 			add_sample_to_sum_f(alpha, coeff_buf, sum[1]);
 			in += 2;
 			coeff_buf += 4;
@@ -890,7 +901,7 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 
 	for (i=0; i<width_in; i++) {
 		push_f(smp[1], in[1] / 255.0f);
-		push_f(smp[0], smp[1][3] * in[0] / 255.0f);
+		push_f(smp[0], smp[1][3] * i2f_map[in[0]]);
 		for (j=0; j<border_buf[i]; j++) {
 			xscale_up_reduce_n(smp, out, coeff_buf, 2);
 			out += 2;
@@ -952,6 +963,7 @@ void oil_global_init()
 {
 	build_s2l();
 	build_l2s();
+	build_i2f();
 }
 
 static int calc_coeffs_len(int in_dim, int out_dim)
