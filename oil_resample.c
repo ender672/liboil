@@ -673,7 +673,6 @@ static void xscale_down_rgbx(unsigned char *in, float *out,
 			coeff_buf += 4;
 		}
 		dump_out(out, sum, 3);
-		out[3] = 0;
 		out += 4;
 	}
 }
@@ -805,13 +804,13 @@ static void oil_xscale_down(unsigned char *in, float *out,
 static void xscale_up_reduce_n(float in[][4], float *out, float *coeffs,
 	int cmp)
 {
-	int i, j;
+	int i;
 
 	for (i=0; i<cmp; i++) {
-		out[i] = 0;
-		for (j=0; j<4; j++) {
-			out[i] += in[i][j] * coeffs[j];
-		}
+		out[i] = in[i][0] * coeffs[0] +
+			in[i][1] * coeffs[1] +
+			in[i][2] * coeffs[2] +
+			in[i][3] * coeffs[3];
 	}
 }
 
@@ -914,20 +913,19 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 static void xscale_up_g(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
-	int i, j, k;
+	int i, j;
 	float smp[4] = {0};
 
 	for (i=0; i<width_in; i++) {
-		push_f(smp, in[0] / 255.0f);
+		push_f(smp, in[i] / 255.0f);
 		for (j=0; j<border_buf[i]; j++) {
-			out[0] = 0;
-			for (k=0; k<4; k++) {
-				out[0] += smp[k] * coeff_buf[k];
-			}
+			out[0] = smp[0] * coeff_buf[0] +
+				smp[1] * coeff_buf[1] +
+				smp[2] * coeff_buf[2] +
+				smp[3] * coeff_buf[3];
 			out += 1;
 			coeff_buf += 4;
 		}
-		in += 1;
 	}
 }
 
