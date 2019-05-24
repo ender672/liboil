@@ -1049,6 +1049,11 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	return 0;
 }
 
+void oil_scale_restart(struct oil_scale *os)
+{
+	os->in_pos = os->out_pos = os->rows_in_rb = 0;
+}
+
 void oil_scale_free(struct oil_scale *os)
 {
 	if (!os) {

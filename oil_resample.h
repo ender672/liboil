@@ -85,6 +85,13 @@ struct oil_scale {
 void oil_global_init(void);
 
 /**
+ * Reset an already-initialized oil_scale struct. This allows you to re-use an
+ * oil_scale struct when the input & output dimensions as well as the colorspace
+ * will be the same.
+ */
+void oil_scale_reset(struct oil_scale *os);
+
+/**
  * Initialize an oil scaler struct.
  * @os: Pointer to the scaler struct to be initialized.
  * @in_height: Height, in pixels, of the input image.
