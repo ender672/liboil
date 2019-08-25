@@ -1080,17 +1080,16 @@ int oil_scale_slots(struct oil_scale *ys)
 
 	if (ys->out_height <= ys->in_height) {
 		return ys->borders_y[ys->out_pos];
-	} else {
-		if (ys->in_pos == 0) {
-			for (i=1; ys->borders_y[i - 1] == 0; i++);
-			return i;
-		}
-		if (ys->borders_y[ys->in_pos - 1] > 0) {
-			return 0;
-		}
-		for (i=1; ys->borders_y[ys->in_pos + i - 1] == 0; i++);
+	}
+	if (ys->in_pos == 0) {
+		for (i=1; ys->borders_y[i - 1] == 0; i++);
 		return i;
 	}
+	if (ys->borders_y[ys->in_pos - 1] > 0) {
+		return 0;
+	}
+	for (i=1; ys->borders_y[ys->in_pos + i - 1] == 0; i++);
+	return i;
 }
 
 static float *get_rb_line(struct oil_scale *os, int line)
