@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
+#include <stdio.h>
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
@@ -1087,20 +1088,13 @@ void oil_scale_free(struct oil_scale *os)
 
 int oil_scale_slots(struct oil_scale *ys)
 {
-	int i;
-
 	if (ys->out_height <= ys->in_height) {
 		return ys->borders_y[ys->out_pos];
 	}
-	if (ys->in_pos == 0) {
-		for (i=0; ys->borders_y[i] == 0; i++);
-		return i + 1;
+	if (ys->in_pos) {
+		return ys->borders_y[ys->in_pos - 1] == 0;
 	}
-	if (ys->borders_y[ys->in_pos - 1] > 0) {
-		return 0;
-	}
-	for (i=0; ys->borders_y[ys->in_pos + i] == 0; i++);
-	return i + 1;
+	return ys->borders_y[0] == 0 ? 2 : 1;
 }
 
 static float *get_rb_line(struct oil_scale *os, int line)
