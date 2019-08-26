@@ -38,10 +38,21 @@
  */
 #define TAPS 4
 
+static int max(int a, int b)
+{
+	return a > b ? a : b;
+}
+
+static int min(int a, int b)
+{
+	return a < b ? a : b;
+}
+
 /**
  * Clamp a float between 0 and 1.
  */
-static float clampf(float x) {
+static float clampf(float x)
+{
 	if (x > 1.0f) {
 		return 1.0f;
 	} else if (x < 0.0f) {
@@ -624,7 +635,7 @@ static void scale_up_coeffs(int in_width, int out_width, float *coeff_buf,
 
 		// This is the border position at which we will tell the
 		// interpolator to calculate the output sample.
-		safe_end = end > max_pos ? max_pos : end;
+		safe_end = min(end, max_pos);
 
 		ltrim = 0;
 		rtrim = 0;
@@ -1014,7 +1025,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	coeffs_y_len = calc_coeffs_len(in_height, out_height);
 	borders_y_len = calc_borders_len(in_height, out_height);
 	rb_len = out_width * OIL_CMP(cs) * taps_y * sizeof(float);
-	tmp_len = (taps_x > taps_y ? taps_x : taps_y) * sizeof(float);
+	tmp_len = max(taps_x, taps_y) * sizeof(float);
 	sums_len = 0;
 	if (out_height <= in_height) {
 		sums_len = out_width * OIL_CMP(cs) * 4 * sizeof(float);
@@ -1082,14 +1093,14 @@ int oil_scale_slots(struct oil_scale *ys)
 		return ys->borders_y[ys->out_pos];
 	}
 	if (ys->in_pos == 0) {
-		for (i=1; ys->borders_y[i - 1] == 0; i++);
-		return i;
+		for (i=0; ys->borders_y[i] == 0; i++);
+		return i + 1;
 	}
 	if (ys->borders_y[ys->in_pos - 1] > 0) {
 		return 0;
 	}
-	for (i=1; ys->borders_y[ys->in_pos + i - 1] == 0; i++);
-	return i;
+	for (i=0; ys->borders_y[ys->in_pos + i] == 0; i++);
+	return i + 1;
 }
 
 static float *get_rb_line(struct oil_scale *os, int line)
