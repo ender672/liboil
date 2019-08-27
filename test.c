@@ -406,12 +406,12 @@ static void do_oil_scale(unsigned char **input_image, long in_width,
 	long out_height, enum oil_colorspace cs)
 {
 	struct oil_scale os;
-	long i, j, in_line;
+	long i, in_line;
 
 	oil_scale_init(&os, in_height, out_height, in_width, out_width, cs);
 	in_line = 0;
 	for (i=0; i<out_height; i++) {
-		for (j=oil_scale_slots(&os); j>0; j--) {
+		while(oil_scale_slots(&os)) {
 			oil_scale_in(&os, input_image[in_line++]);
 		}
 		oil_scale_out(&os, output_image[i]);

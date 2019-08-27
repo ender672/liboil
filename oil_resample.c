@@ -1116,6 +1116,7 @@ void oil_scale_in(struct oil_scale *os, unsigned char *in)
 	if (os->out_width <= os->in_width) {
 		oil_xscale_down(in, tmp, os->out_width, os->cs,
 			os->coeffs_x, os->borders_x);
+		os->borders_y[os->out_pos] -= 1;
 	} else {
 		oil_xscale_up(in, os->in_width, tmp, os->cs,
 			os->coeffs_x, os->borders_x);
