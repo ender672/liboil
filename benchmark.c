@@ -97,7 +97,7 @@ double time_to_ms(clock_t t)
 
 clock_t resize(struct bench_image image, int out_width, int out_height)
 {
-	int i, j;
+	int i;
 	enum oil_colorspace cs;
 	struct oil_scale os;
 	unsigned char *outbuf;
@@ -112,7 +112,7 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 	t = clock();
 	oil_scale_init(&os, image.height, out_height, image.width, out_width, cs);
 	for(i=0; i<out_height; i++) {
-		for (j=oil_scale_slots(&os); j>0; j--) {
+		while (oil_scale_slots(&os)) {
 			image.buffer += in_row_stride;
 			oil_scale_in(&os, image.buffer);
 		}

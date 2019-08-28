@@ -114,18 +114,14 @@ void oil_libpng_free(struct oil_libpng *ol)
 
 static void read_scanline_interlaced(struct oil_libpng *ol)
 {
-	int i;
-
-	for (i=oil_scale_slots(&ol->os); i>0; i--) {
+	while (oil_scale_slots(&ol->os)) {
 		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++]);
 	}
 }
 
 static void read_scanline(struct oil_libpng *ol)
 {
-	int i;
-
-	for (i=oil_scale_slots(&ol->os); i>0; i--) {
+	while (oil_scale_slots(&ol->os)) {
 		png_read_row(ol->rpng, ol->inbuf, NULL);
 		oil_scale_in(&ol->os, ol->inbuf);
 	}

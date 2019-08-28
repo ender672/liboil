@@ -40,7 +40,7 @@ Example usage as a C library
 #include "oil_resample.h"
 
 unsigned char *inbuf, *outbuf;
-int i, j, ret;
+int i, ret;
 struct oil_scale os;
 
 oil_fix_ratio(in_width, in_height, &out_width, &out_height);
@@ -54,7 +54,7 @@ if (ret!=0) {
 }
 
 for(i=0; i<out_height; i++) {
-    for (j=oil_scale_slots(&os); j>0; j--) {
+    while (oil_scale_slots(&os)) {
         fill_with_next_scanline_from_source_image(inbuf);
         oil_scale_in(&os, inbuf);
     }
