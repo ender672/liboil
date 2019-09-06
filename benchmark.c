@@ -135,7 +135,7 @@ void do_bench(struct bench_image image, double ratio)
 	oil_fix_ratio(image.width, image.height, &out_width, &out_height);
 
 	t_min = 0;
-	for (i=0; i<100; i++) {
+	for (i=0; i<50; i++) {
 		t_tmp = resize(image, out_width, out_height);
 		if (!t_min || t_tmp < t_min) {
 			t_min = t_tmp;

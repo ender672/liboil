@@ -978,15 +978,12 @@ void oil_global_init()
 
 static int calc_coeffs_len(int in_dim, int out_dim)
 {
-	if (out_dim <= in_dim) {
-		return 4 * in_dim * sizeof(float);
-	}
-	return 4 * out_dim * sizeof(float);
+	return 4 * max(in_dim, out_dim) * sizeof(float);
 }
 
 static int calc_borders_len(int in_dim, int out_dim)
 {
-	return (out_dim <= in_dim ? out_dim : in_dim) * sizeof(int);
+	return min(in_dim, out_dim) * sizeof(int);
 }
 
 static void set_coeffs(int in_dim, int out_dim, float *coeffs, int *borders,
