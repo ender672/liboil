@@ -108,6 +108,12 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs);
 
 /**
+ * Reset rows countersin an oil scaler struct.
+ * @os: Pointer to the scaler struct to be reseted.
+ */
+void oil_scale_restart(struct oil_scale *);
+
+/**
  * Free heap allocations associated with a yscaler struct.
  * @ys: Pointer to the yscaler struct to be freed.
  */
