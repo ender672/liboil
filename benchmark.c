@@ -165,6 +165,8 @@ int main(int argc, char *argv[])
 {
 	clock_t t;
 	size_t i, num_spaces;
+	int iterations;
+	char *end;
 
 	enum oil_colorspace spaces[] = {
 		OIL_CS_G,
@@ -188,6 +190,16 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Usage: %s <path> [colorspace]\n", argv[0]);
 		return 1;
 	}
+
+	iterations = 100;
+	if (getenv("OILITERATIONS")) {
+		iterations = strtoul(getenv("OILITERATIONS"), &end, 10);
+		if (!end) {
+			fprintf(stderr, "Invalid environment variable OILITERATIONS.");
+			return 1;
+		}
+	}
+	fprintf(stderr, "Iterations: %d\n", iterations);
 
 	t = clock();
 	oil_global_init();
