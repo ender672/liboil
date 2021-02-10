@@ -72,7 +72,6 @@ struct oil_scale {
 	int *borders_y; // coefficient rotation points for y-scaling.
 	float *sums_y; // buffer of intermediate sums for y-scaling.
 	float *rb; // ring buffer holding scanlines.
-	int rows_in_rb; // number of rows currently in the ring buffer.
 	float *tmp_coeffs; // temporary buffer for calculating coeffs.
 };
 

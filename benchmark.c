@@ -72,7 +72,7 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 	row_stride = bench_image.width * OIL_CMP(cs);
 	buf_len = (size_t)bench_image.height * row_stride;
 	bench_image.buffer = malloc(buf_len);
-	buf_ptrs = malloc(bench_image.height * sizeof(unsigned char *));{}
+	buf_ptrs = malloc(bench_image.height * sizeof(unsigned char *));
 	if (!bench_image.buffer || !buf_ptrs) {
 		fprintf(stderr, "Unable to allocate buffers.\n");
 		exit(1);
@@ -100,21 +100,22 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 	int i;
 	enum oil_colorspace cs;
 	struct oil_scale os;
-	unsigned char *outbuf;
+	unsigned char *inbuf, *outbuf;
 	size_t in_row_stride;
 	clock_t t;
 
 	cs = image.cs;
 	in_row_stride = image.width * OIL_CMP(cs);
 
+	inbuf = image.buffer;
 	outbuf = malloc(out_width * OIL_CMP(cs));
 
 	t = clock();
 	oil_scale_init(&os, image.height, out_height, image.width, out_width, cs);
 	for(i=0; i<out_height; i++) {
 		while (oil_scale_slots(&os)) {
-			image.buffer += in_row_stride;
-			oil_scale_in(&os, image.buffer);
+			oil_scale_in(&os, inbuf);
+			inbuf += in_row_stride;
 		}
 		oil_scale_out(&os, outbuf);
 	}
@@ -124,7 +125,7 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 	return t;
 }
 
-void do_bench(struct bench_image image, double ratio)
+void do_bench(struct bench_image image, double ratio, int iterations)
 {
 	int i, out_width, out_height;
 	clock_t t_min, t_tmp;
@@ -135,7 +136,7 @@ void do_bench(struct bench_image image, double ratio)
 	oil_fix_ratio(image.width, image.height, &out_width, &out_height);
 
 	t_min = 0;
-	for (i=0; i<50; i++) {
+	for (i=0; i<iterations; i++) {
 		t_tmp = resize(image, out_width, out_height);
 		if (!t_min || t_tmp < t_min) {
 			t_min = t_tmp;
@@ -145,7 +146,7 @@ void do_bench(struct bench_image image, double ratio)
 	printf("    to %4dx%4d %6.2fms\n", out_width, out_height, time_to_ms(t_min));
 }
 
-void do_bench_sizes(char *name, char *path, enum oil_colorspace cs)
+void do_bench_sizes(char *name, char *path, enum oil_colorspace cs, int iterations)
 {
 	struct bench_image image;
 
@@ -153,10 +154,10 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs)
 
 	printf("%dx%d %s\n", image.width, image.height, name);
 
-	do_bench(image, 0.01);
-	do_bench(image, 0.125);
-	do_bench(image, 0.8);
-	do_bench(image, 2.14);
+	do_bench(image, 0.01, iterations);
+	do_bench(image, 0.125, iterations);
+	do_bench(image, 0.8, iterations);
+	do_bench(image, 2.14, iterations);
 
 	free(image.buffer);
 }
@@ -209,7 +210,7 @@ int main(int argc, char *argv[])
 	num_spaces = sizeof(spaces)/sizeof(spaces[0]);
 	if (argc == 2) {
 		for (i=0; i<num_spaces; i++) {
-			do_bench_sizes(space_names[i], argv[1], spaces[i]);
+			do_bench_sizes(space_names[i], argv[1], spaces[i], iterations);
 		}
 		return 0;
 	}
@@ -225,6 +226,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	do_bench_sizes(space_names[i], argv[1], spaces[i]);
+	do_bench_sizes(space_names[i], argv[1], spaces[i], iterations);
 	return 0;
 }

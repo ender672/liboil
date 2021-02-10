@@ -237,86 +237,34 @@ static void shift_left_f(float *f)
 	push_f(f, 0.0f);
 }
 
-static void reduce_strip(float *in, int strip_height, int len, float *coeffs,
-	float *sums, int n)
-{
-	int i, j;
-
-	for (i=0; i<strip_height; i++) {
-		for (j=0; j<n; j++) {
-			add_sample_to_sum_f(in[i * len + j], coeffs + i * 4, sums + j * 4);
-		}
-	}
-}
-
-/**
- * Resizes a strip of RGBX scanlines to a single scanline.
- */
-static void yscale_down_rgbx(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
-{
-	int i, j;
-
-	for (i=0; i<len; i+=4) {
-		reduce_strip(in, strip_height, len, coeffs, sums, 3);
-		for (j=0; j<3; j++) {
-			out[j] = linear_sample_to_srgb(sums[j * 4]);
-			shift_left_f(sums + j * 4);
-		}
-		out[3] = 0;
-		sums += 12;
-		out += 4;
-		in += 4;
-	}
-}
-
-/**
- * Resizes a strip of RGB scanlines to a single scanline.
- */
-static void yscale_down_rgb(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
-{
-	int i, j;
-
-	for (i=0; i<len; i+=3) {
-		reduce_strip(in, strip_height, len, coeffs, sums, 3);
-		for (j=0; j<3; j++) {
-			out[j] = linear_sample_to_srgb(sums[j * 4]);
-			shift_left_f(sums + j * 4);
-		}
-		sums += 12;
-		out += 3;
-		in += 3;
-	}
-}
-
-/**
- * Resizes a strip of greyscale scanlines to a single scanline.
- */
-static void yscale_down_g(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
+static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
 	int i;
 
 	for (i=0; i<len; i++) {
-		reduce_strip(in + i, strip_height, len, coeffs, sums, 1);
-		out[i] = clamp8(sums[0]);
+		out[i] = linear_sample_to_srgb(*sums);
 		shift_left_f(sums);
 		sums += 4;
 	}
 }
 
-/**
- * Resizes a strip of greyscale-alpha scanlines to a single scanline.
- */
-static void yscale_down_ga(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
+static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
+{
+	int i;
+
+	for (i=0; i<sl_len; i++) {
+		out[i] = clamp8(*sums);
+		shift_left_f(sums);
+		sums += 4;
+	}
+}
+
+static void yscale_out_ga(float *sums, int width, unsigned char *out)
 {
 	int i;
 	float alpha;
 
-	for (i=0; i<len; i+=2) {
-		reduce_strip(in, strip_height, len, coeffs, sums, 2);
+	for (i=0; i<width; i++) {
 		alpha = clampf(sums[4]);
 		if (alpha != 0) {
 			sums[0] /= alpha;
@@ -327,21 +275,15 @@ static void yscale_down_ga(float *in, int strip_height, int len,
 		shift_left_f(sums + 4);
 		sums += 8;
 		out += 2;
-		in += 2;
 	}
 }
 
-/**
- * Resizes a strip of RGB-alpha scanlines to a single scanline.
- */
-static void yscale_down_rgba(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums)
+static void yscale_out_rgba(float *sums, int width, unsigned char *out)
 {
 	int i, j;
 	float alpha;
 
-	for (i=0; i<len; i+=4) {
-		reduce_strip(in, strip_height, len, coeffs, sums, 4);
+	for (i=0; i<width; i++) {
 		alpha = clampf(sums[12]);
 		if (alpha != 0) {
 			for (j=0; j<3; j++) {
@@ -356,36 +298,48 @@ static void yscale_down_rgba(float *in, int strip_height, int len,
 		shift_left_f(sums + 12);
 		sums += 16;
 		out += 4;
-		in += 4;
+	}
+}
+
+static void yscale_out(float *sums, int width, unsigned char *out,
+	enum oil_colorspace cs)
+{
+	int sl_len;
+
+	sl_len = width * OIL_CMP(cs);
+
+	switch(cs) {
+	case OIL_CS_G:
+	case OIL_CS_CMYK:
+		yscale_out_nonlinear(sums, sl_len, out);
+		break;
+	case OIL_CS_GA:
+		yscale_out_ga(sums, width, out);
+		break;
+	case OIL_CS_RGB:
+	case OIL_CS_RGBX:
+		yscale_out_linear(sums, sl_len, out);
+		break;
+	case OIL_CS_RGBA:
+		yscale_out_rgba(sums, width, out);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
 	}
 }
 
 /**
- * Downscale a strip of scanlines. Branches to the correct interpolator using
- * the given colorspace.
+ * Apply scanline "in" to y-scaling sums.
  */
-static void yscale_down(float *in, int strip_height, int len,
-	unsigned char *out, float *coeffs, float *sums, enum oil_colorspace cs)
+static void yscale_down(float *in, int width, float *coeffs, float *sums,
+	enum oil_colorspace cs)
 {
-	switch(cs) {
-	case OIL_CS_G:
-	case OIL_CS_CMYK:
-		yscale_down_g(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_GA:
-		yscale_down_ga(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_RGB:
-		yscale_down_rgb(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_RGBX:
-		yscale_down_rgbx(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_RGBA:
-		yscale_down_rgba(in, strip_height, len, out, coeffs, sums);
-		break;
-	case OIL_CS_UNKNOWN:
-		break;
+	int i, sl_len;
+
+	sl_len = width * OIL_CMP(cs);
+	for (i=0; i<sl_len; i++) {
+		add_sample_to_sum_f(in[i], coeffs, sums);
+		sums += 4;
 	}
 }
 
@@ -1027,6 +981,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	sums_len = 0;
 	if (out_height <= in_height) {
 		sums_len = out_width * OIL_CMP(cs) * 4 * sizeof(float);
+		rb_len = out_width * OIL_CMP(cs) * sizeof(float);
 	}
 
 	memset(os, 0, sizeof(struct oil_scale));
@@ -1058,7 +1013,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 
 void oil_scale_restart(struct oil_scale *os)
 {
-	os->in_pos = os->out_pos = os->rows_in_rb = 0;
+	os->in_pos = os->out_pos = 0;
 }
 
 void oil_scale_free(struct oil_scale *os)
@@ -1103,13 +1058,13 @@ static float *get_rb_line(struct oil_scale *os, int line)
 
 void oil_scale_in(struct oil_scale *os, unsigned char *in)
 {
-	float *tmp;
+	float *tmp, *coeffs;
 
-	if (os->out_height <= os->in_height) {
-		tmp = get_rb_line(os, os->rows_in_rb);
-	} else {
+	tmp = os->rb;
+	if (os->out_height > os->in_height) {
 		tmp = get_rb_line(os, os->in_pos % 4);
 	}
+
 	if (os->out_width <= os->in_width) {
 		oil_xscale_down(in, tmp, os->out_width, os->cs,
 			os->coeffs_x, os->borders_x);
@@ -1118,22 +1073,24 @@ void oil_scale_in(struct oil_scale *os, unsigned char *in)
 		oil_xscale_up(in, os->in_width, tmp, os->cs,
 			os->coeffs_x, os->borders_x);
 	}
-	os->rows_in_rb++;
+
+	if (os->out_height <= os->in_height) {
+		coeffs = os->coeffs_y + os->in_pos * 4;
+		yscale_down(tmp, os->out_width, coeffs, os->sums_y, os->cs);
+	}
+
 	os->in_pos++;
 }
 
 void oil_scale_out(struct oil_scale *os, unsigned char *out)
 {
 	int i, sl_len;
-	float *coeffs, *in[4];
+	float *in[4];
 
-	sl_len = OIL_CMP(os->cs) * os->out_width;
 	if (os->out_height <= os->in_height) {
-		coeffs = os->coeffs_y + (os->in_pos - os->rows_in_rb) * 4;
-		yscale_down(os->rb, os->rows_in_rb, sl_len, out, coeffs,
-			os->sums_y, os->cs);
-		os->rows_in_rb = 0;
+		yscale_out(os->sums_y, os->out_width, out, os->cs);
 	} else {
+		sl_len = OIL_CMP(os->cs) * os->out_width;
 		for (i=0; i<4; i++) {
 			in[i] = get_rb_line(os, (os->in_pos + i) % 4);
 		}
