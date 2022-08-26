@@ -170,12 +170,6 @@ static void preprocess(long double *in, enum oil_colorspace cs)
 		in[1] = srgb_sample_to_linear_reference(in[1]);
 		in[2] = srgb_sample_to_linear_reference(in[2]);
 		break;
-	case OIL_CS_RGBX:
-		in[0] = srgb_sample_to_linear_reference(in[0]);
-		in[1] = srgb_sample_to_linear_reference(in[1]);
-		in[2] = srgb_sample_to_linear_reference(in[2]);
-		in[3] = 0;
-		break;
 	case OIL_CS_RGBA:
 		in[0] = in[3] * srgb_sample_to_linear_reference(in[0]);
 		in[1] = in[3] * srgb_sample_to_linear_reference(in[1]);
@@ -203,12 +197,6 @@ static void postprocess(long double *in, enum oil_colorspace cs)
 		in[0] = linear_sample_to_srgb_reference(in[0]);
 		in[1] = linear_sample_to_srgb_reference(in[1]);
 		in[2] = linear_sample_to_srgb_reference(in[2]);
-		break;
-	case OIL_CS_RGBX:
-		in[0] = linear_sample_to_srgb_reference(in[0]);
-		in[1] = linear_sample_to_srgb_reference(in[1]);
-		in[2] = linear_sample_to_srgb_reference(in[2]);
-		in[3] = 0;
 		break;
 	case OIL_CS_RGBA:
 		alpha = clamp_f(in[3]);
@@ -504,7 +492,6 @@ static void test_scale_each_cs(long dim_a, long dim_b)
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGB);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBA);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_CMYK);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX);
 }
 
 static void test_scale_all_permutations(long dim_a, long dim_b)

@@ -38,9 +38,6 @@ enum oil_colorspace {
 	// sRGB - input will be converted to linear RGB during processing
 	OIL_CS_RGB     = 0x0003,
 
-	// sRGB w/ padding - same as OIL_CS_RGB, but padded with an extra byte
-	OIL_CS_RGBX    = 0x0004,
-
 	// sRGB w/ alpha - sRGB to linear conversion and premultiplied alpha
 	OIL_CS_RGBA    = 0x0104,
 

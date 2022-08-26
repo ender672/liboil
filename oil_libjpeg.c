@@ -76,11 +76,6 @@ enum oil_colorspace jpeg_cs_to_oil(J_COLOR_SPACE cs)
 		return OIL_CS_RGB;
 	case JCS_CMYK:
 		return OIL_CS_CMYK;
-#ifdef JCS_EXTENSIONS
-	case JCS_EXT_RGBX:
-	case JCS_EXT_BGRX:
-		return OIL_CS_RGBX;
-#endif
 	default:
 		return OIL_CS_UNKNOWN;
 	}

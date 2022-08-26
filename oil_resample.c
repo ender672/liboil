@@ -317,7 +317,6 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_ga(sums, width, out);
 		break;
 	case OIL_CS_RGB:
-	case OIL_CS_RGBX:
 		yscale_out_linear(sums, sl_len, out);
 		break;
 	case OIL_CS_RGBA:
@@ -395,24 +394,6 @@ static void yscale_up_rgb(float **in, int len, float *coeffs,
 	}
 }
 
-static void yscale_up_rgbx(float **in, int len, float coeffs[4],
-	unsigned char *out)
-{
-	int i, j;
-	float sum;
-
-	for (i=0; i<len; i+=4) {
-		for (j=0; j<3; j++) {
-			sum = coeffs[0] * in[0][i + j] +
-				coeffs[1] * in[1][i + j] +
-				coeffs[2] * in[2][i + j] +
-				coeffs[3] * in[3][i + j];
-			out[i + j] = linear_sample_to_srgb(sum);
-		}
-		out[i + 3] = 0;
-	}
-}
-
 static void yscale_up_rgba(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -455,9 +436,6 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 		break;
 	case OIL_CS_RGB:
 		yscale_up_rgb(in, len, coeffs, out);
-		break;
-	case OIL_CS_RGBX:
-		yscale_up_rgbx(in, len, coeffs, out);
 		break;
 	case OIL_CS_RGBA:
 		yscale_up_rgba(in, len, coeffs, out);
@@ -624,25 +602,6 @@ static void dump_out(float *out, float sum[][4], int n)
 	}
 }
 
-static void xscale_down_rgbx(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
-{
-	int i, j, k;
-	float sum[3][4] = {{ 0.0f }};
-
-	for (i=0; i<out_width; i++) {
-		for (j=0; j<border_buf[i]; j++) {
-			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map[in[k]], coeff_buf, sum[k]);
-			}
-			in += 4;
-			coeff_buf += 4;
-		}
-		dump_out(out, sum, 3);
-		out += 4;
-	}
-}
-
 static void xscale_down_rgb(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
@@ -744,9 +703,6 @@ static void oil_xscale_down(unsigned char *in, float *out,
 	int *border_buf)
 {
 	switch(cs_in) {
-	case OIL_CS_RGBX:
-		xscale_down_rgbx(in, out, width_out, coeff_buf, border_buf);
-		break;
 	case OIL_CS_RGB:
 		xscale_down_rgb(in, out, width_out, coeff_buf, border_buf);
 		break;
@@ -777,26 +733,6 @@ static void xscale_up_reduce_n(float in[][4], float *out, float *coeffs,
 			in[i][1] * coeffs[1] +
 			in[i][2] * coeffs[2] +
 			in[i][3] * coeffs[3];
-	}
-}
-
-static void xscale_up_rgbx(unsigned char *in, int width_in, float *out,
-	float *coeff_buf, int *border_buf)
-{
-	int i, j;
-	float smp[3][4] = {{0}};
-
-	for (i=0; i<width_in; i++) {
-		for (j=0; j<3; j++) {
-			push_f(smp[j], s2l_map[in[j]]);
-		}
-		for (j=0; j<border_buf[i]; j++) {
-			xscale_up_reduce_n(smp, out, coeff_buf, 3);
-			out[3] = 0;
-			out += 4;
-			coeff_buf += 4;
-		}
-		in += 4;
 	}
 }
 
@@ -899,9 +835,6 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 	enum oil_colorspace cs_in, float *coeff_buf, int *border_buf)
 {
 	switch(cs_in) {
-	case OIL_CS_RGBX:
-		xscale_up_rgbx(in, width_in, out, coeff_buf, border_buf);
-		break;
 	case OIL_CS_RGB:
 		xscale_up_rgb(in, width_in, out, coeff_buf, border_buf);
 		break;
