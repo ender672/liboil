@@ -606,12 +606,15 @@ static void xscale_down_rgb(unsigned char *in, float *out,
 	int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j, k;
-	float sum[3][4] = {{ 0.0f }};
+	float linear[3], sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map[in[k]], coeff_buf, sum[k]);
+				linear[k] = s2l_map[in[k]];
+			}
+			for (k=0; k<3; k++) {
+				add_sample_to_sum_f(linear[k], coeff_buf, sum[k]);
 			}
 			in += 3;
 			coeff_buf += 4;
