@@ -127,6 +127,24 @@ static void read_scanline(struct oil_libpng *ol)
 	}
 }
 
+int oil_libpng_proccess_scanline_part(struct oil_libpng *ol)
+{
+	if (!oil_scale_slots(&ol->os)) {
+		return 1;
+	}
+
+	switch (png_get_interlace_type(ol->rpng, ol->rinfo)) {
+	case PNG_INTERLACE_NONE:
+		png_read_row(ol->rpng, ol->inbuf, NULL);
+		oil_scale_in(&ol->os, ol->inbuf);
+		break;
+	case PNG_INTERLACE_ADAM7:
+		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++]);
+		break;
+	}
+	return oil_scale_slots(&ol->os) == 0;
+}
+
 void oil_libpng_read_scanline(struct oil_libpng *ol, unsigned char *outbuf)
 {
 	switch (png_get_interlace_type(ol->rpng, ol->rinfo)) {

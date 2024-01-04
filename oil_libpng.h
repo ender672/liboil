@@ -52,6 +52,7 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 void oil_libpng_free(struct oil_libpng *ol);
 
 void oil_libpng_read_scanline(struct oil_libpng *ol, unsigned char *outbuf);
+int oil_libpng_proccess_scanline_part(struct oil_libpng *ol);
 
 enum oil_colorspace png_cs_to_oil(png_byte cs);
 

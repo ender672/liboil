@@ -454,7 +454,7 @@ static void test_scale_square_rand(long in_dim, long out_dim,
 	free_2d_uchar(input_image, in_dim);
 }
 
-static void test_scale_catrom_extremes()
+static void test_scale_catrom_extremes(void)
 {
 	unsigned char **input_image;
 
@@ -500,7 +500,7 @@ static void test_scale_all_permutations(long dim_a, long dim_b)
 	test_scale_each_cs(dim_b, dim_a);
 }
 
-static void test_scale_all()
+static void test_scale_all(void)
 {
 	test_scale_all_permutations(5, 1);
 	test_scale_all_permutations(8, 1);
@@ -510,7 +510,7 @@ static void test_scale_all()
 	test_scale_all_permutations(2, 1);
 }
 
-int main()
+int main(void)
 {
 	int t = 1531289551;
 	//int t = time(NULL);

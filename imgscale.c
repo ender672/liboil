@@ -1,8 +1,20 @@
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
+#include "oil_resample.h"
 #include <stdlib.h>
 #include <jpeglib.h>
 #include <png.h>
+#include <cpuid.h>
+
+static int get_is_sse_compatible(void) {
+	unsigned int eax, ebx, ecx, edx;
+
+	if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+		return (edx & (1 << 25)) != 0;
+	}
+
+	return 0;
+}
 
 static void png(FILE *input, FILE *output, int width, int height)
 {
@@ -43,6 +55,8 @@ static void png(FILE *input, FILE *output, int width, int height)
 		fprintf(stderr, "Unable to allocate buffers.\n");
 		exit(1);
 	}
+
+	oil_set_use_sse(&ol.os, get_is_sse_compatible());
 
 	ctype = png_get_color_type(rpng, rinfo);
 	png_set_IHDR(wpng, winfo, width, height, 8, ctype, PNG_INTERLACE_NONE,
@@ -117,6 +131,8 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out)
 		exit(1);
 	}
 
+	oil_set_use_sse(&ol.os, get_is_sse_compatible());
+
 	/* Allocate linear converter output buffer */
 	outbuf = malloc(width_out * OIL_CMP(ol.os.cs) * sizeof(unsigned char));
 	if (!outbuf) {
@@ -159,7 +175,7 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out)
 	oil_libjpeg_free(&ol);
 }
 
-int looks_like_png(FILE *io)
+static int looks_like_png(FILE *io)
 {
 	int peek;
 	peek = getc(io);

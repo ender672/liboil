@@ -49,6 +49,7 @@ int oil_libjpeg_init(struct oil_libjpeg *ol,
 void oil_libjpeg_free(struct oil_libjpeg *ol);
 
 void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf);
+int oil_libjpeg_proccess_scanline_part(struct oil_libjpeg *ol);
 
 enum oil_colorspace jpeg_cs_to_oil(J_COLOR_SPACE cs);
 

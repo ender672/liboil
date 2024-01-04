@@ -58,6 +58,17 @@ void oil_libjpeg_free(struct oil_libjpeg *ol)
 	oil_scale_free(&ol->os);
 }
 
+int oil_libjpeg_proccess_scanline_part(struct oil_libjpeg *ol)
+{
+	if (!oil_scale_slots(&ol->os)) {
+		return 1;
+	}
+
+	jpeg_read_scanlines(ol->dinfo, &ol->inbuf, 1);
+	oil_scale_in(&ol->os, ol->inbuf);
+	return oil_scale_slots(&ol->os) == 0;
+}
+
 void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf)
 {
 	while (oil_scale_slots(&ol->os)) {

@@ -5,6 +5,7 @@
 #include <png.h>
 #include "oil_resample.h"
 #include "oil_libpng.h"
+#include <immintrin.h>
 
 struct bench_image {
 	unsigned char *buffer;
@@ -13,7 +14,27 @@ struct bench_image {
 	enum oil_colorspace cs;
 };
 
-static int use_sse = 0;
+static float s2l_map[256];
+
+/**
+ * Populates s2l_map.
+ */
+static void build_s2l(void)
+{
+	int input;
+	double in_f, tmp, val;
+
+	for (input=0; input<=255; input++) {
+		in_f = input / 255.0;
+		if (in_f <= 0.040448236277) {
+			val = in_f / 12.92;
+		} else {
+			tmp = ((in_f + 0.055)/1.055);
+			val = pow(tmp, 2.4);
+		}
+		s2l_map[input] = val;
+	}
+}
 
 static struct bench_image png(char *path, enum oil_colorspace cs)
 {
@@ -93,6 +114,140 @@ double time_to_ms(clock_t t)
 	return (double)t / (CLOCKS_PER_SEC / 1000);
 }
 
+static void yscale_down_sse(float *in, int width, float *coeffs, float *sums)
+{
+	int i, sl_len;
+	__m128 coeffs2, sums2, sample;
+
+	coeffs2 = _mm_loadu_ps(coeffs);
+
+	sl_len = width * 3;
+	for (i=0; i<sl_len; i++) {
+		sums2 = _mm_loadu_ps(sums);
+		sample = _mm_set1_ps(in[i]);
+		sums2 = _mm_add_ps(_mm_mul_ps(coeffs2, sample), sums2);
+		_mm_store_ps(sums, sums2);
+		sums += 4;
+	}
+}
+
+static void xscale_down_rgb_sse(unsigned char *in, float *out, int out_width, float *coeff_buf, int *border_buf)
+{
+	int i, j;
+	__m128 coeffs, sample, sum_r, sum_g, sum_b;
+
+	sum_r = _mm_setzero_ps();
+	sum_g = _mm_setzero_ps();
+	sum_b = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		for (j=0; j<border_buf[i]; j++) {
+			coeffs = _mm_loadu_ps(coeff_buf);
+
+			sample = _mm_set1_ps(s2l_map[in[0]]);
+			sum_r = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_r);
+
+			sample = _mm_set1_ps(s2l_map[in[1]]);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_g);
+
+			sample = _mm_set1_ps(s2l_map[in[2]]);
+			sum_b = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_b);
+
+			in += 3;
+			coeff_buf += 4;
+		}
+
+		_mm_store_ss(out, sum_r);
+		_mm_store_ss(out+1, sum_g);
+		_mm_store_ss(out+2, sum_b);
+
+		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
+		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
+		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+
+		out += 3;
+	}
+}
+
+static void xscale_down_rgb_sse_both(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, sample_x, sum_r, sum_g, sum_b, coeffs_y, sums_y,
+		sample_y;
+
+	coeffs_y = _mm_loadu_ps(coeffs_y_f);
+
+	sum_r = _mm_setzero_ps();
+	sum_g = _mm_setzero_ps();
+	sum_b = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		for (j=0; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+
+			sample_x = _mm_set1_ps(s2l_map[in[0]]);
+			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+			sample_x = _mm_set1_ps(s2l_map[in[1]]);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+			sample_x = _mm_set1_ps(s2l_map[in[2]]);
+			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+			in += 3;
+			coeffs_x_f += 4;
+		}
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
+		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
+		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+	}
+}
+
+static void oil_scale_in2(struct oil_scale *os, unsigned char *in)
+{
+	float *coeffs;
+
+	xscale_down_rgb_sse(in, os->rb, os->out_width, os->coeffs_x, os->borders_x);
+	os->borders_y[os->out_pos] -= 1;
+
+	coeffs = os->coeffs_y + os->in_pos * 4;
+	yscale_down_sse(os->rb, os->out_width, coeffs, os->sums_y);
+
+	os->in_pos++;
+}
+
+static void oil_scale_in3(struct oil_scale *os, unsigned char *in)
+{
+	float *coeffs_y;
+
+	coeffs_y = os->coeffs_y + os->in_pos * 4;
+
+	xscale_down_rgb_sse_both(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+	os->borders_y[os->out_pos] -= 1;
+
+	os->in_pos++;
+}
+
 clock_t resize(struct bench_image image, int out_width, int out_height)
 {
 	int i;
@@ -110,11 +265,11 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 
 	t = clock();
 	oil_scale_init(&os, image.height, out_height, image.width, out_width, cs);
-	oil_set_use_sse(&os, use_sse);
 
 	for(i=0; i<out_height; i++) {
 		while (oil_scale_slots(&os)) {
-			oil_scale_in(&os, inbuf);
+
+			oil_scale_in3(&os, inbuf);
 			inbuf += in_row_stride;
 		}
 		oil_scale_out(&os, outbuf);
@@ -158,7 +313,6 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs,
 	do_bench(image, 0.01, iterations);
 	do_bench(image, 0.125, iterations);
 	do_bench(image, 0.8, iterations);
-	do_bench(image, 2.14, iterations);
 
 	free(image.buffer);
 }
@@ -201,13 +355,10 @@ int main(int argc, char *argv[])
 	}
 	fprintf(stderr, "Iterations: %d\n", iterations);
 
-	if (getenv("OILSSE")) {
-		use_sse = 1;
-	}
-
 	t = clock();
 	oil_global_init();
 	t = clock() - t;
+	build_s2l();
 	printf("global init: %6.2fms\n", time_to_ms(t));
 
 	num_spaces = sizeof(spaces)/sizeof(spaces[0]);
