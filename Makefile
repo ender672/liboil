@@ -1,6 +1,7 @@
 CFLAGS += -O3 -Wall -pedantic
+-include local.mk
 
-all: test imgscale benchmark benchmark2
+all: test imgscale benchmark benchmark2 sdltest
 test: test.c oil_resample.o
 	$(CC) $(CFLAGS) oil_resample.o test.c -o $@ -lm
 imgscale: oil_resample.o oil_libjpeg.o oil_libpng.o imgscale.c
@@ -14,4 +15,4 @@ oilview: oil_resample.o oil_libjpeg.o oil_libpng.o oilview.c
 sdltest: oil_resample.o oil_libjpeg.o oil_libpng.o sdltest.c
 	$(CC) $(CFLAGS) oil_resample.o oil_libjpeg.o oil_libpng.o sdltest.c -o $@ $(LDFLAGS) -lSDL2 -ljpeg -lpng -lm
 clean:
-	rm -rf test test.dSYM oil_resample.o oil_libpng.o oil_libjpeg.o imgscale oilview benchmark
+	rm -rf test test.dSYM oil_resample.o oil_libpng.o oil_libjpeg.o imgscale oilview benchmark sdltest

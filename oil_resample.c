@@ -157,52 +157,47 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 }
 
 /**
- * Pre-calculated table of linear to srgb mappings. Initialized via build_l2s().
- *
- * catmull-rom interpolation can produce values from -17/64 to 81/64.
- *
- * The total allocated space will be split into three parts:
- *   * 17/98 of padding below zero
- *   * 64/98 of mapping
- *   * 17/98 of padding above one
+ * Holds pre-calculated table of linear float to srgb char mappings.
+ * Initialized via build_l2s_rights();
  */
-#define L2S_ALL_LEN 32768
-static unsigned char l2s_map_all[L2S_ALL_LEN];
-static int l2s_len;
-static unsigned char *l2s_map;
+static float l2s_rights[256];
 
-static void build_l2s(void)
+/**
+ * Populates l2s_rights.
+ */
+static void build_l2s_rights(void)
 {
-	int i, padding;
+	int i;
 	double srgb_f, tmp, val;
 
-	padding = L2S_ALL_LEN * 17 / 98;
-	l2s_len = L2S_ALL_LEN - 2 * padding;
-	l2s_map = l2s_map_all + padding;
-
-	for (i=0; i<l2s_len; i++) {
-		srgb_f = (i + 0.5)/(l2s_len - 1);
-		if (srgb_f <= 0.00313) {
-			val = srgb_f * 12.92;
+	for (i=0; i<255; i++) {
+		srgb_f = (i + 0.5)/255.0;
+		if (srgb_f <= 0.0404482362771082) {
+			val = srgb_f / 12.92;
 		} else {
-			tmp = pow(srgb_f, 1/2.4);
-			val = 1.055 * tmp - 0.055;
+			tmp = (srgb_f + 0.055)/1.055;
+			val = pow(tmp, 2.4);
 		}
-
-		l2s_map[i] = round(val * 255);
+		l2s_rights[i] = val;
 	}
-
-	for (i=0; i<padding; i++) {
-		l2s_map[l2s_len + i] = 255;
-	}
+	l2s_rights[i] = 256.0f;
 }
 
 /**
  * Maps the given linear RGB float to sRGB integer.
+ * 
+ * Performs a binary search on l2s_rights.
  */
-static unsigned char linear_sample_to_srgb(float in)
+static int linear_sample_to_srgb(float in)
 {
-	return l2s_map[(int)(in * (l2s_len - 1))];
+	int offs, i;
+	offs = 0;
+	for (i=128; i>0; i >>= 1) {
+		if (in > l2s_rights[offs + i]) {
+			offs += i;
+		}
+	}
+	return in > l2s_rights[offs] ? offs + 1 : offs;
 }
 
 /**
@@ -223,9 +218,10 @@ static void add_sample_to_sum_f(float sample, float *coeffs, float *sum)
  */
 static void push_f(float *f, float val)
 {
-	f[0] = f[1];
-	f[1] = f[2];
-	f[2] = f[3];
+	int j;
+	for (j=0; j<3; j++) {
+		f[j] = f[j + 1];
+	}
 	f[3] = val;
 }
 
@@ -257,25 +253,6 @@ static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 		out[i] = clamp8(*sums);
 		shift_left_f(sums);
 		sums += 4;
-	}
-}
-
-static void _yscale_out_linear(float *sums, int width, unsigned char *out)
-{
-	int i;
-
-	for (i=0; i<width; i++) {
-		out[2] = linear_sample_to_srgb(sums[0]);
-		out[1] = linear_sample_to_srgb(sums[4]);
-		out[0] = linear_sample_to_srgb(sums[8]);
-		out[3] = 0xFF;
-
-		shift_left_f(sums);
-		shift_left_f(sums+4);
-		shift_left_f(sums+8);
-
-		out += 4;
-		sums += 12;
 	}
 }
 
@@ -344,52 +321,6 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
-	}
-}
-
-/**
- * Apply scanline "in" to y-scaling sums.
- */
-static void yscale_down_sse(float *in, int width, float *coeffs, float *sums,
-	enum oil_colorspace cs)
-{
-	int i, sl_len;
-	__m128 coeffs2, sums2, sample;
-
-	coeffs2 = _mm_loadu_ps(coeffs);
-
-	sl_len = width * OIL_CMP(cs);
-	for (i=0; i<sl_len; i++) {
-		sums2 = _mm_loadu_ps(sums);
-		sample = _mm_set1_ps(in[i]);
-		sums2 = _mm_add_ps(_mm_mul_ps(coeffs2, sample), sums2);
-		_mm_store_ps(sums, sums2);
-		sums += 4;
-	}
-}
-
-/**
- * Apply scanline "in" to y-scaling sums.
- */
-static void yscale_down_c(float *in, int width, float *coeffs, float *sums,
-	enum oil_colorspace cs)
-{
-	int i, sl_len;
-
-	sl_len = width * OIL_CMP(cs);
-	for (i=0; i<sl_len; i++) {
-		add_sample_to_sum_f(in[i], coeffs, sums);
-		sums += 4;
-	}
-}
-
-static void yscale_down(float *in, int width, float *coeffs, float *sums,
-	enum oil_colorspace cs, int use_sse)
-{
-	if (use_sse) {
-		yscale_down_sse(in, width, coeffs, sums, cs);
-	} else {
-		yscale_down_c(in, width, coeffs, sums, cs);
 	}
 }
 
@@ -536,35 +467,33 @@ static void build_i2f(void)
 }
 
 /**
- * Given input & output dimensions, populate a buffer of coefficients and
- * border counters.
+ * Given input & output dimensions, populate a buffer of coefficients and border counters.
  *
- * This method assumes that in_width >= out_width.
+ * This method assumes that in_dim >= out_dim.
  *
- * It generates 4 * in_width coefficients -- 4 for every input sample.
+ * It generates 4 * in_dim coefficients -- 4 for every input sample.
  *
- * It generates out_width border counters, these indicate how many input
- * samples to process before the next output sample is finished.
+ * It generates out_dim border counters, these indicate how many input samples to process before
+ * the next output sample is finished.
  */
-static void xscale_calc_coeffs(int in_width, int out_width, float *coeff_buf,
-	int *border_buf, float *tmp_coeffs)
+static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf,
+	float *tmp_coeffs)
 {
-	int smp_i, i, j, taps, offset, pos, ltrim, rtrim, smp_end, smp_start,
-		ends[4];
+	int smp_i, i, j, taps, offset, pos, ltrim, rtrim, smp_end, smp_start, ends[4];
 	float tx;
 
-	taps = calc_taps(in_width, out_width);
+	taps = calc_taps(in_dim, out_dim);
 	for (i=0; i<4; i++) {
 		ends[i] = -1;
 	}
 
-	for (i=0; i<out_width; i++) {
-		smp_i = split_map(in_width, out_width, i, &tx);
+	for (i=0; i<out_dim; i++) {
+		smp_i = split_map(in_dim, out_dim, i, &tx);
 
 		smp_start = smp_i - (taps/2 - 1);
 		smp_end = smp_i + taps/2;
-		if (smp_end >= in_width) {
-			smp_end = in_width - 1;
+		if (smp_end >= in_dim) {
+			smp_end = in_dim - 1;
 		}
 		ends[i%4] = smp_end;
 		border_buf[i] = smp_end - ends[(i+3)%4];
@@ -596,24 +525,22 @@ static void xscale_calc_coeffs(int in_width, int out_width, float *coeff_buf,
 /**
  * Precalculate coefficients and borders for an upscale.
  *
- * coeff_buf will be populated with 4 input coefficients for every output
+ * coeff_buf will be populated with 4 input coefficients for every output sample.
+ *
+ * border_buf will be populated with the number of output samples to produce for every input
  * sample.
  *
- * border_buf will be populated with the number of output samples to produce
- * for every input sample.
- *
- * users of coeff_buf & border_buf are expected to keep a buffer of the last 4
- * input samples, and multiply them with each output sample's coefficients.
+ * users of coeff_buf & border_buf are expected to keep a buffer of the last 4 input samples, and
+ * multiply them with each output sample's coefficients.
  */
-static void scale_up_coeffs(int in_width, int out_width, float *coeff_buf,
-	int *border_buf)
+static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf)
 {
 	int i, smp_i, start, end, ltrim, rtrim, safe_end, max_pos;
 	float tx;
 
-	max_pos = in_width - 1;
-	for (i=0; i<out_width; i++) {
-		smp_i = split_map(in_width, out_width, i, &tx);
+	max_pos = in_dim - 1;
+	for (i=0; i<out_dim; i++) {
+		smp_i = split_map(in_dim, out_dim, i, &tx);
 		start = smp_i - 1;
 		end = smp_i + 2;
 
@@ -653,7 +580,7 @@ static void dump_out(float *out, float sum[][4], int n)
 	}
 }
 
-static void xscale_down_rgb_sse_both(unsigned char *in, float *sums_y_out,
+static void scale_down_rgb_sse(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -707,87 +634,49 @@ static void xscale_down_rgb_sse_both(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void xscale_down_rgb_sse(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
-{
-	int i, j;
-	__m128 coeffs, sample, sum_r, sum_g, sum_b;
-
-	sum_r = _mm_setzero_ps();
-	sum_g = _mm_setzero_ps();
-	sum_b = _mm_setzero_ps();
-
-	for (i=0; i<out_width; i++) {
-		for (j=0; j<border_buf[i]; j++) {
-			coeffs = _mm_loadu_ps(coeff_buf);
-
-			sample = _mm_set1_ps(s2l_map[in[0]]);
-			sum_r = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_r);
-
-			sample = _mm_set1_ps(s2l_map[in[1]]);
-			sum_g = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_g);
-
-			sample = _mm_set1_ps(s2l_map[in[2]]);
-			sum_b = _mm_add_ps(_mm_mul_ps(coeffs, sample), sum_b);
-
-			in += 3;
-			coeff_buf += 4;
-		}
-
-		_mm_store_ss(out, sum_r);
-		_mm_store_ss(out+1, sum_g);
-		_mm_store_ss(out+2, sum_b);
-
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
-
-		out += 3;
-	}
-}
-
-static void xscale_down_rgb(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
+static void scale_down_rgb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
-	float linear[3], sum[3][4] = {{ 0.0f }};
+	float sum[3][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<3; k++) {
-				linear[k] = s2l_map[in[k]];
-			}
-			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(linear[k], coeff_buf, sum[k]);
+				add_sample_to_sum_f(s2l_map[in[k]], coeffs_x, sum[k]);
 			}
 			in += 3;
-			coeff_buf += 4;
+			coeffs_x += 4;
 		}
-		dump_out(out, sum, 3);
-		out += 3;
+
+		for (j=0; j<3; j++) {
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			shift_left_f(sum[j]);
+			sums_y += 4;
+		}
 	}
 }
 
-static void xscale_down_g(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
+static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
 {
 	int i, j;
 	float sum[4] = { 0.0f };
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
-			add_sample_to_sum_f(i2f_map[in[0]], coeff_buf, sum);
+			add_sample_to_sum_f(i2f_map[in[0]], coeffs_x, sum);
 			in += 1;
-			coeff_buf += 4;
+			coeffs_x += 4;
 		}
-		out[0] = sum[0];
+		add_sample_to_sum_f(sum[0], coeffs_y, sums_y);
 		shift_left_f(sum);
-		out += 1;
+		sums_y += 4;
 	}
 }
 
-static void xscale_down_cmyk(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
+static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
 	float sum[4][4] = {{ 0.0f }};
@@ -795,18 +684,22 @@ static void xscale_down_cmyk(unsigned char *in, float *out,
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			for (k=0; k<4; k++) {
-				add_sample_to_sum_f(i2f_map[in[k]], coeff_buf, sum[k]);
+				add_sample_to_sum_f(i2f_map[in[k]], coeffs_x, sum[k]);
 			}
 			in += 4;
-			coeff_buf += 4;
+			coeffs_x += 4;
 		}
-		dump_out(out, sum, 4);
-		out += 4;
+
+		for (j=0; j<4; j++) {
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			shift_left_f(sum[j]);
+			sums_y += 4;
+		}
 	}
 }
 
-static void xscale_down_rgba(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
+static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
 	float alpha, sum[4][4] = {{ 0.0f }};
@@ -815,19 +708,23 @@ static void xscale_down_rgba(unsigned char *in, float *out,
 		for (j=0; j<border_buf[i]; j++) {
 			alpha = i2f_map[in[3]];
 			for (k=0; k<3; k++) {
-				add_sample_to_sum_f(s2l_map[in[k]] * alpha, coeff_buf, sum[k]);
+				add_sample_to_sum_f(s2l_map[in[k]] * alpha, coeffs_x, sum[k]);
 			}
-			add_sample_to_sum_f(alpha, coeff_buf, sum[3]);
+			add_sample_to_sum_f(alpha, coeffs_x, sum[3]);
 			in += 4;
-			coeff_buf += 4;
+			coeffs_x += 4;
 		}
-		dump_out(out, sum, 4);
-		out += 4;
+
+		for (j=0; j<4; j++) {
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			shift_left_f(sum[j]);
+			sums_y += 4;
+		}
 	}
 }
 
-static void xscale_down_ga(unsigned char *in, float *out,
-	int out_width, float *coeff_buf, int *border_buf)
+static void scale_down_ga(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
 {
 	int i, j;
 	float alpha, sum[2][4] = {{ 0.0f }};
@@ -835,42 +732,17 @@ static void xscale_down_ga(unsigned char *in, float *out,
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			alpha = i2f_map[in[1]];
-			add_sample_to_sum_f(i2f_map[in[0]] * alpha, coeff_buf, sum[0]);
-			add_sample_to_sum_f(alpha, coeff_buf, sum[1]);
+			add_sample_to_sum_f(i2f_map[in[0]] * alpha, coeffs_x, sum[0]);
+			add_sample_to_sum_f(alpha, coeffs_x, sum[1]);
 			in += 2;
-			coeff_buf += 4;
+			coeffs_x += 4;
 		}
-		dump_out(out, sum, 2);
-		out += 2;
-	}
-}
 
-static void oil_xscale_down(unsigned char *in, float *out,
-	int width_out, enum oil_colorspace cs_in, float *coeff_buf,
-	int *border_buf, int use_sse)
-{
-	switch(cs_in) {
-	case OIL_CS_RGB:
-		if (use_sse) {
-			xscale_down_rgb_sse(in, out, width_out, coeff_buf, border_buf);
-		} else {
-			xscale_down_rgb(in, out, width_out, coeff_buf, border_buf);
+		for (j=0; j<2; j++) {
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			shift_left_f(sum[j]);
+			sums_y += 4;
 		}
-		break;
-	case OIL_CS_G:
-		xscale_down_g(in, out, width_out, coeff_buf, border_buf);
-		break;
-	case OIL_CS_CMYK:
-		xscale_down_cmyk(in, out, width_out, coeff_buf, border_buf);
-		break;
-	case OIL_CS_RGBA:
-		xscale_down_rgba(in, out, width_out, coeff_buf, border_buf);
-		break;
-	case OIL_CS_GA:
-		xscale_down_ga(in, out, width_out, coeff_buf, border_buf);
-		break;
-	case OIL_CS_UNKNOWN:
-		break;
 	}
 }
 
@@ -1010,7 +882,7 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 void oil_global_init(void)
 {
 	build_s2l();
-	build_l2s();
+	build_l2s_rights();
 	build_i2f();
 }
 
@@ -1021,7 +893,7 @@ void oil_set_use_sse(struct oil_scale *os, int use_sse)
 
 static int calc_coeffs_len(int in_dim, int out_dim)
 {
-	return 4 * max(in_dim, out_dim) * sizeof(float);
+	return TAPS * max(in_dim, out_dim) * sizeof(float);
 }
 
 static int calc_borders_len(int in_dim, int out_dim)
@@ -1029,26 +901,84 @@ static int calc_borders_len(int in_dim, int out_dim)
 	return min(in_dim, out_dim) * sizeof(int);
 }
 
-static void set_coeffs(int in_dim, int out_dim, float *coeffs, int *borders,
-	float *tmp)
+static int upscale_init(struct oil_scale *os)
 {
-	if (out_dim <= in_dim) {
-		xscale_calc_coeffs(in_dim, out_dim, coeffs, borders, tmp);
-	} else {
-		scale_up_coeffs(in_dim, out_dim, coeffs, borders);
+	int coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, rb_len;
+
+	coeffs_x_len = calc_coeffs_len(os->in_width, os->out_width);
+	borders_x_len = calc_borders_len(os->in_width, os->out_width);
+	coeffs_y_len = calc_coeffs_len(os->in_height, os->out_height);
+	borders_y_len = calc_borders_len(os->in_height, os->out_height);
+	rb_len = os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float);
+
+	os->coeffs_x = calloc(1, coeffs_x_len);
+	os->borders_x = calloc(1, borders_x_len);
+	os->coeffs_y = calloc(1, coeffs_y_len);
+	os->borders_y = calloc(1, borders_y_len);
+	os->rb = calloc(1, rb_len);
+
+	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y || !os->borders_y || !os->rb) {
+		oil_scale_free(os);
+		return -2;
 	}
+
+	scale_up_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x);
+	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
+
+	return 0;
+}
+
+static int downscale_init(struct oil_scale *os)
+{
+	int taps_x, taps_y, coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, sums_len,
+		tmp_len;
+
+	taps_x = calc_taps(os->in_width, os->out_width);
+	taps_y = calc_taps(os->in_height, os->out_height);
+
+	coeffs_x_len = calc_coeffs_len(os->in_width, os->out_width);
+	borders_x_len = calc_borders_len(os->in_width, os->out_width);
+	coeffs_y_len = calc_coeffs_len(os->in_height, os->out_height);
+	borders_y_len = calc_borders_len(os->in_height, os->out_height);
+	tmp_len = max(taps_x, taps_y) * sizeof(float);
+	sums_len = os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float);
+
+	os->coeffs_x = aligned_alloc(16, coeffs_x_len);
+	memset(os->coeffs_x, 0, coeffs_x_len);
+	os->borders_x = calloc(1, borders_x_len);
+	os->coeffs_y = calloc(1, coeffs_y_len);
+	os->borders_y = calloc(1, borders_y_len);
+	os->sums_y = aligned_alloc(16, sums_len);
+	memset(os->sums_y, 0, sums_len);
+	os->tmp_coeffs = malloc(tmp_len);
+
+	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y || !os->borders_y ||
+		!os->tmp_coeffs || !os->sums_y) {
+		oil_scale_free(os);
+		return -2;
+	}
+
+	scale_down_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x,
+		os->tmp_coeffs);
+	scale_down_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y,
+		os->tmp_coeffs);
+
+	return 0;
 }
 
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {
-	int taps_x, taps_y, coeffs_x_len, coeffs_y_len, borders_x_len,
-		borders_y_len, rb_len, sums_len, tmp_len;
-
+	/* sanity check on arguments */
 	if (!os || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
 		in_height < 1 || out_height < 1 ||
 		in_width > MAX_DIMENSION || out_width > MAX_DIMENSION ||
 		in_width < 1 || out_width < 1) {
+		return -1;
+	}
+
+	/* only allow upscaling if both dimensions are being upscaled */
+	if ((out_height > in_height) != (out_width > in_width)) {
 		return -1;
 	}
 
@@ -1058,50 +988,17 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 		oil_global_init();
 	}
 
-	taps_x = calc_taps(in_width, out_width);
-	taps_y = calc_taps(in_height, out_height);
-
-	coeffs_x_len = calc_coeffs_len(in_width, out_width);
-	borders_x_len = calc_borders_len(in_width, out_width);
-	coeffs_y_len = calc_coeffs_len(in_height, out_height);
-	borders_y_len = calc_borders_len(in_height, out_height);
-	rb_len = out_width * OIL_CMP(cs) * taps_y * sizeof(float);
-	tmp_len = max(taps_x, taps_y) * sizeof(float);
-	sums_len = 0;
-	if (out_height <= in_height) {
-		sums_len = out_width * OIL_CMP(cs) * 4 * sizeof(float);
-		rb_len = out_width * OIL_CMP(cs) * sizeof(float);
-	}
-
 	memset(os, 0, sizeof(struct oil_scale));
 	os->in_height = in_height;
 	os->out_height = out_height;
 	os->in_width = in_width;
 	os->out_width = out_width;
 	os->cs = cs;
-	//os->coeffs_x = calloc(1, coeffs_x_len);
-	os->coeffs_x = aligned_alloc(16, coeffs_x_len);
-	memset(os->coeffs_x, 0, coeffs_x_len);
-	os->borders_x = calloc(1, borders_x_len);
-	os->coeffs_y = calloc(1, coeffs_y_len);
-	os->borders_y = calloc(1, borders_y_len);
-	os->rb = calloc(1, rb_len);
-	//os->sums_y = calloc(1, sums_len);
-	os->sums_y = aligned_alloc(16, sums_len);
-	memset(os->sums_y, 0, sums_len);
-	os->tmp_coeffs = malloc(tmp_len);
 
-	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y ||
-		!os->borders_y || !os->rb || !os->tmp_coeffs ||
-		(sums_len && !os->sums_y)) {
-		oil_scale_free(os);
-		return -2;
+	if (out_width > in_width) {
+		return upscale_init(os);
 	}
-
-	set_coeffs(in_width, out_width, os->coeffs_x, os->borders_x, os->tmp_coeffs);
-	set_coeffs(in_height, out_height, os->coeffs_y, os->borders_y, os->tmp_coeffs);
-
-	return 0;
+	return downscale_init(os);
 }
 
 void oil_scale_restart(struct oil_scale *os)
@@ -1149,55 +1046,84 @@ static float *get_rb_line(struct oil_scale *os, int line)
 	return os->rb + line * sl_len;
 }
 
-void oil_scale_in(struct oil_scale *os, unsigned char *in)
+static void down_scale_in(struct oil_scale *os, unsigned char *in)
 {
 	float *coeffs_y;
 
 	coeffs_y = os->coeffs_y + os->in_pos * 4;
 
-	xscale_down_rgb_sse_both(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+	switch(os->cs) {
+	case OIL_CS_RGB:
+		if (os->use_sse) {
+			scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		} else {
+			scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		}
+		break;
+	case OIL_CS_G:
+		scale_down_g(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_CMYK:
+		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_RGBA:
+		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_GA:
+		scale_down_ga(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
+	}
+
 	os->borders_y[os->out_pos] -= 1;
+	os->in_pos++;
+}
+
+static void up_scale_in(struct oil_scale *os, unsigned char *in)
+{
+	float *tmp;
+
+	tmp = get_rb_line(os, os->in_pos % 4);
+	oil_xscale_up(in, os->in_width, tmp, os->cs, os->coeffs_x, os->borders_x);
 
 	os->in_pos++;
 }
 
 void _oil_scale_in(struct oil_scale *os, unsigned char *in)
 {
-	float *tmp, *coeffs;
+	float *coeffs_y;
 
-	// If we're vertically scaling down, then we maintain a buffer of the
-	// next 4 output sums.
-	tmp = os->rb;
-	if (os->out_height > os->in_height) {
-		tmp = get_rb_line(os, os->in_pos % 4);
-	}
+	coeffs_y = os->coeffs_y + os->in_pos * 4;
 
-	if (os->out_width <= os->in_width) {
-		oil_xscale_down(in, tmp, os->out_width, os->cs,
-			os->coeffs_x, os->borders_x, os->use_sse);
-		os->borders_y[os->out_pos] -= 1;
-	} else {
-		oil_xscale_up(in, os->in_width, tmp, os->cs,
-			os->coeffs_x, os->borders_x);
-	}
+	scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 
-	if (os->out_height <= os->in_height) {
-		coeffs = os->coeffs_y + os->in_pos * 4;
-		yscale_down(tmp, os->out_width, coeffs, os->sums_y, os->cs,
-		os->use_sse);
-	}
-
+	os->borders_y[os->out_pos] -= 1;
 	os->in_pos++;
+}
+
+void oil_scale_in(struct oil_scale *os, unsigned char *in)
+{
+	if (os->out_width > os->in_width) {
+		up_scale_in(os, in);
+	} else {
+		down_scale_in(os, in);
+	}
+}
+
+void _oil_scale_out(struct oil_scale *os, unsigned char *out)
+{
+	int sl_len;
+
+	sl_len = os->out_width * OIL_CMP(os->cs);
+	yscale_out_linear(os->sums_y, sl_len, out);
+	os->out_pos++;
 }
 
 void oil_scale_out(struct oil_scale *os, unsigned char *out)
 {
 	int i, sl_len;
 	float *in[4];
-
-	yscale_out_linear(os->sums_y, os->out_width * 3, out);
-	os->out_pos++;
-	return;
 
 	if (os->out_height <= os->in_height) {
 		yscale_out(os->sums_y, os->out_width, out, os->cs);

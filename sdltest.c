@@ -168,7 +168,7 @@ static int resumable_resize_do(struct resumable_resize *rr) {
 			return -2;
 		}
 		oil_libjpeg_read_scanline(rr->olj, rr->outbuf);
-		rr->ypos += 1;
+				rr->ypos += 1;
 	}
 	translate(rr->outbuf, tmp, rr->out_width);
 	return rr->ypos == rr->out_height ? 0 : -1;
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
 	char *path;
 	int ret, event_happened, render_in_progress, surface_is_dirty;
 	struct resumable_resize rr;
-	Uint32 lastUpdateTime, currentTime, elapsedTime;
+	Uint32 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
 
 	path = argv[1];
 
@@ -205,6 +205,8 @@ int main(int argc, char **argv) {
 
 	surface = SDL_GetWindowSurface(window);
 	clear_surface(surface);
+	lastUpdateTime = 0;
+	resize_start_time = 0;
 	resumable_resize_start_from_surface(&rr, path, surface);
 	render_in_progress = 1;
 	surface_is_dirty = 1;
@@ -229,6 +231,7 @@ int main(int argc, char **argv) {
 			}
 			surface = SDL_GetWindowSurface(window);
 			clear_surface(surface);
+			resize_start_time = SDL_GetTicks();
 			resumable_resize_start_from_surface(&rr, path, surface);
 			render_in_progress = 1;
 			surface_is_dirty = 1;
@@ -242,6 +245,8 @@ int main(int argc, char **argv) {
 				SDL_UpdateWindowSurface(window);
 				surface_is_dirty = 0;
 				lastUpdateTime = SDL_GetTicks();
+				elapsed_time = SDL_GetTicks() - resize_start_time;
+				fprintf(stderr, "Resize ticks: %d\n", elapsed_time);
 			} else if (ret == -1) { // -1 means one scanline finished
 				surface_is_dirty = 1;
 			}
@@ -249,8 +254,8 @@ int main(int argc, char **argv) {
 
 		if (surface_is_dirty) {
 			currentTime = SDL_GetTicks();
-			elapsedTime = currentTime - lastUpdateTime;
-			if (elapsedTime >= 1000 / 60) {
+			elapsed_time = currentTime - lastUpdateTime;
+			if (elapsed_time >= 1000 / 60) {
 				SDL_UpdateWindowSurface(window);
 				surface_is_dirty = 0;
 				lastUpdateTime = currentTime;
