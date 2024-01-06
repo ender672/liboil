@@ -156,6 +156,112 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 	}
 }
 
+// an old exact approach
+static int linear_sample_to_srgb(float in)
+{
+	float val, tmp;
+
+	// if (in < 0) {
+	// 	return 0;
+	// }
+
+	// if (in > 1) {
+	// 	return 255;
+	// }
+
+	if (in <= 0.0031308f) {
+		val = in * 12.92f;
+	} else {
+		tmp = powf(in, 1/2.4f);
+		val = 1.055f * tmp - 0.055f;
+	}
+
+	return roundf(val * 255);
+}
+
+
+static unsigned char blog2_linear_sample_to_srgb(float in)
+{
+	float val, s1, s2, s3;
+
+	s1 = sqrtf(in);
+	s2 = sqrtf(s1);
+	s3 = sqrtf(s2);
+	val = 0.662002687f * s1 + 0.684122060f * s2 - 0.323583601f * s3 - 0.0225411470f * in;
+
+	if (val < 0) {
+		return 0;
+	}
+
+	if (val > 1) {
+		return 255;
+	}
+
+	return roundf(val * 255);
+}
+
+static unsigned char blog_linear_sample_to_srgb(float in)
+{
+	float val, s1, s2, s3;
+
+	s1 = sqrtf(in);
+	s2 = sqrtf(s1);
+	s3 = sqrtf(s2);
+	val = 0.585122381f * s1 + 0.783140355f * s2 - 0.368262736f * s3;
+
+	if (val < 0) {
+		return 0;
+	}
+
+	if (val > 1) {
+		return 255;
+	}
+
+	return roundf(val * 255);
+}
+
+static unsigned char timold_linear_sample_to_srgb(float in)
+{
+	float val, s1, s2, s3;
+
+	s1 = sqrtf(in);
+	s2 = sqrtf(s1);
+	s3 = sqrtf(s2);
+	val = 0.0427447f + 0.547242f * s1 + 0.928361f * s2 - 0.518123f * s3;
+
+	if (val < 0) {
+		return 0;
+	}
+
+	if (val > 1) {
+		return 255;
+	}
+
+	return roundf(val * 255);
+}
+
+static unsigned char ___linear_sample_to_srgb(float in)
+{
+	double val, tmp;
+
+	if (in < 0) {
+		return 0;
+	}
+
+	if (in > 1) {
+		return 255;
+	}
+
+	if (in <= 0.0031308) {
+		val = in * 12.92;
+	} else {
+		tmp = pow(in, 1/2.4);
+		val = 1.055 * tmp - 0.055;
+	}
+
+	return round(val * 255);
+}
+
 /**
  * Holds pre-calculated table of linear float to srgb char mappings.
  * Initialized via build_l2s_rights();
@@ -188,7 +294,7 @@ static void build_l2s_rights(void)
  * 
  * Performs a binary search on l2s_rights.
  */
-static int linear_sample_to_srgb(float in)
+static int _linear_sample_to_srgb(float in)
 {
 	int offs, i;
 	offs = 0;
@@ -198,6 +304,55 @@ static int linear_sample_to_srgb(float in)
 		}
 	}
 	return in > l2s_rights[offs] ? offs + 1 : offs;
+}
+
+/**
+ * Pre-calculated table of linear to srgb mappings. Initialized via build_l2s().
+ *
+ * catmull-rom interpolation can produce values from -17/64 to 81/64.
+ *
+ * The total allocated space will be split into three parts:
+ *   * 17/98 of padding below zero
+ *   * 64/98 of mapping
+ *   * 17/98 of padding above one
+ */
+#define L2S_ALL_LEN 32768
+static unsigned char l2s_map_all[L2S_ALL_LEN];
+static int l2s_len;
+static unsigned char *l2s_map;
+
+static void build_l2s(void)
+{
+	int i, padding;
+	double srgb_f, tmp, val;
+
+	padding = L2S_ALL_LEN * 17 / 98;
+	l2s_len = L2S_ALL_LEN - 2 * padding;
+	l2s_map = l2s_map_all + padding;
+
+	for (i=0; i<l2s_len; i++) {
+		srgb_f = (i + 0.5)/(l2s_len - 1);
+		if (srgb_f <= 0.00313) {
+			val = srgb_f * 12.92;
+		} else {
+			tmp = pow(srgb_f, 1/2.4);
+			val = 1.055 * tmp - 0.055;
+		}
+
+		l2s_map[i] = round(val * 255);
+	}
+
+	for (i=0; i<padding; i++) {
+		l2s_map[l2s_len + i] = 255;
+	}
+}
+
+/**
+ * Maps the given linear RGB float to sRGB integer.
+ */
+static unsigned char __linear_sample_to_srgb(float in)
+{
+	return l2s_map[(int)(in * (l2s_len - 1))];
 }
 
 /**
@@ -883,6 +1038,7 @@ void oil_global_init(void)
 {
 	build_s2l();
 	build_l2s_rights();
+	build_l2s();
 	build_i2f();
 }
 
