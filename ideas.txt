@@ -1,0 +1,9 @@
+* For more accurate aspect-ratio preserving scaling, use the following reverse mapping function:
+  1. Calculate both x-scale & y-scale inverse scale factors, in/out.
+  2. Use the smaller scale factor of the two. Use this factor for both x-scale & 
+     y-scale.
+  3. Let's call the dimension that adopts the other dimension's scale the
+     "trimmed dimension".
+  3. Center the source coordinate grid in the trimmed dimension with the
+     following algorithm:
+       reverse_map = (x + 0.5) * adopted_scale_factor - 0.5 + (trimmed_dimension - non_trimmed_dimension) / 2
