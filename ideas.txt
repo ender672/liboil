@@ -1,9 +1,37 @@
-* For more accurate aspect-ratio preserving scaling, use the following reverse mapping function:
-  1. Calculate both x-scale & y-scale inverse scale factors, in/out.
-  2. Use the smaller scale factor of the two. Use this factor for both x-scale & 
-     y-scale.
-  3. Let's call the dimension that adopts the other dimension's scale the
-     "trimmed dimension".
-  3. Center the source coordinate grid in the trimmed dimension with the
-     following algorithm:
-       reverse_map = (x + 0.5) * adopted_scale_factor - 0.5 + (trimmed_dimension - non_trimmed_dimension) / 2
+* Exact aspect-ratio preservation via shared scale factor
+
+  The current approach (oil_fix_ratio) rounds one output dimension to the
+  nearest integer so both dimensions fit within a bounding box. Because of the
+  rounding, the actual x and y scale factors (in/out) differ slightly, causing
+  a tiny aspect ratio distortion.
+
+  A better approach: use one exact scale factor for both dimensions and absorb
+  the remainder as a sub-pixel centering offset rather than rounding an output
+  dimension.
+
+  Algorithm:
+  1. Calculate both inverse scale factors: x_scale = in_w/out_w,
+     y_scale = in_h/out_h.
+  2. Use the smaller scale factor for both dimensions. The dimension that
+     adopts the other's scale factor is the "trimmed dimension".
+  3. The trimmed dimension's reverse map gets a centering offset:
+       offset = (input_trimmed - output_trimmed * adopted_scale) / 2
+       reverse_map = (x + 0.5) * adopted_scale - 0.5 + offset
+  4. The non-trimmed dimension uses the standard reverse map:
+       reverse_map = (x + 0.5) * scale - 0.5
+
+  The (x + 0.5) * scale - 0.5 pattern maps output pixel centers to input
+  pixel centers (not edges), avoiding a half-pixel shift.
+
+  Why this is safe: the resampler already interpolates at fractional input
+  positions for nearly every scale factor -- that's what split_map() and the
+  sub-pixel remainder are for. The centering offset is just one more fractional
+  shift; Catmull-Rom handles it the same way.
+
+  The trimming is typically a fraction of a pixel -- just enough to account for
+  what round() currently loses. The result is exact aspect ratio preservation
+  with no change in interpolation quality.
+
+  Implementation: could replace oil_fix_ratio() with a helper that returns an
+  offset (or modifies oil_scale to carry the offset internally) rather than
+  adjusting output dimensions.
