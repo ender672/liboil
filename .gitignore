@@ -6,6 +6,9 @@ benchmark
 *.jpg
 *.png
 
+local.mk
+.vscode/
+
 # OSX
 test.dSYM
 .DS_Store
