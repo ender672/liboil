@@ -156,156 +156,6 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 	}
 }
 
-// an old exact approach
-static int linear_sample_to_srgb(float in)
-{
-	float val, tmp;
-
-	// if (in < 0) {
-	// 	return 0;
-	// }
-
-	// if (in > 1) {
-	// 	return 255;
-	// }
-
-	if (in <= 0.0031308f) {
-		val = in * 12.92f;
-	} else {
-		tmp = powf(in, 1/2.4f);
-		val = 1.055f * tmp - 0.055f;
-	}
-
-	return roundf(val * 255);
-}
-
-
-static unsigned char blog2_linear_sample_to_srgb(float in)
-{
-	float val, s1, s2, s3;
-
-	s1 = sqrtf(in);
-	s2 = sqrtf(s1);
-	s3 = sqrtf(s2);
-	val = 0.662002687f * s1 + 0.684122060f * s2 - 0.323583601f * s3 - 0.0225411470f * in;
-
-	if (val < 0) {
-		return 0;
-	}
-
-	if (val > 1) {
-		return 255;
-	}
-
-	return roundf(val * 255);
-}
-
-static unsigned char blog_linear_sample_to_srgb(float in)
-{
-	float val, s1, s2, s3;
-
-	s1 = sqrtf(in);
-	s2 = sqrtf(s1);
-	s3 = sqrtf(s2);
-	val = 0.585122381f * s1 + 0.783140355f * s2 - 0.368262736f * s3;
-
-	if (val < 0) {
-		return 0;
-	}
-
-	if (val > 1) {
-		return 255;
-	}
-
-	return roundf(val * 255);
-}
-
-static unsigned char timold_linear_sample_to_srgb(float in)
-{
-	float val, s1, s2, s3;
-
-	s1 = sqrtf(in);
-	s2 = sqrtf(s1);
-	s3 = sqrtf(s2);
-	val = 0.0427447f + 0.547242f * s1 + 0.928361f * s2 - 0.518123f * s3;
-
-	if (val < 0) {
-		return 0;
-	}
-
-	if (val > 1) {
-		return 255;
-	}
-
-	return roundf(val * 255);
-}
-
-static unsigned char ___linear_sample_to_srgb(float in)
-{
-	double val, tmp;
-
-	if (in < 0) {
-		return 0;
-	}
-
-	if (in > 1) {
-		return 255;
-	}
-
-	if (in <= 0.0031308) {
-		val = in * 12.92;
-	} else {
-		tmp = pow(in, 1/2.4);
-		val = 1.055 * tmp - 0.055;
-	}
-
-	return round(val * 255);
-}
-
-/**
- * Holds pre-calculated table of linear float to srgb char mappings.
- * Initialized via build_l2s_rights();
- */
-static float l2s_rights[256];
-
-/**
- * Populates l2s_rights.
- */
-static void build_l2s_rights(void)
-{
-	int i;
-	double srgb_f, tmp, val;
-
-	for (i=0; i<255; i++) {
-		srgb_f = (i + 0.5)/255.0;
-		if (srgb_f <= 0.0404482362771082) {
-			val = srgb_f / 12.92;
-		} else {
-			tmp = (srgb_f + 0.055)/1.055;
-			val = pow(tmp, 2.4);
-		}
-		l2s_rights[i] = val;
-	}
-	l2s_rights[i] = 256.0f;
-}
-
-/**
- * Maps the given linear RGB float to sRGB integer.
- * 
- * Performs a binary search on l2s_rights.
- */
-static int _linear_sample_to_srgb(float in)
-{
-	int offs, i;
-	offs = 0;
-	for (i=128; i>0; i >>= 1) {
-		if (in > l2s_rights[offs + i]) {
-			offs += i;
-		}
-	}
-	return in > l2s_rights[offs] ? offs + 1 : offs;
-}
-
 /**
  * Pre-calculated table of linear to srgb mappings. Initialized via build_l2s().
  *
@@ -350,7 +200,7 @@ static void build_l2s(void)
 /**
  * Maps the given linear RGB float to sRGB integer.
  */
-static unsigned char __linear_sample_to_srgb(float in)
+static unsigned char linear_sample_to_srgb(float in)
 {
 	return l2s_map[(int)(in * (l2s_len - 1))];
 }
@@ -1037,7 +887,6 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 void oil_global_init(void)
 {
 	build_s2l();
-	build_l2s_rights();
 	build_l2s();
 	build_i2f();
 }
