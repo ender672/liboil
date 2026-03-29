@@ -998,13 +998,14 @@ static int calc_borders_len(int in_dim, int out_dim)
 	return min(in_dim, out_dim) * sizeof(int);
 }
 
-static int upscale_alloc_size(struct oil_scale *os)
+static int upscale_alloc_size(int in_height, int out_height, int in_width,
+	int out_width, enum oil_colorspace cs)
 {
-	return ALIGN16(calc_coeffs_len(os->in_width, os->out_width))
-		+ ALIGN16(calc_borders_len(os->in_width, os->out_width))
-		+ ALIGN16(calc_coeffs_len(os->in_height, os->out_height))
-		+ ALIGN16(calc_borders_len(os->in_height, os->out_height))
-		+ ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+	return ALIGN16(calc_coeffs_len(in_width, out_width))
+		+ ALIGN16(calc_borders_len(in_width, out_width))
+		+ ALIGN16(calc_coeffs_len(in_height, out_height))
+		+ ALIGN16(calc_borders_len(in_height, out_height))
+		+ ALIGN16(out_width * OIL_CMP(cs) * TAPS * sizeof(float));
 }
 
 static void upscale_init(struct oil_scale *os)
@@ -1028,19 +1029,20 @@ static void upscale_init(struct oil_scale *os)
 	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
 }
 
-static int downscale_alloc_size(struct oil_scale *os)
+static int downscale_alloc_size(int in_height, int out_height, int in_width,
+	int out_width, enum oil_colorspace cs)
 {
 	int taps_x, taps_y;
 
-	taps_x = calc_taps(os->in_width, os->out_width);
-	taps_y = calc_taps(os->in_height, os->out_height);
+	taps_x = calc_taps(in_width, out_width);
+	taps_y = calc_taps(in_height, out_height);
 
-	return ALIGN16(calc_coeffs_len(os->in_width, os->out_width))
-		+ ALIGN16(calc_borders_len(os->in_width, os->out_width))
-		+ ALIGN16(calc_coeffs_len(os->in_height, os->out_height))
-		+ ALIGN16(calc_borders_len(os->in_height, os->out_height))
+	return ALIGN16(calc_coeffs_len(in_width, out_width))
+		+ ALIGN16(calc_borders_len(in_width, out_width))
+		+ ALIGN16(calc_coeffs_len(in_height, out_height))
+		+ ALIGN16(calc_borders_len(in_height, out_height))
 		+ ALIGN16(max(taps_x, taps_y) * sizeof(float))
-		+ ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+		+ ALIGN16(out_width * OIL_CMP(cs) * TAPS * sizeof(float));
 }
 
 static void downscale_init(struct oil_scale *os)
@@ -1066,6 +1068,18 @@ static void downscale_init(struct oil_scale *os)
 		os->tmp_coeffs);
 	scale_down_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y,
 		os->tmp_coeffs);
+}
+
+int oil_scale_alloc_size(int in_height, int out_height, int in_width,
+	int out_width, enum oil_colorspace cs)
+{
+	if (out_width > in_width) {
+		return upscale_alloc_size(in_height, out_height, in_width,
+			out_width, cs);
+	} else {
+		return downscale_alloc_size(in_height, out_height, in_width,
+			out_width, cs);
+	}
 }
 
 int oil_scale_init_allocated(struct oil_scale *os, int in_height,
@@ -1111,22 +1125,11 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {
-	struct oil_scale tmp = {0};
 	int alloc_size, ret;
 	void *buf;
 
-	tmp.in_height = in_height;
-	tmp.out_height = out_height;
-	tmp.in_width = in_width;
-	tmp.out_width = out_width;
-	tmp.cs = cs;
-
-	if (out_width > in_width) {
-		alloc_size = upscale_alloc_size(&tmp);
-	} else {
-		alloc_size = downscale_alloc_size(&tmp);
-	}
-
+	alloc_size = oil_scale_alloc_size(in_height, out_height, in_width,
+		out_width, cs);
 	buf = calloc(1, alloc_size);
 	if (!buf) {
 		return -2;
