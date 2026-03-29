@@ -93,6 +93,23 @@ void oil_global_init(void);
 void oil_scale_reset(struct oil_scale *os);
 
 /**
+ * Initialize an oil scaler struct with a pre-allocated buffer.
+ * @os: Pointer to the scaler struct to be initialized.
+ * @in_height: Height, in pixels, of the input image.
+ * @out_height: Height, in pixels, of the output image.
+ * @in_width: Width, in pixels, of the input image.
+ * @out_width: Width, in pixels, of the output image.
+ * @cs: Color space of the input/output images.
+ * @buf: Pre-allocated buffer for internal use.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ */
+int oil_scale_init_allocated(struct oil_scale *os, int in_height,
+	int out_height, int in_width, int out_width, enum oil_colorspace cs,
+	void *buf);
+
+/**
  * Initialize an oil scaler struct.
  * @os: Pointer to the scaler struct to be initialized.
  * @in_height: Height, in pixels, of the input image.

@@ -1068,13 +1068,12 @@ static void downscale_init(struct oil_scale *os)
 		os->tmp_coeffs);
 }
 
-int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
-	int in_width, int out_width, enum oil_colorspace cs)
+int oil_scale_init_allocated(struct oil_scale *os, int in_height,
+	int out_height, int in_width, int out_width, enum oil_colorspace cs,
+	void *buf)
 {
-	int alloc_size;
-
 	/* sanity check on arguments */
-	if (!os || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
+	if (!os || !buf || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
 		in_height < 1 || out_height < 1 ||
 		in_width > MAX_DIMENSION || out_width > MAX_DIMENSION ||
 		in_width < 1 || out_width < 1) {
@@ -1098,22 +1097,46 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	os->in_width = in_width;
 	os->out_width = out_width;
 	os->cs = cs;
-
-	if (out_width > in_width) {
-		alloc_size = upscale_alloc_size(os);
-	} else {
-		alloc_size = downscale_alloc_size(os);
-	}
-
-	os->buf = calloc(1, alloc_size);
-	if (!os->buf) {
-		return -2;
-	}
+	os->buf = buf;
 
 	if (out_width > in_width) {
 		upscale_init(os);
 	} else {
 		downscale_init(os);
+	}
+
+	return 0;
+}
+
+int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
+	int in_width, int out_width, enum oil_colorspace cs)
+{
+	struct oil_scale tmp = {0};
+	int alloc_size, ret;
+	void *buf;
+
+	tmp.in_height = in_height;
+	tmp.out_height = out_height;
+	tmp.in_width = in_width;
+	tmp.out_width = out_width;
+	tmp.cs = cs;
+
+	if (out_width > in_width) {
+		alloc_size = upscale_alloc_size(&tmp);
+	} else {
+		alloc_size = downscale_alloc_size(&tmp);
+	}
+
+	buf = calloc(1, alloc_size);
+	if (!buf) {
+		return -2;
+	}
+
+	ret = oil_scale_init_allocated(os, in_height, out_height, in_width,
+		out_width, cs, buf);
+	if (ret) {
+		free(buf);
+		return ret;
 	}
 
 	return 0;
