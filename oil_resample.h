@@ -44,6 +44,9 @@ enum oil_colorspace {
 	// sRGB w/ alpha - alpha first, then sRGB to linear conversion and premultiplied alpha
 	OIL_CS_ARGB    = 0x0304,
 
+	// sRGB w/o alpha - 4 bytes per pixel, 4th byte (X) is ignored
+	OIL_CS_RGBX    = 0x0404,
+
 	// no color space conversions
 	OIL_CS_CMYK    = 0x0204,
 };
