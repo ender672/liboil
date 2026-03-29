@@ -1010,21 +1010,24 @@ static int calc_borders_len(int in_dim, int out_dim)
 	return min(in_dim, out_dim) * sizeof(int);
 }
 
-static int upscale_init(struct oil_scale *os)
+static int upscale_alloc_size(struct oil_scale *os)
 {
-	int coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, rb_len;
+	return ALIGN16(calc_coeffs_len(os->in_width, os->out_width))
+		+ ALIGN16(calc_borders_len(os->in_width, os->out_width))
+		+ ALIGN16(calc_coeffs_len(os->in_height, os->out_height))
+		+ ALIGN16(calc_borders_len(os->in_height, os->out_height))
+		+ ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+}
+
+static void upscale_init(struct oil_scale *os)
+{
+	int coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len;
 	char *p;
 
 	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
 	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
 	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
 	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
-	rb_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
-
-	os->buf = calloc(1, coeffs_x_len + borders_x_len + coeffs_y_len + borders_y_len + rb_len);
-	if (!os->buf) {
-		return -2;
-	}
 
 	p = os->buf;
 	os->coeffs_x = (float *)p;		p += coeffs_x_len;
@@ -1035,31 +1038,33 @@ static int upscale_init(struct oil_scale *os)
 
 	scale_up_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x);
 	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
-
-	return 0;
 }
 
-static int downscale_init(struct oil_scale *os)
+static int downscale_alloc_size(struct oil_scale *os)
 {
-	int taps_x, taps_y, coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, sums_len,
-		tmp_len;
-	char *p;
+	int taps_x, taps_y;
 
 	taps_x = calc_taps(os->in_width, os->out_width);
 	taps_y = calc_taps(os->in_height, os->out_height);
+
+	return ALIGN16(calc_coeffs_len(os->in_width, os->out_width))
+		+ ALIGN16(calc_borders_len(os->in_width, os->out_width))
+		+ ALIGN16(calc_coeffs_len(os->in_height, os->out_height))
+		+ ALIGN16(calc_borders_len(os->in_height, os->out_height))
+		+ ALIGN16(max(taps_x, taps_y) * sizeof(float))
+		+ ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+}
+
+static void downscale_init(struct oil_scale *os)
+{
+	int coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, sums_len;
+	char *p;
 
 	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
 	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
 	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
 	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
-	tmp_len = ALIGN16(max(taps_x, taps_y) * sizeof(float));
 	sums_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
-
-	os->buf = calloc(1, coeffs_x_len + borders_x_len + coeffs_y_len + borders_y_len +
-		sums_len + tmp_len);
-	if (!os->buf) {
-		return -2;
-	}
 
 	p = os->buf;
 	os->coeffs_x = (float *)p;		p += coeffs_x_len;
@@ -1073,13 +1078,13 @@ static int downscale_init(struct oil_scale *os)
 		os->tmp_coeffs);
 	scale_down_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y,
 		os->tmp_coeffs);
-
-	return 0;
 }
 
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs)
 {
+	int alloc_size;
+
 	/* sanity check on arguments */
 	if (!os || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
 		in_height < 1 || out_height < 1 ||
@@ -1107,9 +1112,23 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	os->cs = cs;
 
 	if (out_width > in_width) {
-		return upscale_init(os);
+		alloc_size = upscale_alloc_size(os);
+	} else {
+		alloc_size = downscale_alloc_size(os);
 	}
-	return downscale_init(os);
+
+	os->buf = calloc(1, alloc_size);
+	if (!os->buf) {
+		return -2;
+	}
+
+	if (out_width > in_width) {
+		upscale_init(os);
+	} else {
+		downscale_init(os);
+	}
+
+	return 0;
 }
 
 void oil_scale_restart(struct oil_scale *os)
