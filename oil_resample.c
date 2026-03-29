@@ -626,18 +626,6 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 	}
 }
 
-/**
- * Takes an array of n 4-element source arrays, writes the first element to the
- * next n positions of the output address, and shifts the source arrays.
- */
-static void dump_out(float *out, float sum[][4], int n)
-{
-	int i;
-	for (i=0; i<n; i++) {
-		out[i] = sum[i][0];
-		shift_left_f(sum[i]);
-	}
-}
 
 static void scale_down_rgb_sse(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)

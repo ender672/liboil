@@ -80,6 +80,7 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 		break;
 	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
 	case OIL_CS_RGBA:
+	case OIL_CS_ARGB:
 	case OIL_CS_UNKNOWN:
 		break;
 	}
@@ -114,7 +115,7 @@ double time_to_ms(clock_t t)
 	return (double)t / (CLOCKS_PER_SEC / 1000);
 }
 
-static void yscale_down_sse(float *in, int width, float *coeffs, float *sums)
+static __attribute__((unused)) void yscale_down_sse(float *in, int width, float *coeffs, float *sums)
 {
 	int i, sl_len;
 	__m128 coeffs2, sums2, sample;
@@ -131,7 +132,7 @@ static void yscale_down_sse(float *in, int width, float *coeffs, float *sums)
 	}
 }
 
-static void xscale_down_rgb_sse(unsigned char *in, float *out, int out_width, float *coeff_buf, int *border_buf)
+static __attribute__((unused)) void xscale_down_rgb_sse(unsigned char *in, float *out, int out_width, float *coeff_buf, int *border_buf)
 {
 	int i, j;
 	__m128 coeffs, sample, sum_r, sum_g, sum_b;
@@ -223,7 +224,7 @@ static void xscale_down_rgb_sse_both(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void oil_scale_in2(struct oil_scale *os, unsigned char *in)
+static __attribute__((unused)) void oil_scale_in2(struct oil_scale *os, unsigned char *in)
 {
 	float *coeffs;
 

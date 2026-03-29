@@ -59,6 +59,7 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 		break;
 	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
 	case OIL_CS_RGBA:
+	case OIL_CS_ARGB:
 	case OIL_CS_UNKNOWN:
 		break;
 	}
