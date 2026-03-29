@@ -998,6 +998,8 @@ void oil_set_use_sse(struct oil_scale *os, int use_sse)
 	os->use_sse = use_sse;
 }
 
+#define ALIGN16(x) (((x) + 15) & ~15)
+
 static int calc_coeffs_len(int in_dim, int out_dim)
 {
 	return TAPS * max(in_dim, out_dim) * sizeof(float);
@@ -1011,23 +1013,25 @@ static int calc_borders_len(int in_dim, int out_dim)
 static int upscale_init(struct oil_scale *os)
 {
 	int coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, rb_len;
+	char *p;
 
-	coeffs_x_len = calc_coeffs_len(os->in_width, os->out_width);
-	borders_x_len = calc_borders_len(os->in_width, os->out_width);
-	coeffs_y_len = calc_coeffs_len(os->in_height, os->out_height);
-	borders_y_len = calc_borders_len(os->in_height, os->out_height);
-	rb_len = os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float);
+	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
+	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
+	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
+	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
+	rb_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
 
-	os->coeffs_x = calloc(1, coeffs_x_len);
-	os->borders_x = calloc(1, borders_x_len);
-	os->coeffs_y = calloc(1, coeffs_y_len);
-	os->borders_y = calloc(1, borders_y_len);
-	os->rb = calloc(1, rb_len);
-
-	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y || !os->borders_y || !os->rb) {
-		oil_scale_free(os);
+	os->buf = calloc(1, coeffs_x_len + borders_x_len + coeffs_y_len + borders_y_len + rb_len);
+	if (!os->buf) {
 		return -2;
 	}
+
+	p = os->buf;
+	os->coeffs_x = (float *)p;		p += coeffs_x_len;
+	os->borders_x = (int *)p;		p += borders_x_len;
+	os->coeffs_y = (float *)p;		p += coeffs_y_len;
+	os->borders_y = (int *)p;		p += borders_y_len;
+	os->rb = (float *)p;
 
 	scale_up_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x);
 	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
@@ -1039,31 +1043,31 @@ static int downscale_init(struct oil_scale *os)
 {
 	int taps_x, taps_y, coeffs_x_len, coeffs_y_len, borders_x_len, borders_y_len, sums_len,
 		tmp_len;
+	char *p;
 
 	taps_x = calc_taps(os->in_width, os->out_width);
 	taps_y = calc_taps(os->in_height, os->out_height);
 
-	coeffs_x_len = calc_coeffs_len(os->in_width, os->out_width);
-	borders_x_len = calc_borders_len(os->in_width, os->out_width);
-	coeffs_y_len = calc_coeffs_len(os->in_height, os->out_height);
-	borders_y_len = calc_borders_len(os->in_height, os->out_height);
-	tmp_len = max(taps_x, taps_y) * sizeof(float);
-	sums_len = os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float);
+	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
+	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
+	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
+	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
+	tmp_len = ALIGN16(max(taps_x, taps_y) * sizeof(float));
+	sums_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
 
-	os->coeffs_x = aligned_alloc(16, coeffs_x_len);
-	memset(os->coeffs_x, 0, coeffs_x_len);
-	os->borders_x = calloc(1, borders_x_len);
-	os->coeffs_y = calloc(1, coeffs_y_len);
-	os->borders_y = calloc(1, borders_y_len);
-	os->sums_y = aligned_alloc(16, sums_len);
-	memset(os->sums_y, 0, sums_len);
-	os->tmp_coeffs = malloc(tmp_len);
-
-	if (!os->coeffs_x || !os->borders_x || !os->coeffs_y || !os->borders_y ||
-		!os->tmp_coeffs || !os->sums_y) {
-		oil_scale_free(os);
+	os->buf = calloc(1, coeffs_x_len + borders_x_len + coeffs_y_len + borders_y_len +
+		sums_len + tmp_len);
+	if (!os->buf) {
 		return -2;
 	}
+
+	p = os->buf;
+	os->coeffs_x = (float *)p;		p += coeffs_x_len;
+	os->borders_x = (int *)p;		p += borders_x_len;
+	os->coeffs_y = (float *)p;		p += coeffs_y_len;
+	os->borders_y = (int *)p;		p += borders_y_len;
+	os->sums_y = (float *)p;		p += sums_len;
+	os->tmp_coeffs = (float *)p;
 
 	scale_down_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x,
 		os->tmp_coeffs);
@@ -1119,19 +1123,14 @@ void oil_scale_free(struct oil_scale *os)
 		return;
 	}
 
-	free(os->rb);
-	os->rb = NULL;
-	free(os->coeffs_y);
-	os->coeffs_y = NULL;
-	free(os->coeffs_x);
+	free(os->buf);
+	os->buf = NULL;
 	os->coeffs_x = NULL;
-	free(os->borders_x);
 	os->borders_x = NULL;
-	free(os->borders_y);
+	os->coeffs_y = NULL;
 	os->borders_y = NULL;
-	free(os->sums_y);
+	os->rb = NULL;
 	os->sums_y = NULL;
-	free(os->tmp_coeffs);
 	os->tmp_coeffs = NULL;
 }
 
