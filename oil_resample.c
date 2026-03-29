@@ -303,6 +303,29 @@ static void yscale_out_rgba(float *sums, int width, unsigned char *out)
 	}
 }
 
+static void yscale_out_argb(float *sums, int width, unsigned char *out)
+{
+	int i, j;
+	float alpha;
+
+	for (i=0; i<width; i++) {
+		alpha = clampf(sums[12]);
+		if (alpha != 0) {
+			for (j=0; j<3; j++) {
+				sums[j * 4] /= alpha;
+			}
+		}
+		out[0] = round(alpha * 255.0f);
+		for (j=0; j<3; j++) {
+			out[j + 1] = linear_sample_to_srgb(clampf(sums[j * 4]));
+			shift_left_f(sums + j * 4);
+		}
+		shift_left_f(sums + 12);
+		sums += 16;
+		out += 4;
+	}
+}
+
 static void yscale_out(float *sums, int width, unsigned char *out,
 	enum oil_colorspace cs)
 {
@@ -323,6 +346,9 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		break;
 	case OIL_CS_RGBA:
 		yscale_out_rgba(sums, width, out);
+		break;
+	case OIL_CS_ARGB:
+		yscale_out_argb(sums, width, out);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -406,6 +432,31 @@ static void yscale_up_rgba(float **in, int len, float *coeffs,
 	}
 }
 
+static void yscale_up_argb(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	int i, j;
+	float alpha, sums[4];
+
+	for (i=0; i<len; i+=4) {
+		for (j=0; j<4; j++) {
+			sums[j] = coeffs[0] * in[0][i + j] +
+				coeffs[1] * in[1][i + j] +
+				coeffs[2] * in[2][i + j] +
+				coeffs[3] * in[3][i + j];
+		}
+		alpha = clampf(sums[3]);
+		out[i] = f2i(alpha * 255.0f);
+		for (j=0; j<3; j++) {
+			if (alpha != 0 && alpha != 1.0f) {
+				sums[j] /= alpha;
+				sums[j] = clampf(sums[j]);
+			}
+			out[i + j + 1] = linear_sample_to_srgb(sums[j]);
+		}
+	}
+}
+
 /**
  * Upscale a strip of scanlines. Branches to the correct interpolator using
  * the given colorspace.
@@ -426,6 +477,9 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 		break;
 	case OIL_CS_RGBA:
 		yscale_up_rgba(in, len, coeffs, out);
+		break;
+	case OIL_CS_ARGB:
+		yscale_up_argb(in, len, coeffs, out);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -751,6 +805,31 @@ static void scale_down_ga(unsigned char *in, float *sums_y, int out_width, float
 	}
 }
 
+static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+	int *border_buf, float *coeffs_y)
+{
+	int i, j, k;
+	float alpha, sum[4][4] = {{ 0.0f }};
+
+	for (i=0; i<out_width; i++) {
+		for (j=0; j<border_buf[i]; j++) {
+			alpha = i2f_map[in[0]];
+			for (k=0; k<3; k++) {
+				add_sample_to_sum_f(s2l_map[in[k + 1]] * alpha, coeffs_x, sum[k]);
+			}
+			add_sample_to_sum_f(alpha, coeffs_x, sum[3]);
+			in += 4;
+			coeffs_x += 4;
+		}
+
+		for (j=0; j<4; j++) {
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			shift_left_f(sum[j]);
+			sums_y += 4;
+		}
+	}
+}
+
 static void xscale_up_reduce_n(float in[][4], float *out, float *coeffs,
 	int cmp)
 {
@@ -840,6 +919,26 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 	}
 }
 
+static void xscale_up_argb(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf)
+{
+	int i, j;
+	float smp[4][4] = {{0}};
+
+	for (i=0; i<width_in; i++) {
+		push_f(smp[3], in[0] / 255.0f);
+		for (j=0; j<3; j++) {
+			push_f(smp[j], smp[3][3] * s2l_map[in[j + 1]]);
+		}
+		for (j=0; j<border_buf[i]; j++) {
+			xscale_up_reduce_n(smp, out, coeff_buf, 4);
+			out += 4;
+			coeff_buf += 4;
+		}
+		in += 4;
+	}
+}
+
 static void xscale_up_g(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -877,6 +976,9 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 		break;
 	case OIL_CS_GA:
 		xscale_up_ga(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_ARGB:
+		xscale_up_argb(in, width_in, out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -1076,6 +1178,9 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_GA:
 		scale_down_ga(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_ARGB:
+		scale_down_argb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
