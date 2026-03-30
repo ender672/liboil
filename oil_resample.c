@@ -243,8 +243,34 @@ static void shift_left_f(float *f)
 static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
 	int i;
+	__m128 scale, vals, fidx;
+	__m128i idx, v0, v1, v2, v3;
 
-	for (i=0; i<len; i++) {
+	scale = _mm_set1_ps((float)(l2s_len - 1));
+
+	for (i=0; i+3<len; i+=4) {
+		vals = _mm_set_ps(sums[12], sums[8], sums[4], sums[0]);
+		fidx = _mm_mul_ps(vals, scale);
+		idx = _mm_cvttps_epi32(fidx);
+
+		out[i]   = l2s_map[_mm_extract_epi32(idx, 0)];
+		out[i+1] = l2s_map[_mm_extract_epi32(idx, 1)];
+		out[i+2] = l2s_map[_mm_extract_epi32(idx, 2)];
+		out[i+3] = l2s_map[_mm_extract_epi32(idx, 3)];
+
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+
+		sums += 16;
+	}
+
+	for (; i<len; i++) {
 		out[i] = linear_sample_to_srgb(*sums);
 		shift_left_f(sums);
 		sums += 4;
