@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <jpeglib.h>
 #include <png.h>
+#if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
-
 static int get_is_sse_compatible(void) {
 	unsigned int eax, ebx, ecx, edx;
 
@@ -15,6 +15,11 @@ static int get_is_sse_compatible(void) {
 
 	return 0;
 }
+#else
+static int get_is_sse_compatible(void) {
+	return 0;
+}
+#endif
 
 static void png(FILE *input, FILE *output, int width, int height)
 {
