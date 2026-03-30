@@ -243,25 +243,32 @@ static void shift_left_f(float *f)
 static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
 	int i;
-	__m128 scale, vals, fidx;
+	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
 	__m128i idx, v0, v1, v2, v3;
 
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i+3<len; i+=4) {
-		vals = _mm_set_ps(sums[12], sums[8], sums[4], sums[0]);
-		fidx = _mm_mul_ps(vals, scale);
-		idx = _mm_cvttps_epi32(fidx);
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		f3 = _mm_castsi128_ps(v3);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
 		out[i]   = l2s_map[_mm_extract_epi32(idx, 0)];
 		out[i+1] = l2s_map[_mm_extract_epi32(idx, 1)];
 		out[i+2] = l2s_map[_mm_extract_epi32(idx, 2)];
 		out[i+3] = l2s_map[_mm_extract_epi32(idx, 3)];
 
-		v0 = _mm_load_si128((__m128i *)sums);
-		v1 = _mm_load_si128((__m128i *)(sums + 4));
-		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
 		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
 		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
