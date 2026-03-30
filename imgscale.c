@@ -198,7 +198,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc > 3) {
-		io_in = fopen(argv[3], "r");
+		io_in = fopen(argv[3], "rb");
 		if (!io_in) {
 			fprintf(stderr, "Unable to open source file.\n");
 			return 1;
@@ -206,7 +206,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc > 4) {
-		io_out = fopen(argv[4], "w");
+		io_out = fopen(argv[4], "wb");
 		if (!io_out) {
 			fprintf(stderr, "Unable to open destination file.\n");
 			return 1;
