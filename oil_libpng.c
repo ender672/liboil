@@ -34,7 +34,7 @@ static unsigned char **alloc_full_image_buf(int height, int rowbytes)
 	for (i=0; i<height; i++) {
 		imgbuf[i] = malloc(rowbytes);
 		if (!imgbuf[i]) {
-			for (j=0; j<i-1; j++) {
+			for (j=0; j<i; j++) {
 				free(imgbuf[j]);
 			}
 			free(imgbuf);
@@ -75,7 +75,6 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	ret = oil_scale_init(&ol->os, in_height, out_height, in_width,
 		out_width, cs);
 	if (ret!=0) {
-		free(ol->inbuf);
 		return ret;
 	}
 
