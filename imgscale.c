@@ -26,13 +26,22 @@ static void png(FILE *input, FILE *output, int width, int height)
 	unsigned char *outbuf;
 
 	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+	if (!rpng) {
+		fprintf(stderr, "Unable to create PNG read struct.\n");
+		exit(1);
+	}
+
+	rinfo = png_create_info_struct(rpng);
+	if (!rinfo) {
+		png_destroy_read_struct(&rpng, NULL, NULL);
+		fprintf(stderr, "Unable to create PNG info struct.\n");
+		exit(1);
+	}
 
 	if (setjmp(png_jmpbuf(rpng))) {
 		fprintf(stderr, "PNG Decoding Error.\n");
 		exit(1);
 	}
-
-	rinfo = png_create_info_struct(rpng);
 	png_init_io(rpng, input);
 	png_read_info(rpng, rinfo);
 
