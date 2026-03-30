@@ -240,7 +240,9 @@ int main(int argc, char *argv[])
 		jpeg(io_in, io_out, width, height);
 	}
 
-	fclose(io_in);
-	fclose(io_out);
+	if (io_in != stdin)
+		fclose(io_in);
+	if (io_out != stdout)
+		fclose(io_out);
 	return 0;
 }
