@@ -213,14 +213,14 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	width = strtoul(argv[1], &end, 10);
-	if (*end) {
+	width = strtol(argv[1], &end, 10);
+	if (*end || width <= 0) {
 		fprintf(stderr, "Error: Invalid width.\n");
 		return 1;
 	}
 
-	height = strtoul(argv[2], &end, 10);
-	if (*end) {
+	height = strtol(argv[2], &end, 10);
+	if (*end || height <= 0) {
 		fprintf(stderr, "Error: Invalid height.\n");
 		return 1;
 	}
