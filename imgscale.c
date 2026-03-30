@@ -18,12 +18,12 @@ static int get_is_sse_compatible(void) {
 
 static void png(FILE *input, FILE *output, int width, int height)
 {
-	int i, in_width, in_height, ret;
-	png_structp rpng, wpng;
-	png_infop rinfo, winfo;
+	int i, in_width, in_height, ret, ol_inited = 0;
+	png_structp rpng, wpng = NULL;
+	png_infop rinfo, winfo = NULL;
 	png_byte ctype;
 	struct oil_libpng ol;
-	unsigned char *outbuf;
+	unsigned char *outbuf = NULL;
 
 	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	if (!rpng) {
@@ -39,6 +39,11 @@ static void png(FILE *input, FILE *output, int width, int height)
 	}
 
 	if (setjmp(png_jmpbuf(rpng))) {
+		free(outbuf);
+		if (ol_inited)
+			oil_libpng_free(&ol);
+		png_destroy_write_struct(&wpng, &winfo);
+		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		fprintf(stderr, "PNG Decoding Error.\n");
 		exit(1);
 	}
@@ -64,6 +69,7 @@ static void png(FILE *input, FILE *output, int width, int height)
 		fprintf(stderr, "Unable to allocate buffers.\n");
 		exit(1);
 	}
+	ol_inited = 1;
 
 	oil_set_use_sse(&ol.os, get_is_sse_compatible());
 
