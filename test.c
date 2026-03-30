@@ -126,7 +126,7 @@ static long double worst;
 static void validate_scanline8(unsigned char *oil, long double *ref,
 	size_t width, int cmp)
 {
-	int i, j, ref_i, pos;
+	long i, j, ref_i, pos;
 	long double error, ref_f;
 	for (i=0; i<width; i++) {
 		for (j=0; j<cmp; j++) {
@@ -138,7 +138,7 @@ static void validate_scanline8(unsigned char *oil, long double *ref,
 				worst = error;
 			}
 			if (error > 0.06L) {
-				fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
+				fprintf(stderr, "[%ld:%ld] expected: %ld, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
 			}
 		}
 	}
@@ -264,7 +264,7 @@ static unsigned char **alloc_2d_uchar(long width, long height)
 
 static void free_2d_uchar(unsigned char **ptr, long height)
 {
-	int i;
+	long i;
 
 	for (i=0; i<height; i++) {
 		free(ptr[i]);
@@ -286,7 +286,7 @@ static long double **alloc_2d_ld(long width, long height)
 
 static void free_2d_ld(long double **ptr, long height)
 {
-	int i;
+	long i;
 
 	for (i=0; i<height; i++) {
 		free(ptr[i]);
@@ -297,12 +297,9 @@ static void free_2d_ld(long double **ptr, long height)
 static void ref_xscale(long double *in, long in_width, long double *out,
 	long out_width, long cmp)
 {
-	long i, j, k, stride, taps, smp_i, start, ltrim, rtrim, start_safe,
+	long i, j, k, taps, smp_i, start, ltrim, rtrim, start_safe,
 		taps_safe, max_pos, in_pos;
-	long double *tmp, *coeffs, in_val, tx;
-
-	stride = cmp * in_width;
-	tmp = malloc(stride * sizeof(long double));
+	long double *coeffs, in_val, tx;
 
 	taps = calc_taps_check(in_width, out_width);
 	coeffs = malloc(taps * sizeof(long double));
@@ -335,7 +332,6 @@ static void ref_xscale(long double *in, long in_width, long double *out,
 		}
 	}
 
-	free(tmp);
 	free(coeffs);
 }
 
