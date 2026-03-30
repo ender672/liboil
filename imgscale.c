@@ -149,9 +149,11 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out)
 	oil_set_use_sse(&ol.os, get_is_sse_compatible());
 
 	/* Allocate linear converter output buffer */
-	outbuf = malloc(width_out * OIL_CMP(ol.os.cs) * sizeof(unsigned char));
+	outbuf = malloc(width_out * OIL_CMP(ol.os.cs));
 	if (!outbuf) {
 		fprintf(stderr, "Unable to allocate buffers.");
+		oil_libjpeg_free(&ol);
+		jpeg_destroy_decompress(&dinfo);
 		exit(1);
 	}
 
