@@ -236,7 +236,8 @@ static void push_f(float *f, float val)
  */
 static void shift_left_f(float *f)
 {
-	push_f(f, 0.0f);
+	__m128i v = _mm_load_si128((__m128i *)f);
+	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
 
 static void yscale_out_linear(float *sums, int len, unsigned char *out)
