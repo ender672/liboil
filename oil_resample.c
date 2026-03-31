@@ -1255,7 +1255,11 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_GA:
+#if defined(OIL_USE_SSE2)
+		oil_scale_down_ga_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#else
 		scale_down_ga(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#endif
 		break;
 	case OIL_CS_ARGB:
 		scale_down_argb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
