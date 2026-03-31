@@ -1,0 +1,127 @@
+/**
+ * Copyright (c) 2014-2019 Timothy Elliott
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+#include "oil_resample_internal.h"
+#include <immintrin.h>
+
+void oil_shift_left_f_sse2(float *f)
+{
+	__m128i v = _mm_load_si128((__m128i *)f);
+	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
+}
+
+void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
+{
+	int i;
+	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
+	__m128i idx, v0, v1, v2, v3;
+
+	scale = _mm_set1_ps((float)(l2s_len - 1));
+
+	for (i=0; i+3<len; i+=4) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		f3 = _mm_castsi128_ps(v3);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
+
+		out[i]   = l2s_map[_mm_cvtsi128_si32(idx)];
+		out[i+1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[i+2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		out[i+3] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
+
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+
+		sums += 16;
+	}
+
+	for (; i<len; i++) {
+		out[i] = l2s_map[(int)(*sums * (l2s_len - 1))];
+		oil_shift_left_f_sse2(sums);
+		sums += 4;
+	}
+}
+
+void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, sample_x, sum_r, sum_g, sum_b;
+	__m128 coeffs_y, sums_y, sample_y;
+
+	coeffs_y = _mm_load_ps(coeffs_y_f);
+
+	sum_r = _mm_setzero_ps();
+	sum_g = _mm_setzero_ps();
+	sum_b = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		for (j=0; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+
+			sample_x = _mm_set1_ps(s2l_map[in[0]]);
+			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+			sample_x = _mm_set1_ps(s2l_map[in[1]]);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+			sample_x = _mm_set1_ps(s2l_map[in[2]]);
+			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+			in += 3;
+			coeffs_x_f += 4;
+		}
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
+		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
+		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+	}
+}

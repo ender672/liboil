@@ -20,14 +20,12 @@
  */
 
 #include "oil_resample.h"
+#include "oil_resample_internal.h"
 #include <math.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
-#if defined(__x86_64__)
-#include <immintrin.h>
-#endif
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
@@ -170,8 +168,8 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
  */
 #define L2S_ALL_LEN 32768
 static unsigned char l2s_map_all[L2S_ALL_LEN];
-static int l2s_len;
-static unsigned char *l2s_map;
+int l2s_len;
+unsigned char *l2s_map;
 
 static void build_l2s(void)
 {
@@ -236,69 +234,30 @@ static void push_f(float *f, float val)
  * Takes an array of 4 floats and shifts them left. The rightmost element is
  * set to 0.0.
  */
-#if defined(__x86_64__)
 static void shift_left_f(float *f)
 {
-	__m128i v = _mm_load_si128((__m128i *)f);
-	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
-}
+#if defined(OIL_USE_SSE2)
+	oil_shift_left_f_sse2(f);
 #else
-static void shift_left_f(float *f)
-{
 	f[0] = f[1];
 	f[1] = f[2];
 	f[2] = f[3];
 	f[3] = 0.0f;
-}
 #endif
+}
 
 static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
-	int i;
-
-#if defined(__x86_64__)
-	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
-	__m128i idx, v0, v1, v2, v3;
-
-	scale = _mm_set1_ps((float)(l2s_len - 1));
-
-	for (i=0; i+3<len; i+=4) {
-		v0 = _mm_load_si128((__m128i *)sums);
-		v1 = _mm_load_si128((__m128i *)(sums + 4));
-		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
-
-		f0 = _mm_castsi128_ps(v0);
-		f1 = _mm_castsi128_ps(v1);
-		f2 = _mm_castsi128_ps(v2);
-		f3 = _mm_castsi128_ps(v3);
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
-
-		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
-
-		out[i]   = l2s_map[_mm_cvtsi128_si32(idx)];
-		out[i+1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
-		out[i+3] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
-
-		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
-		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
-		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
-		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
-
-		sums += 16;
-	}
+#if defined(OIL_USE_SSE2)
+	oil_yscale_out_linear_sse2(sums, len, out);
 #else
-	i = 0;
-#endif
-
-	for (; i<len; i++) {
+	int i;
+	for (i=0; i<len; i++) {
 		out[i] = linear_sample_to_srgb(*sums);
 		shift_left_f(sums);
 		sums += 4;
 	}
+#endif
 }
 
 static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
@@ -585,7 +544,7 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
  * Holds pre-calculated mapping of sRGB chars to linear RGB floating point
  * values.
  */
-static float s2l_map[256];
+float s2l_map[256];
 
 /**
  * Populates s2l_map.
@@ -720,63 +679,7 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 }
 
 
-#if defined(__x86_64__)
-static void scale_down_rgb_sse(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
-{
-	int i, j;
-	__m128 coeffs_x, sample_x, sum_r, sum_g, sum_b;
-	__m128 coeffs_y, sums_y, sample_y;
-
-	coeffs_y = _mm_load_ps(coeffs_y_f);
-
-	sum_r = _mm_setzero_ps();
-	sum_g = _mm_setzero_ps();
-	sum_b = _mm_setzero_ps();
-
-	for (i=0; i<out_width; i++) {
-		for (j=0; j<border_buf[i]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-
-			sample_x = _mm_set1_ps(s2l_map[in[0]]);
-			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
-
-			sample_x = _mm_set1_ps(s2l_map[in[1]]);
-			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
-
-			sample_x = _mm_set1_ps(s2l_map[in[2]]);
-			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
-
-			in += 3;
-			coeffs_x_f += 4;
-		}
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
-	}
-}
-#endif
-
-#if !defined(__x86_64__)
+#if !defined(OIL_USE_SSE2)
 static void scale_down_rgb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
@@ -1332,8 +1235,8 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 
 	switch(os->cs) {
 	case OIL_CS_RGB:
-#if defined(__x86_64__)
-		scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#if defined(OIL_USE_SSE2)
+		oil_scale_down_rgb_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
 		scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #endif
@@ -1380,7 +1283,11 @@ void _oil_scale_in(struct oil_scale *os, unsigned char *in)
 
 	coeffs_y = os->coeffs_y + os->in_pos * 4;
 
-	scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#if defined(OIL_USE_SSE2)
+	oil_scale_down_rgb_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#else
+	scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#endif
 
 	os->borders_y[os->out_pos] -= 1;
 	os->in_pos++;
