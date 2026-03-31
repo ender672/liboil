@@ -76,7 +76,7 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 {
 	int i;
 	__m128 scale, vals, ab, cd, f0, f1, f2;
-	__m128i idx, v0, v1, v2, v3;
+	__m128i idx, v0, v1, v2;
 
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
@@ -84,7 +84,6 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 		v0 = _mm_load_si128((__m128i *)sums);
 		v1 = _mm_load_si128((__m128i *)(sums + 4));
 		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
 
 		f0 = _mm_castsi128_ps(v0);
 		f1 = _mm_castsi128_ps(v1);
@@ -103,7 +102,6 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
 		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
 		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
-		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
 
 		sums += 16;
 		out += 4;
