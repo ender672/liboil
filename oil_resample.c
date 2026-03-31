@@ -278,10 +278,10 @@ static void yscale_out_linear(float *sums, int len, unsigned char *out)
 
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-		out[i]   = l2s_map[_mm_extract_epi32(idx, 0)];
-		out[i+1] = l2s_map[_mm_extract_epi32(idx, 1)];
-		out[i+2] = l2s_map[_mm_extract_epi32(idx, 2)];
-		out[i+3] = l2s_map[_mm_extract_epi32(idx, 3)];
+		out[i]   = l2s_map[_mm_cvtsi128_si32(idx)];
+		out[i+1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[i+2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		out[i+3] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
 
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
 		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
