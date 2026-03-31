@@ -25,7 +25,9 @@
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
+#if defined(__x86_64__)
 #include <immintrin.h>
+#endif
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
@@ -234,15 +236,27 @@ static void push_f(float *f, float val)
  * Takes an array of 4 floats and shifts them left. The rightmost element is
  * set to 0.0.
  */
+#if defined(__x86_64__)
 static void shift_left_f(float *f)
 {
 	__m128i v = _mm_load_si128((__m128i *)f);
 	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
+#else
+static void shift_left_f(float *f)
+{
+	f[0] = f[1];
+	f[1] = f[2];
+	f[2] = f[3];
+	f[3] = 0.0f;
+}
+#endif
 
 static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
 	int i;
+
+#if defined(__x86_64__)
 	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
 	__m128i idx, v0, v1, v2, v3;
 
@@ -276,6 +290,9 @@ static void yscale_out_linear(float *sums, int len, unsigned char *out)
 
 		sums += 16;
 	}
+#else
+	i = 0;
+#endif
 
 	for (; i<len; i++) {
 		out[i] = linear_sample_to_srgb(*sums);
@@ -703,6 +720,7 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 }
 
 
+#if defined(__x86_64__)
 static void scale_down_rgb_sse(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
@@ -756,7 +774,9 @@ static void scale_down_rgb_sse(unsigned char *in, float *sums_y_out,
 		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
 	}
 }
+#endif
 
+#if !defined(__x86_64__)
 static void scale_down_rgb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
@@ -779,6 +799,7 @@ static void scale_down_rgb(unsigned char *in, float *sums_y, int out_width, floa
 		}
 	}
 }
+#endif
 
 static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
@@ -1104,11 +1125,6 @@ void oil_global_init(void)
 	build_i2f();
 }
 
-void oil_set_use_sse(struct oil_scale *os, int use_sse)
-{
-	os->use_sse = use_sse;
-}
-
 #define ALIGN16(x) (((x) + 15) & ~15)
 
 static int calc_coeffs_len(int in_dim, int out_dim)
@@ -1316,11 +1332,11 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 
 	switch(os->cs) {
 	case OIL_CS_RGB:
-		if (os->use_sse) {
-			scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
-		} else {
-			scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
-		}
+#if defined(__x86_64__)
+		scale_down_rgb_sse(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#else
+		scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#endif
 		break;
 	case OIL_CS_G:
 		scale_down_g(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);

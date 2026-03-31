@@ -4,23 +4,6 @@
 #include <stdlib.h>
 #include <jpeglib.h>
 #include <png.h>
-#if defined(__x86_64__) || defined(__i386__)
-#include <cpuid.h>
-static int get_is_sse_compatible(void) {
-	unsigned int eax, ebx, ecx, edx;
-
-	if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
-		return (edx & (1 << 25)) != 0;
-	}
-
-	return 0;
-}
-#else
-static int get_is_sse_compatible(void) {
-	return 0;
-}
-#endif
-
 static void png(FILE *input, FILE *output, int width, int height)
 {
 	int i, in_width, in_height, ret, ol_inited = 0;
@@ -75,8 +58,6 @@ static void png(FILE *input, FILE *output, int width, int height)
 		exit(1);
 	}
 	ol_inited = 1;
-
-	oil_set_use_sse(&ol.os, get_is_sse_compatible());
 
 	ctype = png_get_color_type(rpng, rinfo);
 	png_set_IHDR(wpng, winfo, width, height, 8, ctype, PNG_INTERLACE_NONE,
@@ -150,8 +131,6 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out)
 		fclose(output);
 		exit(1);
 	}
-
-	oil_set_use_sse(&ol.os, get_is_sse_compatible());
 
 	/* Allocate linear converter output buffer */
 	outbuf = malloc(width_out * OIL_CMP(ol.os.cs));

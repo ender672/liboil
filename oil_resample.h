@@ -68,8 +68,6 @@ struct oil_scale {
 	enum oil_colorspace cs; // color space of input & output.
 	int in_pos; // current row of input image.
 	int out_pos; // current row of output image.
-	int use_sse; // whether to use SSE SIMD instructions.
-
 	float *coeffs_y; // buffer for holding temporary y-coefficients.
 	float *coeffs_x; // buffer for holding precalculated coefficients.
 	int *borders_x; // holds precalculated coefficient rotation points.
@@ -140,12 +138,6 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
  */
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs);
-
-/**
- * Tells the resampler whether to use SSE SIMD instructions. Set to 0 to
- * disable, and set to 1 to enable.
- */
-void oil_set_use_sse(struct oil_scale *, int use_sse);
 
 /**
  * Reset rows counters in an oil scaler struct.

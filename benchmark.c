@@ -13,8 +13,6 @@ struct bench_image {
 	enum oil_colorspace cs;
 };
 
-static int use_sse = 0;
-
 static struct bench_image png(char *path, enum oil_colorspace cs)
 {
 	struct bench_image bench_image;
@@ -115,8 +113,6 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 
 	t = clock();
 	oil_scale_init(&os, image.height, out_height, image.width, out_width, cs);
-	oil_set_use_sse(&os, use_sse);
-
 	for(i=0; i<out_height; i++) {
 		while (oil_scale_slots(&os)) {
 			oil_scale_in(&os, inbuf);
@@ -207,10 +203,6 @@ int main(int argc, char *argv[])
 		}
 	}
 	fprintf(stderr, "Iterations: %d\n", iterations);
-
-	if (getenv("OILSSE")) {
-		use_sse = 1;
-	}
 
 	t = clock();
 	oil_global_init();
