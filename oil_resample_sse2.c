@@ -151,7 +151,8 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
-	__m128 coeffs_x, sample_x, sum_r, sum_g, sum_b;
+	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
+	__m128 sum_r2, sum_g2, sum_b2;
 	__m128 coeffs_y, sums_y, sample_y;
 
 	coeffs_y = _mm_load_ps(coeffs_y_f);
@@ -161,20 +162,72 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	sum_b = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
-		for (j=0; j<border_buf[i]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
+		if (border_buf[i] >= 4) {
+			sum_r2 = _mm_setzero_ps();
+			sum_g2 = _mm_setzero_ps();
+			sum_b2 = _mm_setzero_ps();
 
-			sample_x = _mm_set1_ps(s2l_map[in[0]]);
-			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+			for (j=0; j+1<border_buf[i]; j+=2) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
 
-			sample_x = _mm_set1_ps(s2l_map[in[1]]);
-			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+				sample_x = _mm_set1_ps(s2l_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
 
-			sample_x = _mm_set1_ps(s2l_map[in[2]]);
-			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+				sample_x = _mm_set1_ps(s2l_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
 
-			in += 3;
-			coeffs_x_f += 4;
+				sample_x = _mm_set1_ps(s2l_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				sample_x = _mm_set1_ps(s2l_map[in[3]]);
+				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_r2);
+
+				sample_x = _mm_set1_ps(s2l_map[in[4]]);
+				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
+
+				sample_x = _mm_set1_ps(s2l_map[in[5]]);
+				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_b2);
+
+				in += 6;
+				coeffs_x_f += 8;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(s2l_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(s2l_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(s2l_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				in += 3;
+				coeffs_x_f += 4;
+			}
+
+			sum_r = _mm_add_ps(sum_r, sum_r2);
+			sum_g = _mm_add_ps(sum_g, sum_g2);
+			sum_b = _mm_add_ps(sum_b, sum_b2);
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(s2l_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(s2l_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(s2l_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				in += 3;
+				coeffs_x_f += 4;
+			}
 		}
 
 		sums_y = _mm_load_ps(sums_y_out);
