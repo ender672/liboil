@@ -5,6 +5,22 @@
 #include "oil_libpng.h"
 #include <jpeglib.h>
 #include <png.h>
+#if defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
+static int get_is_sse_compatible(void) {
+	unsigned int eax, ebx, ecx, edx;
+
+	if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+		return (edx & (1 << 25)) != 0;
+	}
+
+	return 0;
+}
+#else
+static int get_is_sse_compatible(void) {
+	return 0;
+}
+#endif
 
 struct resumable_resize {
 	FILE *io;
@@ -84,6 +100,7 @@ static void png_start(struct resumable_resize *rr) {
 
 	rr->olp = malloc(sizeof(struct oil_libpng));
 	oil_libpng_init(rr->olp, rpng, rinfo, rr->out_width, rr->out_height);
+	oil_set_use_sse(&rr->olp->os, get_is_sse_compatible());
 
 	rr->outbuf = malloc(rr->out_width * OIL_CMP(rr->olp->os.cs));
 }
@@ -114,6 +131,7 @@ static void jpeg_start(struct resumable_resize *rr)
 
 	rr->olj = malloc(sizeof(struct oil_libjpeg));
 	oil_libjpeg_init(rr->olj, dinfo, rr->out_width, rr->out_height);
+	oil_set_use_sse(&rr->olj->os, get_is_sse_compatible());
 
 	rr->outbuf = malloc(rr->out_width * 3);
 }
