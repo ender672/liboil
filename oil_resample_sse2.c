@@ -72,6 +72,35 @@ void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
 	}
 }
 
+void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, sample_x, sum;
+	__m128 coeffs_y, sums_y, sample_y;
+
+	coeffs_y = _mm_load_ps(coeffs_y_f);
+	sum = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		for (j=0; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+			in += 1;
+			coeffs_x_f += 4;
+		}
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+	}
+}
+
 void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
