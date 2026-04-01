@@ -262,6 +262,9 @@ static void yscale_out_linear(float *sums, int len, unsigned char *out)
 
 static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 {
+#if defined(OIL_USE_SSE2)
+	oil_yscale_out_nonlinear_sse2(sums, sl_len, out);
+#else
 	int i;
 
 	for (i=0; i<sl_len; i++) {
@@ -269,6 +272,7 @@ static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 		shift_left_f(sums);
 		sums += 4;
 	}
+#endif
 }
 
 static void yscale_out_ga(float *sums, int width, unsigned char *out)
