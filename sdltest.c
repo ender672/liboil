@@ -13,6 +13,7 @@ struct resumable_resize {
 	int out_width;
 	int out_height;
 	int ypos;
+	int cmp;
 	unsigned char *outbuf;
 
 	struct oil_libjpeg *olj;
@@ -25,14 +26,14 @@ struct resumable_resize {
 	unsigned char *surface_pixels;
 };
 
-static void translate(unsigned char *in, unsigned char *out, int width) {
+static void translate(unsigned char *in, unsigned char *out, int width, int cmp) {
 	int i;
 	for (i=0; i<width; i++) {
 		out[0] = in[2];
 		out[1] = in[1];
 		out[2] = in[0];
-		out[3] = 0xFF;
-		in += 3;
+		out[3] = cmp >= 4 ? in[3] : 0xFF;
+		in += cmp;
 		out += 4;
 	}
 }
@@ -83,7 +84,8 @@ static void png_start(struct resumable_resize *rr) {
 
 	rr->olp = malloc(sizeof(struct oil_libpng));
 	oil_libpng_init(rr->olp, rpng, rinfo, rr->out_width, rr->out_height);
-	rr->outbuf = malloc(rr->out_width * OIL_CMP(rr->olp->os.cs));
+	rr->cmp = OIL_CMP(rr->olp->os.cs);
+	rr->outbuf = malloc(rr->out_width * rr->cmp);
 }
 
 static void png_end(struct resumable_resize *rr) {
@@ -115,7 +117,8 @@ static void jpeg_start(struct resumable_resize *rr)
 
 	rr->olj = malloc(sizeof(struct oil_libjpeg));
 	oil_libjpeg_init(rr->olj, dinfo, rr->out_width, rr->out_height);
-	rr->outbuf = malloc(rr->out_width * 3);
+	rr->cmp = 3;
+	rr->outbuf = malloc(rr->out_width * rr->cmp);
 }
 
 static void jpeg_end(struct resumable_resize *rr) {
@@ -170,7 +173,7 @@ static int resumable_resize_do(struct resumable_resize *rr) {
 		oil_libjpeg_read_scanline(rr->olj, rr->outbuf);
 				rr->ypos += 1;
 	}
-	translate(rr->outbuf, tmp, rr->out_width);
+	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
 	return rr->ypos == rr->out_height ? 0 : -1;
 }
 
