@@ -55,17 +55,26 @@ static int resize_center_offset(struct resumable_resize *rr)
 	return x_center_offset + y_center_offset;
 }
 
-static void png_start(struct resumable_resize *rr) {
+static int png_start(struct resumable_resize *rr) {
 	png_structp rpng;
 	png_infop rinfo;
 
 	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-
-	if (setjmp(png_jmpbuf(rpng))) {
-		return;
+	if (!rpng) {
+		return -1;
 	}
 
 	rinfo = png_create_info_struct(rpng);
+	if (!rinfo) {
+		png_destroy_read_struct(&rpng, NULL, NULL);
+		return -1;
+	}
+
+	if (setjmp(png_jmpbuf(rpng))) {
+		png_destroy_read_struct(&rpng, &rinfo, NULL);
+		return -1;
+	}
+
 	rr->rpng = rpng;
 	rr->rinfo = rinfo;
 
@@ -86,6 +95,7 @@ static void png_start(struct resumable_resize *rr) {
 	oil_libpng_init(rr->olp, rpng, rinfo, rr->out_width, rr->out_height);
 	rr->cmp = OIL_CMP(rr->olp->os.cs);
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
+	return 0;
 }
 
 static void png_end(struct resumable_resize *rr) {
@@ -143,7 +153,10 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path, int s
 	rr->surface_pixels = surface_pixels;
 	rr->ypos = 0;
 	if (rr->looks_like_png) {
-		png_start(rr);
+		if (png_start(rr) < 0) {
+			fclose(rr->io);
+			return -1;
+		}
 	} else {
 		jpeg_start(rr);
 	}
