@@ -456,6 +456,7 @@ static void yscale_up_ga(float **in, int len, float *coeffs,
 }
 #endif
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_up_rgb(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -470,6 +471,7 @@ static void yscale_up_rgb(float **in, int len, float *coeffs,
 		out[i] = linear_sample_to_srgb(sum);
 	}
 }
+#endif
 
 static void yscale_up_rgba(float **in, int len, float *coeffs,
 	unsigned char *out)
@@ -565,7 +567,11 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 #endif
 		break;
 	case OIL_CS_RGB:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_up_rgb_sse2(in, len, coeffs, out);
+#else
 		yscale_up_rgb(in, len, coeffs, out);
+#endif
 		break;
 	case OIL_CS_RGBA:
 		yscale_up_rgba(in, len, coeffs, out);
@@ -900,6 +906,7 @@ static void xscale_up_reduce_n(float in[][4], float *out, float *coeffs,
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void xscale_up_rgb(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -918,6 +925,7 @@ static void xscale_up_rgb(unsigned char *in, int width_in, float *out,
 		in += 3;
 	}
 }
+#endif
 
 static void xscale_up_cmyk(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
@@ -1044,7 +1052,11 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 {
 	switch(cs_in) {
 	case OIL_CS_RGB:
+#if defined(OIL_USE_SSE2)
+		oil_xscale_up_rgb_sse2(in, width_in, out, coeff_buf, border_buf);
+#else
 		xscale_up_rgb(in, width_in, out, coeff_buf, border_buf);
+#endif
 		break;
 	case OIL_CS_G:
 #if defined(OIL_USE_SSE2)
