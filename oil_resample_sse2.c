@@ -191,7 +191,7 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
 		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
 
-		sums += 16;
+		sums += 12;
 		out += 4;
 	}
 }
@@ -889,7 +889,7 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
 		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
 		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 8;
+		sums_y_out += 4;
 
 		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
 		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
