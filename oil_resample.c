@@ -554,7 +554,11 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 #endif
 		break;
 	case OIL_CS_GA:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_up_ga_sse2(in, len, coeffs, out);
+#else
 		yscale_up_ga(in, len, coeffs, out);
+#endif
 		break;
 	case OIL_CS_RGB:
 		yscale_up_rgb(in, len, coeffs, out);

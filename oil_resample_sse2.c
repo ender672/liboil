@@ -247,6 +247,127 @@ void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
+void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	int i;
+	__m128 c0, c1, c2, c3;
+	__m128 v0, v1, v2, v3, sum, sum2;
+	__m128 scale, half, zero, one;
+	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped, result;
+	__m128 blend_mask;
+	__m128i idx;
+
+	c0 = _mm_set1_ps(coeffs[0]);
+	c1 = _mm_set1_ps(coeffs[1]);
+	c2 = _mm_set1_ps(coeffs[2]);
+	c3 = _mm_set1_ps(coeffs[3]);
+	scale = _mm_set1_ps(255.0f);
+	half = _mm_set1_ps(0.5f);
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
+	/* mask: 0 for gray positions (0,2), all-ones for alpha positions (1,3) */
+	blend_mask = _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, 0));
+
+	/* Process 4 GA pixels (8 floats) at a time */
+	for (i=0; i+7<len; i+=8) {
+		v0 = _mm_loadu_ps(in[0] + i);
+		v1 = _mm_loadu_ps(in[1] + i);
+		v2 = _mm_loadu_ps(in[2] + i);
+		v3 = _mm_loadu_ps(in[3] + i);
+		sum = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		v0 = _mm_loadu_ps(in[0] + i + 4);
+		v1 = _mm_loadu_ps(in[1] + i + 4);
+		v2 = _mm_loadu_ps(in[2] + i + 4);
+		v3 = _mm_loadu_ps(in[3] + i + 4);
+		sum2 = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
+
+		/* Process first pair: spread alpha to both lanes */
+		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
+		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
+		safe_alpha = _mm_or_ps(
+			_mm_and_ps(nz_mask, alpha_spread),
+			_mm_andnot_ps(nz_mask, one));
+		divided = _mm_div_ps(sum, safe_alpha);
+		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+		result = _mm_or_ps(
+			_mm_andnot_ps(blend_mask, gray_clamped),
+			_mm_and_ps(blend_mask, alpha_spread));
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
+
+		/* Process second pair */
+		alpha_spread = _mm_shuffle_ps(sum2, sum2, _MM_SHUFFLE(3, 3, 1, 1));
+		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
+		safe_alpha = _mm_or_ps(
+			_mm_and_ps(nz_mask, alpha_spread),
+			_mm_andnot_ps(nz_mask, one));
+		divided = _mm_div_ps(sum2, safe_alpha);
+		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+		result = _mm_or_ps(
+			_mm_andnot_ps(blend_mask, gray_clamped),
+			_mm_and_ps(blend_mask, alpha_spread));
+		__m128i idx2 = _mm_cvttps_epi32(
+			_mm_add_ps(_mm_mul_ps(result, scale), half));
+
+		/* Pack 8 ints -> 8 bytes */
+		idx = _mm_packs_epi32(idx, idx2);
+		idx = _mm_packus_epi16(idx, idx);
+		_mm_storel_epi64((__m128i *)(out + i), idx);
+	}
+
+	/* Process 2 GA pixels (4 floats) at a time */
+	for (; i+3<len; i+=4) {
+		v0 = _mm_loadu_ps(in[0] + i);
+		v1 = _mm_loadu_ps(in[1] + i);
+		v2 = _mm_loadu_ps(in[2] + i);
+		v3 = _mm_loadu_ps(in[3] + i);
+		sum = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
+		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
+		safe_alpha = _mm_or_ps(
+			_mm_and_ps(nz_mask, alpha_spread),
+			_mm_andnot_ps(nz_mask, one));
+		divided = _mm_div_ps(sum, safe_alpha);
+		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+		result = _mm_or_ps(
+			_mm_andnot_ps(blend_mask, gray_clamped),
+			_mm_and_ps(blend_mask, alpha_spread));
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
+		idx = _mm_packs_epi32(idx, idx);
+		idx = _mm_packus_epi16(idx, idx);
+		*(int *)(out + i) = _mm_cvtsi128_si32(idx);
+	}
+
+	/* Scalar tail for remaining pixel */
+	for (; i<len; i+=2) {
+		float gray, alpha_f;
+		gray = coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+			coeffs[2] * in[2][i] + coeffs[3] * in[3][i];
+		alpha_f = coeffs[0] * in[0][i+1] + coeffs[1] * in[1][i+1] +
+			coeffs[2] * in[2][i+1] + coeffs[3] * in[3][i+1];
+		if (alpha_f > 1.0f) alpha_f = 1.0f;
+		else if (alpha_f < 0.0f) alpha_f = 0.0f;
+		if (alpha_f != 0) gray /= alpha_f;
+		if (gray > 1.0f) gray = 1.0f;
+		else if (gray < 0.0f) gray = 0.0f;
+		out[i] = (int)(gray * 255.0f + 0.5f);
+		out[i+1] = (int)(alpha_f * 255.0f + 0.5f);
+	}
+}
+
 void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
