@@ -477,11 +477,13 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
-	float alpha;
-	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b, sum_a;
+	__m128 coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
+	__m128 sum_r, sum_g, sum_b, sum_a;
 	__m128 sum_r2, sum_g2, sum_b2, sum_a2;
 	__m128 coeffs_y, sums_y, sample_y;
+	float *sl;
 
+	sl = s2l_map;
 	coeffs_y = _mm_load_ps(coeffs_y_f);
 
 	sum_r = _mm_setzero_ps();
@@ -500,33 +502,31 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
 
-				alpha = in[3] * (1.0f/255.0f);
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(in[3] * (1.0f/255.0f)));
 
-				sample_x = _mm_set1_ps(s2l_map[in[0]] * alpha);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+				sample_x = _mm_set1_ps(sl[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(s2l_map[in[1]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+				sample_x = _mm_set1_ps(sl[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = _mm_set1_ps(s2l_map[in[2]] * alpha);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+				sample_x = _mm_set1_ps(sl[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
+				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
 
-				alpha = in[7] * (1.0f/255.0f);
+				coeffs_x2_a = _mm_mul_ps(coeffs_x2, _mm_set1_ps(in[7] * (1.0f/255.0f)));
 
-				sample_x = _mm_set1_ps(s2l_map[in[4]] * alpha);
-				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_r2);
+				sample_x = _mm_set1_ps(sl[in[4]]);
+				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_r2);
 
-				sample_x = _mm_set1_ps(s2l_map[in[5]] * alpha);
-				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
+				sample_x = _mm_set1_ps(sl[in[5]]);
+				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_g2);
 
-				sample_x = _mm_set1_ps(s2l_map[in[6]] * alpha);
-				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_b2);
+				sample_x = _mm_set1_ps(sl[in[6]]);
+				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_b2);
 
-				sample_x = _mm_set1_ps(alpha);
-				sum_a2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_a2);
+				sum_a2 = _mm_add_ps(coeffs_x2_a, sum_a2);
 
 				in += 8;
 				coeffs_x_f += 8;
@@ -535,19 +535,18 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 			for (; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				alpha = in[3] * (1.0f/255.0f);
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(in[3] * (1.0f/255.0f)));
 
-				sample_x = _mm_set1_ps(s2l_map[in[0]] * alpha);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+				sample_x = _mm_set1_ps(sl[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(s2l_map[in[1]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+				sample_x = _mm_set1_ps(sl[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = _mm_set1_ps(s2l_map[in[2]] * alpha);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+				sample_x = _mm_set1_ps(sl[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
+				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
 
 				in += 4;
 				coeffs_x_f += 4;
@@ -561,19 +560,18 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 			for (j=0; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				alpha = in[3] * (1.0f/255.0f);
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(in[3] * (1.0f/255.0f)));
 
-				sample_x = _mm_set1_ps(s2l_map[in[0]] * alpha);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+				sample_x = _mm_set1_ps(sl[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(s2l_map[in[1]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+				sample_x = _mm_set1_ps(sl[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = _mm_set1_ps(s2l_map[in[2]] * alpha);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+				sample_x = _mm_set1_ps(sl[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
+				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
 
 				in += 4;
 				coeffs_x_f += 4;
