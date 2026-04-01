@@ -1078,7 +1078,11 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 #endif
 		break;
 	case OIL_CS_CMYK:
+#if defined(OIL_USE_SSE2)
+		oil_xscale_up_cmyk_sse2(in, width_in, out, coeff_buf, border_buf);
+#else
 		xscale_up_cmyk(in, width_in, out, coeff_buf, border_buf);
+#endif
 		break;
 	case OIL_CS_RGBA:
 #if defined(OIL_USE_SSE2)
