@@ -163,7 +163,9 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 	int i;
 	__m128 scale, vals, ab, cd, f0, f1, f2;
 	__m128i idx, v0, v1, v2;
+	unsigned char *lut;
 
+	lut = l2s_map;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i<width; i++) {
@@ -180,9 +182,9 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-		out[0] = l2s_map[_mm_cvtsi128_si32(idx)];
-		out[1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		out[0] = lut[_mm_cvtsi128_si32(idx)];
+		out[1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
 		out[3] = 255;
 
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
@@ -419,7 +421,9 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 	__m128 f0, f1, f2, f3, ab, cd, vals, alpha_v;
 	__m128i idx, v0, v1, v2, v3;
 	float alpha;
+	unsigned char *lut;
 
+	lut = l2s_map;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
@@ -454,9 +458,9 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-		out[0] = l2s_map[_mm_cvtsi128_si32(idx)];
-		out[1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		out[0] = lut[_mm_cvtsi128_si32(idx)];
+		out[1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
 		out[3] = (int)(alpha * 255.0f + 0.5f);
 
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
