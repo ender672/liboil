@@ -8,7 +8,7 @@ else
 CFLAGS += -DOIL_NO_SIMD
 endif
 
-all: test imgscale benchmark sdltest
+all: test imgscale benchmark
 oil_resample_sse2.o: oil_resample_sse2.c oil_resample_internal.h
 	$(CC) $(CFLAGS) -msse2 -c -o $@ $<
 test: test.c $(OIL_OBJS)
