@@ -130,9 +130,13 @@ static void jpeg_end(struct resumable_resize *rr) {
 	free(rr->dinfo);
 }
 
-static void resumable_resize_start(struct resumable_resize *rr, char *path, int surface_width, int surface_height, unsigned char *surface_pixels)
+static int resumable_resize_start(struct resumable_resize *rr, char *path, int surface_width, int surface_height, unsigned char *surface_pixels)
 {
 	rr->io = fopen(path, "r");
+	if (!rr->io) {
+		fprintf(stderr, "Error: unable to open %s\n", path);
+		return -1;
+	}
 	rr->looks_like_png = looks_like_png(rr->io);
 	rr->surface_width = surface_width;
 	rr->surface_height = surface_height;
@@ -143,11 +147,12 @@ static void resumable_resize_start(struct resumable_resize *rr, char *path, int 
 	} else {
 		jpeg_start(rr);
 	}
+	return 0;
 }
 
-static void resumable_resize_start_from_surface(struct resumable_resize *rr, char *path, SDL_Surface *surface)
+static int resumable_resize_start_from_surface(struct resumable_resize *rr, char *path, SDL_Surface *surface)
 {
-	resumable_resize_start(rr, path, surface->w, surface->h, surface->pixels);
+	return resumable_resize_start(rr, path, surface->w, surface->h, surface->pixels);
 }
 
 static int resumable_resize_do(struct resumable_resize *rr) {
@@ -214,7 +219,10 @@ int main(int argc, char **argv) {
 	clear_surface(surface);
 	lastUpdateTime = 0;
 	resize_start_time = 0;
-	resumable_resize_start_from_surface(&rr, path, surface);
+	if (resumable_resize_start_from_surface(&rr, path, surface) < 0) {
+		SDL_Quit();
+		return 1;
+	}
 	render_in_progress = 1;
 	surface_is_dirty = 1;
 
@@ -239,9 +247,10 @@ int main(int argc, char **argv) {
 			surface = SDL_GetWindowSurface(window);
 			clear_surface(surface);
 			resize_start_time = SDL_GetTicks();
-			resumable_resize_start_from_surface(&rr, path, surface);
-			render_in_progress = 1;
-			surface_is_dirty = 1;
+			if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
+				render_in_progress = 1;
+				surface_is_dirty = 1;
+			}
 		}
 
 		if (render_in_progress) {
