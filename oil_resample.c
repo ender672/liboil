@@ -72,6 +72,7 @@ static int f2i(float x)
 	return x + 0.5f;
 }
 
+#if !defined(OIL_USE_SSE2)
 /**
  * Convert a float to 8-bit integer.
  */
@@ -79,6 +80,7 @@ static int clamp8(float x)
 {
 	return f2i(clampf(x) * 255.0f);
 }
+#endif
 
 /**
  * Map from the discreet dest coordinate pos to a continuous source coordinate.
@@ -430,6 +432,7 @@ static void yscale_up_g_cmyk(float **in, int len, float *coeffs,
 }
 #endif
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_up_ga(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -451,6 +454,7 @@ static void yscale_up_ga(float **in, int len, float *coeffs,
 		out[i + 1] = f2i(alpha * 255.0f);
 	}
 }
+#endif
 
 static void yscale_up_rgb(float **in, int len, float *coeffs,
 	unsigned char *out)
@@ -954,6 +958,7 @@ static void xscale_up_rgba(unsigned char *in, int width_in, float *out,
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -971,6 +976,7 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 		in += 2;
 	}
 }
+#endif
 
 static void xscale_up_argb(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
