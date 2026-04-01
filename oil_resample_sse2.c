@@ -685,25 +685,25 @@ void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
 
-				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
 				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
 
-				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
 				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
 
-				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
 				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
 
 				sample_x = _mm_set1_ps(i2f_map[in[3]]);
 				sum_k = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_k);
 
-				sample_x = _mm_set1_ps(in[4] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[4]]);
 				sum_c2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_c2);
 
-				sample_x = _mm_set1_ps(in[5] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[5]]);
 				sum_m2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_m2);
 
-				sample_x = _mm_set1_ps(in[6] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[6]]);
 				sum_y2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_y2);
 
 				sample_x = _mm_set1_ps(i2f_map[in[7]]);
@@ -716,13 +716,13 @@ void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 			for (; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
 				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
 
-				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
 				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
 
-				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
 				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
 
 				sample_x = _mm_set1_ps(i2f_map[in[3]]);
@@ -740,13 +740,13 @@ void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 			for (j=0; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
 				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
 
-				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
 				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
 
-				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
 				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
 
 				sample_x = _mm_set1_ps(i2f_map[in[3]]);
