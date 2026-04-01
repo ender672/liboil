@@ -290,6 +290,7 @@ static void yscale_out_ga(float *sums, int width, unsigned char *out)
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_out_rgba(float *sums, int width, unsigned char *out)
 {
 	int i, j;
@@ -312,6 +313,8 @@ static void yscale_out_rgba(float *sums, int width, unsigned char *out)
 		out += 4;
 	}
 }
+
+#endif
 
 static void yscale_out_argb(float *sums, int width, unsigned char *out)
 {
@@ -336,6 +339,7 @@ static void yscale_out_argb(float *sums, int width, unsigned char *out)
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_out_rgbx(float *sums, int width, unsigned char *out)
 {
 	int i, j;
@@ -351,6 +355,7 @@ static void yscale_out_rgbx(float *sums, int width, unsigned char *out)
 		out += 4;
 	}
 }
+#endif
 
 static void yscale_out(float *sums, int width, unsigned char *out,
 	enum oil_colorspace cs)
@@ -716,7 +721,6 @@ static void scale_down_rgb(unsigned char *in, float *sums_y, int out_width, floa
 		}
 	}
 }
-#endif
 
 static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
@@ -806,6 +810,7 @@ static void scale_down_ga(unsigned char *in, float *sums_y, int out_width, float
 		}
 	}
 }
+#endif
 
 static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
@@ -832,6 +837,7 @@ static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, flo
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
@@ -855,6 +861,7 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 		}
 	}
 }
+#endif
 
 static void xscale_up_reduce_n(float in[][4], float *out, float *coeffs,
 	int cmp)
