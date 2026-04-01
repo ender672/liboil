@@ -26,6 +26,8 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y, int out_width,
 	float *coeffs_x, int *border_buf, float *coeffs_y);
 void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y, int out_width,
 	float *coeffs_x, int *border_buf, float *coeffs_y);
+void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf);
 void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	unsigned char *out);
 void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out);

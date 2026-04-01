@@ -196,6 +196,56 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 	}
 }
 
+void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf)
+{
+	int i, j;
+	__m128 smp, newval, hi, coeffs, prod, t1, t2;
+
+	smp = _mm_setzero_ps();
+
+	for (i=0; i<width_in; i++) {
+		/* push_f: shift left, insert new value at position 3 */
+		smp = (__m128)_mm_srli_si128((__m128i)smp, 4);
+		newval = _mm_set_ss(i2f_map[in[i]]);
+		hi = _mm_shuffle_ps(smp, newval, _MM_SHUFFLE(0, 0, 3, 2));
+		smp = _mm_shuffle_ps(smp, hi, _MM_SHUFFLE(2, 0, 1, 0));
+
+		j = border_buf[i];
+
+		/* process pairs of outputs sharing the same smp */
+		while (j >= 2) {
+			__m128 c0 = _mm_load_ps(coeff_buf);
+			__m128 c1 = _mm_load_ps(coeff_buf + 4);
+			__m128 p0 = _mm_mul_ps(smp, c0);
+			__m128 p1 = _mm_mul_ps(smp, c1);
+			__m128 lo = _mm_unpacklo_ps(p0, p1);
+			__m128 hh = _mm_unpackhi_ps(p0, p1);
+			__m128 sum = _mm_add_ps(lo, hh);
+			t1 = _mm_movehl_ps(sum, sum);
+			t2 = _mm_add_ps(sum, t1);
+			out[0] = _mm_cvtss_f32(t2);
+			out[1] = _mm_cvtss_f32(
+				_mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1)));
+			out += 2;
+			coeff_buf += 8;
+			j -= 2;
+		}
+
+		if (j) {
+			coeffs = _mm_load_ps(coeff_buf);
+			prod = _mm_mul_ps(smp, coeffs);
+			t1 = _mm_movehl_ps(prod, prod);
+			t2 = _mm_add_ps(prod, t1);
+			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
+			t2 = _mm_add_ss(t2, prod);
+			out[0] = _mm_cvtss_f32(t2);
+			out += 1;
+			coeff_buf += 4;
+		}
+	}
+}
+
 void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {

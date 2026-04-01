@@ -1008,6 +1008,7 @@ static void xscale_up_rgbx(unsigned char *in, int width_in, float *out,
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void xscale_up_g(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -1026,6 +1027,7 @@ static void xscale_up_g(unsigned char *in, int width_in, float *out,
 		}
 	}
 }
+#endif
 
 static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 	enum oil_colorspace cs_in, float *coeff_buf, int *border_buf)
@@ -1035,7 +1037,11 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 		xscale_up_rgb(in, width_in, out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_G:
+#if defined(OIL_USE_SSE2)
+		oil_xscale_up_g_sse2(in, width_in, out, coeff_buf, border_buf);
+#else
 		xscale_up_g(in, width_in, out, coeff_buf, border_buf);
+#endif
 		break;
 	case OIL_CS_CMYK:
 		xscale_up_cmyk(in, width_in, out, coeff_buf, border_buf);
