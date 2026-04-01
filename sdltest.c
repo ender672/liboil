@@ -87,7 +87,10 @@ static void png_start(struct resumable_resize *rr) {
 }
 
 static void png_end(struct resumable_resize *rr) {
-
+	free(rr->outbuf);
+	oil_libpng_free(rr->olp);
+	free(rr->olp);
+	png_destroy_read_struct(&rr->rpng, &rr->rinfo, NULL);
 }
 
 static void jpeg_start(struct resumable_resize *rr)
