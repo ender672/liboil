@@ -290,6 +290,48 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
+void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
+{
+	int i, j;
+	float alpha, val;
+	__m128i v0, v1, v2, v3;
+
+	for (i=0; i<width; i++) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		alpha = sums[12];
+		if (alpha > 1.0f) {
+			alpha = 1.0f;
+		} else if (alpha < 0.0f) {
+			alpha = 0.0f;
+		}
+
+		if (alpha != 0) {
+			for (j=0; j<3; j++) {
+				sums[j * 4] /= alpha;
+			}
+		}
+		for (j=0; j<3; j++) {
+			val = sums[j * 4];
+			if (val > 1.0f) val = 1.0f;
+			else if (val < 0.0f) val = 0.0f;
+			out[j] = l2s_map[(int)(val * (l2s_len - 1))];
+		}
+		out[3] = (int)(alpha * 255.0f + 0.5f);
+
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+
+		sums += 16;
+		out += 4;
+	}
+}
+
 void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {

@@ -371,7 +371,11 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_linear(sums, sl_len, out);
 		break;
 	case OIL_CS_RGBA:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_out_rgba_sse2(sums, width, out);
+#else
 		yscale_out_rgba(sums, width, out);
+#endif
 		break;
 	case OIL_CS_ARGB:
 		yscale_out_argb(sums, width, out);
