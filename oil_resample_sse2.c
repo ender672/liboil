@@ -840,88 +840,54 @@ void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_c, smp_m, smp_y, smp_k, newval, hi;
+	__m128 smp0, smp1, smp2, smp3, inv255;
+	__m128i zero_i;
 
-	smp_c = _mm_setzero_ps();
-	smp_m = _mm_setzero_ps();
-	smp_y = _mm_setzero_ps();
-	smp_k = _mm_setzero_ps();
+	/* Interleaved layout: each smpN = [C, M, Y, K] for one tap position */
+	smp0 = _mm_setzero_ps();
+	smp1 = _mm_setzero_ps();
+	smp2 = _mm_setzero_ps();
+	smp3 = _mm_setzero_ps();
+	inv255 = _mm_set1_ps(1.0f / 255.0f);
+	zero_i = _mm_setzero_si128();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f for C */
-		smp_c = (__m128)_mm_srli_si128((__m128i)smp_c, 4);
-		newval = _mm_set_ss(i2f_map[in[0]]);
-		hi = _mm_shuffle_ps(smp_c, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_c = _mm_shuffle_ps(smp_c, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for M */
-		smp_m = (__m128)_mm_srli_si128((__m128i)smp_m, 4);
-		newval = _mm_set_ss(i2f_map[in[1]]);
-		hi = _mm_shuffle_ps(smp_m, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_m = _mm_shuffle_ps(smp_m, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for Y */
-		smp_y = (__m128)_mm_srli_si128((__m128i)smp_y, 4);
-		newval = _mm_set_ss(i2f_map[in[2]]);
-		hi = _mm_shuffle_ps(smp_y, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_y = _mm_shuffle_ps(smp_y, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for K */
-		smp_k = (__m128)_mm_srli_si128((__m128i)smp_k, 4);
-		newval = _mm_set_ss(i2f_map[in[3]]);
-		hi = _mm_shuffle_ps(smp_k, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_k = _mm_shuffle_ps(smp_k, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		/* Push new pixel: load 4 bytes [C,M,Y,K], convert to floats */
+		__m128i px = _mm_cvtsi32_si128(*(int *)in);
+		px = _mm_unpacklo_epi8(px, zero_i);
+		px = _mm_unpacklo_epi16(px, zero_i);
+		smp0 = smp1;
+		smp1 = smp2;
+		smp2 = smp3;
+		smp3 = _mm_mul_ps(_mm_cvtepi32_ps(px), inv255);
 
 		j = border_buf[i];
 
 		/* process pairs of outputs */
 		while (j >= 2) {
-			__m128 c0 = _mm_load_ps(coeff_buf);
-			__m128 c1 = _mm_load_ps(coeff_buf + 4);
+			__m128 coeffs0 = _mm_load_ps(coeff_buf);
+			__m128 coeffs1 = _mm_load_ps(coeff_buf + 4);
 
-			/* C dot products for 2 outputs */
-			__m128 pc0 = _mm_mul_ps(smp_c, c0);
-			__m128 pc1 = _mm_mul_ps(smp_c, c1);
-			__m128 lo = _mm_unpacklo_ps(pc0, pc1);
-			__m128 hh = _mm_unpackhi_ps(pc0, pc1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_c = _mm_add_ps(sum, t1);
+			/* First output: broadcast each coeff and multiply */
+			__m128 result0 = _mm_add_ps(
+				_mm_add_ps(
+					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(0,0,0,0))),
+					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(1,1,1,1)))),
+				_mm_add_ps(
+					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(2,2,2,2))),
+					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(3,3,3,3)))));
 
-			/* M dot products for 2 outputs */
-			__m128 pm0 = _mm_mul_ps(smp_m, c0);
-			__m128 pm1 = _mm_mul_ps(smp_m, c1);
-			lo = _mm_unpacklo_ps(pm0, pm1);
-			hh = _mm_unpackhi_ps(pm0, pm1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_m = _mm_add_ps(sum, t1);
+			/* Second output */
+			__m128 result1 = _mm_add_ps(
+				_mm_add_ps(
+					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(0,0,0,0))),
+					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(1,1,1,1)))),
+				_mm_add_ps(
+					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(2,2,2,2))),
+					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(3,3,3,3)))));
 
-			/* Y dot products for 2 outputs */
-			__m128 py0 = _mm_mul_ps(smp_y, c0);
-			__m128 py1 = _mm_mul_ps(smp_y, c1);
-			lo = _mm_unpacklo_ps(py0, py1);
-			hh = _mm_unpackhi_ps(py0, py1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_y = _mm_add_ps(sum, t1);
-
-			/* K dot products for 2 outputs */
-			__m128 pk0 = _mm_mul_ps(smp_k, c0);
-			__m128 pk1 = _mm_mul_ps(smp_k, c1);
-			lo = _mm_unpacklo_ps(pk0, pk1);
-			hh = _mm_unpackhi_ps(pk0, pk1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_k = _mm_add_ps(sum, t1);
-
-			/* Store interleaved: [C0, M0, Y0, K0, C1, M1, Y1, K1] */
-			{
-				__m128 lo_cm = _mm_unpacklo_ps(t2_c, t2_m);
-				__m128 lo_yk = _mm_unpacklo_ps(t2_y, t2_k);
-				_mm_storeu_ps(out, _mm_movelh_ps(lo_cm, lo_yk));
-				_mm_storeu_ps(out + 4, _mm_movehl_ps(lo_yk, lo_cm));
-			}
+			_mm_storeu_ps(out, result0);
+			_mm_storeu_ps(out + 4, result1);
 
 			out += 8;
 			coeff_buf += 8;
@@ -932,33 +898,15 @@ void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
 
-			__m128 prod = _mm_mul_ps(smp_c, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
+			__m128 result = _mm_add_ps(
+				_mm_add_ps(
+					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(0,0,0,0))),
+					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(1,1,1,1)))),
+				_mm_add_ps(
+					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(2,2,2,2))),
+					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(3,3,3,3)))));
 
-			prod = _mm_mul_ps(smp_m, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_y, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_k, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
+			_mm_storeu_ps(out, result);
 
 			out += 4;
 			coeff_buf += 4;
