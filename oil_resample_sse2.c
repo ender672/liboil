@@ -485,6 +485,185 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
+void oil_yscale_out_cmyk_sse2(float *sums, int len, unsigned char *out)
+{
+	int i;
+	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
+	__m128i idx, clamped, v0, v1, v2, v3;
+
+	scale = _mm_set1_ps(255.0f);
+
+	for (i=0; i+3<len; i+=4) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		f3 = _mm_castsi128_ps(v3);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		/* clamp to [0, 1] then scale to [0, 255] */
+		vals = _mm_min_ps(_mm_max_ps(vals, _mm_setzero_ps()), _mm_set1_ps(1.0f));
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), _mm_set1_ps(0.5f)));
+
+		/* Pack 32-bit ints to 16-bit then to 8-bit */
+		clamped = _mm_packs_epi32(idx, idx);
+		clamped = _mm_packus_epi16(clamped, clamped);
+
+		*(int *)&out[i] = _mm_cvtsi128_si32(clamped);
+
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+
+		sums += 16;
+	}
+
+	for (; i<len; i++) {
+		float v = *sums;
+		if (v < 0.0f) v = 0.0f;
+		if (v > 1.0f) v = 1.0f;
+		out[i] = (int)(v * 255.0f + 0.5f);
+		oil_shift_left_f_sse2(sums);
+		sums += 4;
+	}
+}
+
+void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, coeffs_x2, sample_x, sum_c, sum_m, sum_y, sum_k;
+	__m128 sum_c2, sum_m2, sum_y2, sum_k2;
+	__m128 coeffs_y, sums_y, sample_y;
+
+	coeffs_y = _mm_load_ps(coeffs_y_f);
+
+	sum_c = _mm_setzero_ps();
+	sum_m = _mm_setzero_ps();
+	sum_y = _mm_setzero_ps();
+	sum_k = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		if (border_buf[i] >= 4) {
+			sum_c2 = _mm_setzero_ps();
+			sum_m2 = _mm_setzero_ps();
+			sum_y2 = _mm_setzero_ps();
+			sum_k2 = _mm_setzero_ps();
+
+			for (j=0; j+1<border_buf[i]; j+=2) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
+
+				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
+
+				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
+
+				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
+
+				sample_x = _mm_set1_ps(in[3] * (1.0f/255.0f));
+				sum_k = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_k);
+
+				sample_x = _mm_set1_ps(in[4] * (1.0f/255.0f));
+				sum_c2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_c2);
+
+				sample_x = _mm_set1_ps(in[5] * (1.0f/255.0f));
+				sum_m2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_m2);
+
+				sample_x = _mm_set1_ps(in[6] * (1.0f/255.0f));
+				sum_y2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_y2);
+
+				sample_x = _mm_set1_ps(in[7] * (1.0f/255.0f));
+				sum_k2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_k2);
+
+				in += 8;
+				coeffs_x_f += 8;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
+
+				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
+
+				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
+
+				sample_x = _mm_set1_ps(in[3] * (1.0f/255.0f));
+				sum_k = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_k);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+
+			sum_c = _mm_add_ps(sum_c, sum_c2);
+			sum_m = _mm_add_ps(sum_m, sum_m2);
+			sum_y = _mm_add_ps(sum_y, sum_y2);
+			sum_k = _mm_add_ps(sum_k, sum_k2);
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+				sum_c = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_c);
+
+				sample_x = _mm_set1_ps(in[1] * (1.0f/255.0f));
+				sum_m = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_m);
+
+				sample_x = _mm_set1_ps(in[2] * (1.0f/255.0f));
+				sum_y = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_y);
+
+				sample_x = _mm_set1_ps(in[3] * (1.0f/255.0f));
+				sum_k = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_k);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+		}
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_c, sum_c, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_m, sum_m, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_y, sum_y, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_k, sum_k, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_c = (__m128)_mm_srli_si128(_mm_castps_si128(sum_c), 4);
+		sum_m = (__m128)_mm_srli_si128(_mm_castps_si128(sum_m), 4);
+		sum_y = (__m128)_mm_srli_si128(_mm_castps_si128(sum_y), 4);
+		sum_k = (__m128)_mm_srli_si128(_mm_castps_si128(sum_k), 4);
+	}
+}
+
 void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
