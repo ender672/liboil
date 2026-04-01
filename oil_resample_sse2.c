@@ -173,7 +173,7 @@ void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(in[0] * (1.0f/255.0f));
+			sample_x = _mm_set1_ps(i2f_map[in[0]]);
 			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
 			in += 1;
 			coeffs_x_f += 4;

@@ -589,7 +589,7 @@ static void build_s2l(void)
 	}
 }
 
-static float i2f_map[256];
+float i2f_map[256];
 
 static void build_i2f(void)
 {
