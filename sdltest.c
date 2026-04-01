@@ -171,7 +171,7 @@ static int resumable_resize_do(struct resumable_resize *rr) {
 			return -2;
 		}
 		oil_libjpeg_read_scanline(rr->olj, rr->outbuf);
-				rr->ypos += 1;
+		rr->ypos += 1;
 	}
 	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
 	return rr->ypos == rr->out_height ? 0 : -1;
@@ -201,6 +201,10 @@ int main(int argc, char **argv) {
 	struct resumable_resize rr;
 	Uint32 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
 
+	if (argc < 2) {
+		fprintf(stderr, "Usage: %s <image>\n", argv[0]);
+		return 1;
+	}
 	path = argv[1];
 
 	SDL_Init(SDL_INIT_VIDEO);
