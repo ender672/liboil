@@ -124,9 +124,9 @@ static void jpeg_start(struct resumable_resize *rr)
 static void jpeg_end(struct resumable_resize *rr) {
 	free(rr->outbuf);
 	oil_libjpeg_free(rr->olj);
-	jpeg_destroy_decompress(rr->dinfo);
 	free(rr->olj);
 	free(rr->dinfo->err);
+	jpeg_destroy_decompress(rr->dinfo);
 	free(rr->dinfo);
 }
 
