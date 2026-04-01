@@ -36,6 +36,8 @@ void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 	unsigned char *out);
 void oil_xscale_up_rgb_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf);
+void oil_xscale_up_rgbx_sse2(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf);
 void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 	unsigned char *out);
 void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out);
