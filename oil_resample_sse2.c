@@ -292,9 +292,16 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 
 void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 {
-	int i, j;
-	float alpha, val;
-	__m128i v0, v1, v2, v3;
+	int i;
+	__m128 scale, one, zero;
+	__m128 f0, f1, f2, f3, ab, cd, vals, alpha_v;
+	__m128i idx, v0, v1, v2, v3;
+	float alpha;
+
+	scale = _mm_set1_ps((float)(l2s_len - 1));
+	one = _mm_set1_ps(1.0f);
+	zero = _mm_setzero_ps();
+
 
 	for (i=0; i<width; i++) {
 		v0 = _mm_load_si128((__m128i *)sums);
@@ -302,24 +309,32 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 		v2 = _mm_load_si128((__m128i *)(sums + 8));
 		v3 = _mm_load_si128((__m128i *)(sums + 12));
 
-		alpha = sums[12];
-		if (alpha > 1.0f) {
-			alpha = 1.0f;
-		} else if (alpha < 0.0f) {
-			alpha = 0.0f;
+		/* Gather first element of each accumulator: {R, G, B, A} */
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		f3 = _mm_castsi128_ps(v3);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		/* Clamp alpha to [0, 1] */
+		alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
+		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+		alpha = _mm_cvtss_f32(alpha_v);
+
+		/* Divide RGB by alpha (skip if alpha == 0) */
+		if (alpha != 0) {
+			vals = _mm_div_ps(vals, alpha_v);
 		}
 
-		if (alpha != 0) {
-			for (j=0; j<3; j++) {
-				sums[j * 4] /= alpha;
-			}
-		}
-		for (j=0; j<3; j++) {
-			val = sums[j * 4];
-			if (val > 1.0f) val = 1.0f;
-			else if (val < 0.0f) val = 0.0f;
-			out[j] = l2s_map[(int)(val * (l2s_len - 1))];
-		}
+		/* Clamp RGB to [0, 1] and compute l2s_map indices */
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
+		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
+
+		out[0] = l2s_map[_mm_cvtsi128_si32(idx)];
+		out[1] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[2] = l2s_map[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
 		out[3] = (int)(alpha * 255.0f + 0.5f);
 
 		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
