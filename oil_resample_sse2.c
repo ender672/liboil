@@ -916,18 +916,12 @@ void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 			__m128 t2_k = _mm_add_ps(sum, t1);
 
 			/* Store interleaved: [C0, M0, Y0, K0, C1, M1, Y1, K1] */
-			out[0] = _mm_cvtss_f32(t2_c);
-			out[1] = _mm_cvtss_f32(t2_m);
-			out[2] = _mm_cvtss_f32(t2_y);
-			out[3] = _mm_cvtss_f32(t2_k);
-			out[4] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_c, t2_c, _MM_SHUFFLE(1,1,1,1)));
-			out[5] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_m, t2_m, _MM_SHUFFLE(1,1,1,1)));
-			out[6] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_y, t2_y, _MM_SHUFFLE(1,1,1,1)));
-			out[7] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_k, t2_k, _MM_SHUFFLE(1,1,1,1)));
+			{
+				__m128 lo_cm = _mm_unpacklo_ps(t2_c, t2_m);
+				__m128 lo_yk = _mm_unpacklo_ps(t2_y, t2_k);
+				_mm_storeu_ps(out, _mm_movelh_ps(lo_cm, lo_yk));
+				_mm_storeu_ps(out + 4, _mm_movehl_ps(lo_yk, lo_cm));
+			}
 
 			out += 8;
 			coeff_buf += 8;
