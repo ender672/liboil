@@ -275,6 +275,7 @@ static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 #endif
 }
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_out_ga(float *sums, int width, unsigned char *out)
 {
 	int i;
@@ -293,6 +294,7 @@ static void yscale_out_ga(float *sums, int width, unsigned char *out)
 		out += 2;
 	}
 }
+#endif
 
 #if !defined(OIL_USE_SSE2)
 static void yscale_out_rgba(float *sums, int width, unsigned char *out)
@@ -380,7 +382,11 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #endif
 		break;
 	case OIL_CS_GA:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_out_ga_sse2(sums, width, out);
+#else
 		yscale_out_ga(sums, width, out);
+#endif
 		break;
 	case OIL_CS_RGB:
 		yscale_out_linear(sums, sl_len, out);

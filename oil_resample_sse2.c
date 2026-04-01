@@ -124,6 +124,38 @@ void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
 	}
 }
 
+void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out)
+{
+	int i;
+	__m128i v0, v1;
+	float gray, alpha;
+
+	for (i=0; i<width; i++) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+
+		alpha = _mm_cvtss_f32(_mm_castsi128_ps(v1));
+		if (alpha > 1.0f) alpha = 1.0f;
+		else if (alpha < 0.0f) alpha = 0.0f;
+
+		gray = _mm_cvtss_f32(_mm_castsi128_ps(v0));
+		if (alpha != 0) {
+			gray /= alpha;
+		}
+		if (gray > 1.0f) gray = 1.0f;
+		else if (gray < 0.0f) gray = 0.0f;
+
+		out[0] = (int)(gray * 255.0f + 0.5f);
+		out[1] = (int)(alpha * 255.0f + 0.5f);
+
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+
+		sums += 8;
+		out += 2;
+	}
+}
+
 void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 {
 	int i;
