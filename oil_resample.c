@@ -523,6 +523,7 @@ static void yscale_up_argb(float **in, int len, float *coeffs,
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_up_rgbx(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -542,6 +543,7 @@ static void yscale_up_rgbx(float **in, int len, float *coeffs,
 		out[i + 3] = 255;
 	}
 }
+#endif
 
 /**
  * Upscale a strip of scanlines. Branches to the correct interpolator using
@@ -580,7 +582,11 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 		yscale_up_argb(in, len, coeffs, out);
 		break;
 	case OIL_CS_RGBX:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_up_rgbx_sse2(in, len, coeffs, out);
+#else
 		yscale_up_rgbx(in, len, coeffs, out);
+#endif
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
