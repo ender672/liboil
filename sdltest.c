@@ -157,7 +157,7 @@ static int resumable_resize_do(struct resumable_resize *rr) {
 		if (!scanline_ready) {
 			return -2;
 		}
-		oil_libpng_read_scanline(rr->olp, tmp);
+		oil_libpng_read_scanline(rr->olp, rr->outbuf);
 		rr->ypos += 1;
 	} else {
 		scanline_ready = oil_libjpeg_proccess_scanline_part(rr->olj);
