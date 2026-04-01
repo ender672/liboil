@@ -1184,6 +1184,57 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 	}
 }
 
+void oil_yscale_up_rgba_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	int i;
+	__m128 c0, c1, c2, c3;
+	__m128 v0, v1, v2, v3, sum;
+	__m128 scale, one, zero;
+	__m128 alpha_v, clamped;
+	__m128i idx;
+	unsigned char *lut;
+	float alpha;
+
+	c0 = _mm_set1_ps(coeffs[0]);
+	c1 = _mm_set1_ps(coeffs[1]);
+	c2 = _mm_set1_ps(coeffs[2]);
+	c3 = _mm_set1_ps(coeffs[3]);
+	lut = l2s_map;
+	scale = _mm_set1_ps((float)(l2s_len - 1));
+	one = _mm_set1_ps(1.0f);
+	zero = _mm_setzero_ps();
+
+	for (i=0; i<len; i+=4) {
+		v0 = _mm_loadu_ps(in[0] + i);
+		v1 = _mm_loadu_ps(in[1] + i);
+		v2 = _mm_loadu_ps(in[2] + i);
+		v3 = _mm_loadu_ps(in[3] + i);
+		sum = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		/* Clamp alpha to [0, 1] */
+		alpha_v = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 3, 3));
+		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+		alpha = _mm_cvtss_f32(alpha_v);
+
+		/* Divide RGB by alpha (skip if alpha == 0) */
+		if (alpha != 0) {
+			sum = _mm_mul_ps(sum, _mm_rcp_ps(alpha_v));
+		}
+
+		/* Clamp to [0, 1] and compute l2s_map indices */
+		clamped = _mm_min_ps(_mm_max_ps(sum, zero), one);
+		idx = _mm_cvttps_epi32(_mm_mul_ps(clamped, scale));
+
+		out[i]   = lut[_mm_cvtsi128_si32(idx)];
+		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		out[i+3] = (int)(alpha * 255.0f + 0.5f);
+	}
+}
+
 void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
