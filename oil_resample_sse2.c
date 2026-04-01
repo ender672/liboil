@@ -805,7 +805,7 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 	sum_b = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
+		if (border_buf[i] >= 2) {
 			sum_r2 = _mm_setzero_ps();
 			sum_g2 = _mm_setzero_ps();
 			sum_b2 = _mm_setzero_ps();
