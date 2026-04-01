@@ -29,10 +29,15 @@ struct resumable_resize {
 static void translate(unsigned char *in, unsigned char *out, int width, int cmp) {
 	int i;
 	for (i=0; i<width; i++) {
-		out[0] = in[2];
-		out[1] = in[1];
-		out[2] = in[0];
-		out[3] = cmp >= 4 ? in[3] : 0xFF;
+		if (cmp <= 2) {
+			out[0] = out[1] = out[2] = in[0];
+			out[3] = cmp == 2 ? in[1] : 0xFF;
+		} else {
+			out[0] = in[2];
+			out[1] = in[1];
+			out[2] = in[0];
+			out[3] = cmp >= 4 ? in[3] : 0xFF;
+		}
 		in += cmp;
 		out += 4;
 	}
