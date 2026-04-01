@@ -413,6 +413,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 	}
 }
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_up_g_cmyk(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -427,6 +428,7 @@ static void yscale_up_g_cmyk(float **in, int len, float *coeffs,
 		out[i] = clamp8(sum);
 	}
 }
+#endif
 
 static void yscale_up_ga(float **in, int len, float *coeffs,
 	unsigned char *out)
@@ -545,7 +547,11 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 	switch(cs) {
 	case OIL_CS_G:
 	case OIL_CS_CMYK:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_up_g_cmyk_sse2(in, len, coeffs, out);
+#else
 		yscale_up_g_cmyk(in, len, coeffs, out);
+#endif
 		break;
 	case OIL_CS_GA:
 		yscale_up_ga(in, len, coeffs, out);

@@ -196,6 +196,52 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out)
 	}
 }
 
+void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	int i;
+	__m128 c0, c1, c2, c3;
+	__m128 v0, v1, v2, v3, sum;
+	__m128 scale, half, zero, one;
+	__m128i idx;
+
+	c0 = _mm_set1_ps(coeffs[0]);
+	c1 = _mm_set1_ps(coeffs[1]);
+	c2 = _mm_set1_ps(coeffs[2]);
+	c3 = _mm_set1_ps(coeffs[3]);
+	scale = _mm_set1_ps(255.0f);
+	half = _mm_set1_ps(0.5f);
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
+
+	for (i=0; i+3<len; i+=4) {
+		v0 = _mm_loadu_ps(in[0] + i);
+		v1 = _mm_loadu_ps(in[1] + i);
+		v2 = _mm_loadu_ps(in[2] + i);
+		v3 = _mm_loadu_ps(in[3] + i);
+
+		sum = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
+
+		out[i]   = _mm_cvtsi128_si32(idx);
+		out[i+1] = _mm_cvtsi128_si32(_mm_srli_si128(idx, 4));
+		out[i+2] = _mm_cvtsi128_si32(_mm_srli_si128(idx, 8));
+		out[i+3] = _mm_cvtsi128_si32(_mm_srli_si128(idx, 12));
+	}
+
+	for (; i<len; i++) {
+		float s = coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+			coeffs[2] * in[2][i] + coeffs[3] * in[3][i];
+		if (s > 1.0f) s = 1.0f;
+		else if (s < 0.0f) s = 0.0f;
+		out[i] = (int)(s * 255.0f + 0.5f);
+	}
+}
+
 void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
