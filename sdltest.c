@@ -257,8 +257,16 @@ int main(int argc, char **argv) {
 	}
 	path = argv[1];
 
-	SDL_Init(SDL_INIT_VIDEO);
+	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+		fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+		return 1;
+	}
 	window = SDL_CreateWindow(path, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+	if (!window) {
+		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+		SDL_Quit();
+		return 1;
+	}
 
 	surface = SDL_GetWindowSurface(window);
 	clear_surface(surface);
