@@ -60,10 +60,10 @@ static long double ref_catrom(long double x)
 	return cubic(0, 0.5l, x);
 }
 
-static void ref_calc_coeffs(long double *coeffs, long double offset, long taps,
-	long ltrim, long rtrim)
+static void ref_calc_coeffs(long double *coeffs, long double offset, int taps,
+	int ltrim, int rtrim)
 {
-	long i;
+	int i;
 	long double tap_offset, tap_mult, fudge, total_check;
 
 	assert(taps - ltrim - rtrim > 0);
@@ -86,17 +86,17 @@ static void ref_calc_coeffs(long double *coeffs, long double offset, long taps,
 	assert(fabsl(total_check - 1.0) < 0.0000000001L);
 }
 
-static void fill_rand8(unsigned char *buf, long len)
+static void fill_rand8(unsigned char *buf, int len)
 {
-	long i;
+	int i;
 	for (i=0; i<len; i++) {
 		buf[i] = rand() % 256;
 	}
 }
 
-static long calc_taps_check(long dim_in, long dim_out)
+static int calc_taps_check(int dim_in, int dim_out)
 {
-	long tmp_i;
+	int tmp_i;
 	if (dim_in < dim_out) {
 		return 4;
 	}
@@ -104,16 +104,16 @@ static long calc_taps_check(long dim_in, long dim_out)
 	return tmp_i - (tmp_i%2);
 }
 
-static long double ref_map(long dim_in, long dim_out, long pos)
+static long double ref_map(int dim_in, int dim_out, int pos)
 {
 	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
 }
 
-static long double split_map_check(long dim_in, long dim_out, long pos,
+static int split_map_check(int dim_in, int dim_out, int pos,
 	long double *ty)
 {
 	long double smp;
-	long smp_i;
+	int smp_i;
 
 	smp = ref_map(dim_in, dim_out, pos);
 	smp_i = floorl(smp);
@@ -121,24 +121,24 @@ static long double split_map_check(long dim_in, long dim_out, long pos,
 	return smp_i;
 }
 
-static long double worst;
+static double worst;
 
 static void validate_scanline8(unsigned char *oil, long double *ref,
-	size_t width, int cmp)
+	int width, int cmp)
 {
-	long i, j, ref_i, pos;
-	long double error, ref_f;
+	int i, j, ref_i, pos;
+	double error, ref_f;
 	for (i=0; i<width; i++) {
 		for (j=0; j<cmp; j++) {
 			pos = i * cmp + j;
-			ref_f = ref[pos] * 255.0L;
-			ref_i = lroundl(ref_f);
-			error = fabsl(oil[pos] - ref_f) - 0.5L;
+			ref_f = ref[pos] * 255.0;
+			ref_i = lround(ref_f);
+			error = fabs(oil[pos] - ref_f) - 0.5;
 			if (error > worst) {
 				worst = error;
 			}
-			if (error > 0.06L) {
-				fprintf(stderr, "[%ld:%ld] expected: %ld, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
+			if (error > 0.06) {
+				fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9f)\n", i, j, ref_i, oil[pos], ref_f);
 				assert(0 && "pixel error exceeds tolerance");
 			}
 		}
@@ -251,9 +251,9 @@ static void postprocess(long double *in, enum oil_colorspace cs)
 	}
 }
 
-static unsigned char **alloc_2d_uchar(long width, long height)
+static unsigned char **alloc_2d_uchar(int width, int height)
 {
-	long i;
+	int i;
 	unsigned char **rows;
 
 	rows = malloc(height * sizeof(unsigned char*));
@@ -263,9 +263,9 @@ static unsigned char **alloc_2d_uchar(long width, long height)
 	return rows;
 }
 
-static void free_2d_uchar(unsigned char **ptr, long height)
+static void free_2d_uchar(unsigned char **ptr, int height)
 {
-	long i;
+	int i;
 
 	for (i=0; i<height; i++) {
 		free(ptr[i]);
@@ -273,9 +273,9 @@ static void free_2d_uchar(unsigned char **ptr, long height)
 	free(ptr);
 }
 
-static long double **alloc_2d_ld(long width, long height)
+static long double **alloc_2d_ld(int width, int height)
 {
-	long i;
+	int i;
 	long double **rows;
 
 	rows = malloc(height * sizeof(long double*));
@@ -285,9 +285,9 @@ static long double **alloc_2d_ld(long width, long height)
 	return rows;
 }
 
-static void free_2d_ld(long double **ptr, long height)
+static void free_2d_ld(long double **ptr, int height)
 {
-	long i;
+	int i;
 
 	for (i=0; i<height; i++) {
 		free(ptr[i]);
@@ -295,10 +295,10 @@ static void free_2d_ld(long double **ptr, long height)
 	free(ptr);
 }
 
-static void ref_xscale(long double *in, long in_width, long double *out,
-	long out_width, long cmp)
+static void ref_xscale(long double *in, int in_width, long double *out,
+	int out_width, int cmp)
 {
-	long i, j, k, taps, smp_i, start, ltrim, rtrim, start_safe,
+	int i, j, k, taps, smp_i, start, ltrim, rtrim, start_safe,
 		taps_safe, max_pos, in_pos;
 	long double *coeffs, in_val, tx;
 
@@ -336,10 +336,10 @@ static void ref_xscale(long double *in, long in_width, long double *out,
 	free(coeffs);
 }
 
-static void ref_transpose_line(long double *in, long width,
-	long double **out, long out_offset, long cmp)
+static void ref_transpose_line(long double *in, int width,
+	long double **out, int out_offset, int cmp)
 {
-	long i, j;
+	int i, j;
 	for (i=0; i<width; i++) {
 		for (j=0; j<cmp; j++) {
 			out[i][out_offset + j] = in[i * cmp + j];
@@ -347,10 +347,10 @@ static void ref_transpose_line(long double *in, long width,
 	}
 }
 
-static void ref_transpose_column(long double **in, long height,
-	long double *out, long in_offset, long cmp)
+static void ref_transpose_column(long double **in, int height,
+	long double *out, int in_offset, int cmp)
 {
-	long i, j;
+	int i, j;
 	for (i=0; i<height; i++) {
 		for (j=0; j<cmp; j++) {
 			out[i * cmp + j] = in[i][in_offset + j];
@@ -358,10 +358,10 @@ static void ref_transpose_column(long double **in, long height,
 	}
 }
 
-static void ref_yscale(long double **in, long width, long in_height,
-	long double **out, long out_height, long cmp)
+static void ref_yscale(long double **in, int width, int in_height,
+	long double **out, int out_height, int cmp)
 {
-	long i;
+	int i;
 	long double *transposed, *trans_scaled;
 
 	transposed = malloc(in_height * cmp * sizeof(long double));
@@ -375,11 +375,11 @@ static void ref_yscale(long double **in, long width, long in_height,
 	free(trans_scaled);
 }
 
-static void ref_scale(unsigned char **in, long in_width, long in_height,
-	long double **out, long out_width, long out_height,
+static void ref_scale(unsigned char **in, int in_width, int in_height,
+	long double **out, int out_width, int out_height,
 	enum oil_colorspace cs)
 {
-	long i, j, cmp, stride;
+	int i, j, cmp, stride;
 	long double *pre_line, **intermediate;
 
 	cmp = OIL_CMP(cs);
@@ -415,12 +415,12 @@ static void ref_scale(unsigned char **in, long in_width, long in_height,
 	free_2d_ld(intermediate, in_height);
 }
 
-static void do_oil_scale(unsigned char **input_image, long in_width,
-	long in_height, unsigned char **output_image, long out_width,
-	long out_height, enum oil_colorspace cs)
+static void do_oil_scale(unsigned char **input_image, int in_width,
+	int in_height, unsigned char **output_image, int out_width,
+	int out_height, enum oil_colorspace cs)
 {
 	struct oil_scale os;
-	long i, in_line;
+	int i, in_line;
 
 	oil_scale_init(&os, in_height, out_height, in_width, out_width, cs);
 	in_line = 0;
@@ -433,11 +433,11 @@ static void do_oil_scale(unsigned char **input_image, long in_width,
 	oil_scale_free(&os);
 }
 
-static void test_scale(long in_width, long in_height,
-	unsigned char **input_image, long out_width, long out_height,
+static void test_scale(int in_width, int in_height,
+	unsigned char **input_image, int out_width, int out_height,
 	enum oil_colorspace cs)
 {
-	long i, out_row_stride;
+	int i, out_row_stride;
 	unsigned char **oil_output_image;
 	long double **ref_output_image;
 
@@ -463,10 +463,10 @@ static void test_scale(long in_width, long in_height,
 	free_2d_ld(ref_output_image, out_height);
 }
 
-static void test_scale_square_rand(long in_dim, long out_dim,
+static void test_scale_square_rand(int in_dim, int out_dim,
 	enum oil_colorspace cs)
 {
-	long i, in_row_stride;
+	int i, in_row_stride;
 	unsigned char **input_image;
 
 	in_row_stride = OIL_CMP(cs) * in_dim;
@@ -511,7 +511,7 @@ static void test_scale_catrom_extremes(void)
 	free_2d_uchar(input_image, 4);
 }
 
-static void test_scale_each_cs(long dim_a, long dim_b)
+static void test_scale_each_cs(int dim_a, int dim_b)
 {
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_G);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_GA);
@@ -522,7 +522,7 @@ static void test_scale_each_cs(long dim_a, long dim_b)
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX);
 }
 
-static void test_scale_all_permutations(long dim_a, long dim_b)
+static void test_scale_all_permutations(int dim_a, int dim_b)
 {
 	test_scale_each_cs(dim_a, dim_b);
 	test_scale_each_cs(dim_b, dim_a);
@@ -547,7 +547,7 @@ int main(void)
 	oil_global_init();
 	test_scale_all();
 	test_scale_catrom_extremes();
-	printf("worst error: %Lf\n", worst);
+	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");
 	return 0;
 }
