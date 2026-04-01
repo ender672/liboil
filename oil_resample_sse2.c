@@ -213,8 +213,27 @@ void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 
 		j = border_buf[i];
 
-		/* process pairs of outputs sharing the same smp */
-		while (j >= 2) {
+		/* process groups of 4 outputs sharing the same smp */
+		for (; j >= 4; j -= 4) {
+			__m128 c0 = _mm_load_ps(coeff_buf);
+			__m128 c1 = _mm_load_ps(coeff_buf + 4);
+			__m128 c2x = _mm_load_ps(coeff_buf + 8);
+			__m128 c3x = _mm_load_ps(coeff_buf + 12);
+			_MM_TRANSPOSE4_PS(c0, c1, c2x, c3x);
+			__m128 s0 = _mm_shuffle_ps(smp, smp, _MM_SHUFFLE(0,0,0,0));
+			__m128 s1 = _mm_shuffle_ps(smp, smp, _MM_SHUFFLE(1,1,1,1));
+			__m128 s2 = _mm_shuffle_ps(smp, smp, _MM_SHUFFLE(2,2,2,2));
+			__m128 s3 = _mm_shuffle_ps(smp, smp, _MM_SHUFFLE(3,3,3,3));
+			t2 = _mm_add_ps(
+				_mm_add_ps(_mm_mul_ps(s0, c0), _mm_mul_ps(s1, c1)),
+				_mm_add_ps(_mm_mul_ps(s2, c2x), _mm_mul_ps(s3, c3x)));
+			_mm_storeu_ps(out, t2);
+			out += 4;
+			coeff_buf += 16;
+		}
+
+		/* process a pair of outputs */
+		if (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
 			__m128 p0 = _mm_mul_ps(smp, c0);
@@ -232,6 +251,7 @@ void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 			j -= 2;
 		}
 
+		/* process remaining single output */
 		if (j) {
 			coeffs = _mm_load_ps(coeff_buf);
 			prod = _mm_mul_ps(smp, coeffs);
