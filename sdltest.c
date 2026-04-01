@@ -105,15 +105,43 @@ static void png_end(struct resumable_resize *rr) {
 	png_destroy_read_struct(&rr->rpng, &rr->rinfo, NULL);
 }
 
-static void jpeg_start(struct resumable_resize *rr)
+struct jpeg_err {
+	struct jpeg_error_mgr mgr;
+	jmp_buf jmpbuf;
+};
+
+static void jpeg_err_exit(j_common_ptr cinfo)
+{
+	struct jpeg_err *err = (struct jpeg_err *)cinfo->err;
+	longjmp(err->jmpbuf, 1);
+}
+
+static int jpeg_start(struct resumable_resize *rr)
 {
 	struct jpeg_decompress_struct *dinfo;
+	struct jpeg_err *jerr;
 
 	dinfo = malloc(sizeof(struct jpeg_decompress_struct));
+	if (!dinfo) {
+		return -1;
+	}
+	jerr = malloc(sizeof(struct jpeg_err));
+	if (!jerr) {
+		free(dinfo);
+		return -1;
+	}
+
 	rr->dinfo = dinfo;
-	dinfo->err = malloc(sizeof(struct jpeg_error_mgr));
-	jpeg_std_error(dinfo->err);
+	dinfo->err = jpeg_std_error(&jerr->mgr);
+	jerr->mgr.error_exit = jpeg_err_exit;
 	jpeg_create_decompress(dinfo);
+
+	if (setjmp(jerr->jmpbuf)) {
+		jpeg_destroy_decompress(dinfo);
+		free(jerr);
+		free(dinfo);
+		return -1;
+	}
 
 	jpeg_stdio_src(dinfo, rr->io);
 	jpeg_read_header(dinfo, TRUE);
@@ -129,6 +157,7 @@ static void jpeg_start(struct resumable_resize *rr)
 	oil_libjpeg_init(rr->olj, dinfo, rr->out_width, rr->out_height);
 	rr->cmp = 3;
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
+	return 0;
 }
 
 static void jpeg_end(struct resumable_resize *rr) {
@@ -158,7 +187,10 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path, int s
 			return -1;
 		}
 	} else {
-		jpeg_start(rr);
+		if (jpeg_start(rr) < 0) {
+			fclose(rr->io);
+			return -1;
+		}
 	}
 	return 0;
 }
