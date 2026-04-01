@@ -451,7 +451,7 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 
 		/* Divide RGB by alpha (skip if alpha == 0) */
 		if (alpha != 0) {
-			vals = _mm_div_ps(vals, alpha_v);
+			vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
 		}
 
 		/* Clamp RGB to [0, 1] and compute l2s_map indices */
