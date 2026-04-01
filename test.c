@@ -139,6 +139,7 @@ static void validate_scanline8(unsigned char *oil, long double *ref,
 			}
 			if (error > 0.06L) {
 				fprintf(stderr, "[%ld:%ld] expected: %ld, got %d (%.9Lf)\n", i, j, ref_i, oil[pos], ref_f);
+				assert(0 && "pixel error exceeds tolerance");
 			}
 		}
 	}
