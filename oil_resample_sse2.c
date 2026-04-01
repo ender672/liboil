@@ -213,8 +213,8 @@ void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 
 		j = border_buf[i];
 
-		/* process a pair of outputs */
-		if (j >= 2) {
+		/* process pairs of outputs */
+		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
 			__m128 p0 = _mm_mul_ps(smp, c0);
