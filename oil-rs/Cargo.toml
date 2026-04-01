@@ -1,0 +1,15 @@
+[package]
+name = "oil"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
+
+[dev-dependencies]
+rand = "0.8"
+
+[[bin]]
+name = "imgscale"
+path = "src/bin/imgscale.rs"
