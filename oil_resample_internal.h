@@ -22,6 +22,8 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y, int out_width,
 	float *coeffs_x, int *border_buf, float *coeffs_y);
 void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y, int out_width,
 	float *coeffs_x, int *border_buf, float *coeffs_y);
+void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y, int out_width,
+	float *coeffs_x, int *border_buf, float *coeffs_y);
 void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out);
 #endif
 
