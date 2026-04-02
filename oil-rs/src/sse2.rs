@@ -318,6 +318,64 @@ pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     let mut i = 0;
     let mut s_idx = 0;
 
+    // Process 8 output values at a time
+    while i + 7 < sl_len {
+        let sp = s_ptr.add(s_idx) as *mut __m128i;
+
+        // First batch of 4
+        let v0 = _mm_loadu_si128(sp);
+        let v1 = _mm_loadu_si128(sp.add(1));
+        let v2 = _mm_loadu_si128(sp.add(2));
+        let v3 = _mm_loadu_si128(sp.add(3));
+
+        let f0 = _mm_castsi128_ps(v0);
+        let f1 = _mm_castsi128_ps(v1);
+        let f2 = _mm_castsi128_ps(v2);
+        let f3 = _mm_castsi128_ps(v3);
+        let ab = _mm_shuffle_ps(f0, f1, mm_shuffle(0, 0, 0, 0));
+        let cd = _mm_shuffle_ps(f2, f3, mm_shuffle(0, 0, 0, 0));
+        let vals = _mm_shuffle_ps(ab, cd, mm_shuffle(2, 0, 2, 0));
+        let idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
+
+        // Second batch of 4
+        let v4 = _mm_loadu_si128(sp.add(4));
+        let v5 = _mm_loadu_si128(sp.add(5));
+        let v6 = _mm_loadu_si128(sp.add(6));
+        let v7 = _mm_loadu_si128(sp.add(7));
+
+        let g0 = _mm_castsi128_ps(v4);
+        let g1 = _mm_castsi128_ps(v5);
+        let g2 = _mm_castsi128_ps(v6);
+        let g3 = _mm_castsi128_ps(v7);
+        let ab2 = _mm_shuffle_ps(g0, g1, mm_shuffle(0, 0, 0, 0));
+        let cd2 = _mm_shuffle_ps(g2, g3, mm_shuffle(0, 0, 0, 0));
+        let vals2 = _mm_shuffle_ps(ab2, cd2, mm_shuffle(2, 0, 2, 0));
+        let idx2 = _mm_cvttps_epi32(_mm_mul_ps(vals2, scale));
+
+        // Interleave LUT lookups from both batches for ILP
+        *out_ptr.add(i)     = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
+        *out_ptr.add(i + 4) = *lut.offset(_mm_cvtsi128_si32(idx2) as isize);
+        *out_ptr.add(i + 1) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
+        *out_ptr.add(i + 5) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 4)) as isize);
+        *out_ptr.add(i + 2) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        *out_ptr.add(i + 6) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 8)) as isize);
+        *out_ptr.add(i + 3) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+        *out_ptr.add(i + 7) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 12)) as isize);
+
+        // Shift all 8 accumulators left
+        _mm_storeu_si128(sp, _mm_srli_si128(v0, 4));
+        _mm_storeu_si128(sp.add(1), _mm_srli_si128(v1, 4));
+        _mm_storeu_si128(sp.add(2), _mm_srli_si128(v2, 4));
+        _mm_storeu_si128(sp.add(3), _mm_srli_si128(v3, 4));
+        _mm_storeu_si128(sp.add(4), _mm_srli_si128(v4, 4));
+        _mm_storeu_si128(sp.add(5), _mm_srli_si128(v5, 4));
+        _mm_storeu_si128(sp.add(6), _mm_srli_si128(v6, 4));
+        _mm_storeu_si128(sp.add(7), _mm_srli_si128(v7, 4));
+
+        s_idx += 32;
+        i += 8;
+    }
+
     // Process 4 output values at a time
     while i + 3 < sl_len {
         let sp = s_ptr.add(s_idx) as *mut __m128i;
@@ -326,7 +384,6 @@ pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
         let v2 = _mm_loadu_si128(sp.add(2));
         let v3 = _mm_loadu_si128(sp.add(3));
 
-        // Gather first element of each 4-float accumulator
         let f0 = _mm_castsi128_ps(v0);
         let f1 = _mm_castsi128_ps(v1);
         let f2 = _mm_castsi128_ps(v2);
@@ -342,7 +399,6 @@ pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
         *out_ptr.add(i + 2) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
         *out_ptr.add(i + 3) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
 
-        // Shift each accumulator left
         _mm_storeu_si128(sp, _mm_srli_si128(v0, 4));
         _mm_storeu_si128(sp.add(1), _mm_srli_si128(v1, 4));
         _mm_storeu_si128(sp.add(2), _mm_srli_si128(v2, 4));
