@@ -1,3 +1,6 @@
+use std::ffi::CString;
+use std::path::Path;
+
 use crate::colorspace::ColorSpace;
 use crate::scale::{OilError, OilScale};
 
@@ -7,6 +10,12 @@ enum OilJpegWriter {}
 
 extern "C" {
     fn oil_jpeg_reader_create(data: *const u8, size: libc::c_ulong) -> *mut OilJpegReader;
+    fn oil_jpeg_reader_create_file(path: *const libc::c_char) -> *mut OilJpegReader;
+    fn oil_jpeg_dimensions_file(
+        path: *const libc::c_char,
+        width: *mut libc::c_uint,
+        height: *mut libc::c_uint,
+    ) -> libc::c_int;
     fn oil_jpeg_reader_width(r: *const OilJpegReader) -> libc::c_uint;
     fn oil_jpeg_reader_height(r: *const OilJpegReader) -> libc::c_uint;
     fn oil_jpeg_reader_components(r: *const OilJpegReader) -> libc::c_int;
@@ -34,6 +43,16 @@ impl JpegReader {
         let ptr = unsafe { oil_jpeg_reader_create(data.as_ptr(), data.len() as libc::c_ulong) };
         if ptr.is_null() {
             return Err(OilError::AllocationFailed);
+        }
+        Ok(Self { ptr })
+    }
+
+    fn from_path(path: &Path) -> Result<Self, OilError> {
+        let c_path = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|_| OilError::InvalidArgument)?;
+        let ptr = unsafe { oil_jpeg_reader_create_file(c_path.as_ptr()) };
+        if ptr.is_null() {
+            return Err(OilError::InvalidArgument);
         }
         Ok(Self { ptr })
     }
@@ -104,6 +123,61 @@ impl Drop for JpegWriter {
             unsafe { oil_jpeg_free_buf(buf) };
         }
     }
+}
+
+/// Read JPEG dimensions from a file without decoding pixel data.
+pub fn jpeg_dimensions_file(path: &Path) -> Result<(u32, u32), OilError> {
+    let c_path = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| OilError::InvalidArgument)?;
+    let mut width: libc::c_uint = 0;
+    let mut height: libc::c_uint = 0;
+    let ret = unsafe { oil_jpeg_dimensions_file(c_path.as_ptr(), &mut width, &mut height) };
+    if ret != 0 {
+        return Err(OilError::InvalidArgument);
+    }
+    Ok((width, height))
+}
+
+/// Decode a JPEG file, resize it using streaming scanline I/O via
+/// libjpeg-turbo, and re-encode as JPEG. Reads from disk scanline-by-scanline
+/// to avoid loading the entire file into memory.
+pub fn resize_jpeg_file(
+    path: &Path,
+    out_width: u32,
+    out_height: u32,
+    quality: u8,
+) -> Result<Vec<u8>, OilError> {
+    let mut reader = JpegReader::from_path(path)?;
+
+    let in_width = reader.width();
+    let in_height = reader.height();
+    let cmp = reader.components();
+
+    if cmp != ColorSpace::RGB.components() {
+        return Err(OilError::InvalidArgument);
+    }
+
+    let cs = ColorSpace::RGB;
+    let mut scaler = OilScale::new(in_height, out_height, in_width, out_width, cs)?;
+
+    let in_stride = in_width as usize * cmp;
+    let out_stride = out_width as usize * cmp;
+
+    let mut inbuf = vec![0u8; in_stride];
+    let mut outbuf = vec![0u8; out_stride];
+
+    let mut writer = JpegWriter::new(out_width, out_height, cmp, quality)?;
+
+    for _ in 0..out_height {
+        while scaler.slots() > 0 {
+            reader.read_scanline(&mut inbuf);
+            scaler.push_scanline(&inbuf);
+        }
+        scaler.read_scanline(&mut outbuf);
+        writer.write_scanline(&mut outbuf);
+    }
+
+    writer.finish()
 }
 
 /// Decode a JPEG from bytes, resize it using streaming scanline I/O via

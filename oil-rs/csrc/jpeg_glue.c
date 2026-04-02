@@ -6,6 +6,7 @@
 typedef struct {
 	struct jpeg_decompress_struct dinfo;
 	struct jpeg_error_mgr jerr;
+	FILE *fp; /* non-NULL when created from a file path */
 } oil_jpeg_reader;
 
 /* Opaque handle for JPEG compression (writing). */
@@ -30,6 +31,47 @@ oil_jpeg_reader *oil_jpeg_reader_create(const unsigned char *data,
 	r->dinfo.out_color_space = JCS_RGB;
 	jpeg_start_decompress(&r->dinfo);
 	return r;
+}
+
+oil_jpeg_reader *oil_jpeg_reader_create_file(const char *path)
+{
+	FILE *fp = fopen(path, "rb");
+	if (!fp) {
+		return NULL;
+	}
+	oil_jpeg_reader *r = calloc(1, sizeof(oil_jpeg_reader));
+	if (!r) {
+		fclose(fp);
+		return NULL;
+	}
+	r->fp = fp;
+	r->dinfo.err = jpeg_std_error(&r->jerr);
+	jpeg_create_decompress(&r->dinfo);
+	jpeg_stdio_src(&r->dinfo, fp);
+	jpeg_read_header(&r->dinfo, TRUE);
+	r->dinfo.out_color_space = JCS_RGB;
+	jpeg_start_decompress(&r->dinfo);
+	return r;
+}
+
+int oil_jpeg_dimensions_file(const char *path, unsigned int *width,
+	unsigned int *height)
+{
+	struct jpeg_decompress_struct dinfo;
+	struct jpeg_error_mgr jerr;
+	FILE *fp = fopen(path, "rb");
+	if (!fp) {
+		return -1;
+	}
+	dinfo.err = jpeg_std_error(&jerr);
+	jpeg_create_decompress(&dinfo);
+	jpeg_stdio_src(&dinfo, fp);
+	jpeg_read_header(&dinfo, TRUE);
+	*width = dinfo.image_width;
+	*height = dinfo.image_height;
+	jpeg_destroy_decompress(&dinfo);
+	fclose(fp);
+	return 0;
 }
 
 unsigned int oil_jpeg_reader_width(const oil_jpeg_reader *r)
@@ -59,6 +101,9 @@ void oil_jpeg_reader_destroy(oil_jpeg_reader *r)
 	}
 	jpeg_finish_decompress(&r->dinfo);
 	jpeg_destroy_decompress(&r->dinfo);
+	if (r->fp) {
+		fclose(r->fp);
+	}
 	free(r);
 }
 
