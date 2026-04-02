@@ -900,7 +900,6 @@ pub unsafe fn xscale_up_rgbx(
     let mut smp_r = _mm_setzero_ps();
     let mut smp_g = _mm_setzero_ps();
     let mut smp_b = _mm_setzero_ps();
-    let mut smp_x = _mm_setzero_ps();
     let out_ptr = out.as_mut_ptr();
     let coeff_ptr = coeff_buf.as_ptr();
     let border_ptr = border_buf.as_ptr();
@@ -914,7 +913,6 @@ pub unsafe fn xscale_up_rgbx(
         smp_r = push_f_sse2(smp_r, *s2l.add(*in_ptr.add(in_base) as usize));
         smp_g = push_f_sse2(smp_g, *s2l.add(*in_ptr.add(in_base + 1) as usize));
         smp_b = push_f_sse2(smp_b, *s2l.add(*in_ptr.add(in_base + 2) as usize));
-        smp_x = push_f_sse2(smp_x, 1.0);
 
         let mut j = *border_ptr.add(i);
 
@@ -926,12 +924,11 @@ pub unsafe fn xscale_up_rgbx(
             let t2_r = dot4x2(smp_r, c0, c1);
             let t2_g = dot4x2(smp_g, c0, c1);
             let t2_b = dot4x2(smp_b, c0, c1);
-            let t2_x = dot4x2(smp_x, c0, c1);
 
             *out_ptr.add(out_idx)     = _mm_cvtss_f32(t2_r);
             *out_ptr.add(out_idx + 1) = _mm_cvtss_f32(t2_g);
             *out_ptr.add(out_idx + 2) = _mm_cvtss_f32(t2_b);
-            *out_ptr.add(out_idx + 3) = _mm_cvtss_f32(t2_x);
+            *out_ptr.add(out_idx + 3) = 1.0;
             *out_ptr.add(out_idx + 4) = _mm_cvtss_f32(
                 _mm_shuffle_ps(t2_r, t2_r, mm_shuffle(1, 1, 1, 1)),
             );
@@ -941,9 +938,7 @@ pub unsafe fn xscale_up_rgbx(
             *out_ptr.add(out_idx + 6) = _mm_cvtss_f32(
                 _mm_shuffle_ps(t2_b, t2_b, mm_shuffle(1, 1, 1, 1)),
             );
-            *out_ptr.add(out_idx + 7) = _mm_cvtss_f32(
-                _mm_shuffle_ps(t2_x, t2_x, mm_shuffle(1, 1, 1, 1)),
-            );
+            *out_ptr.add(out_idx + 7) = 1.0;
 
             out_idx += 8;
             coeff_idx += 8;
@@ -957,7 +952,7 @@ pub unsafe fn xscale_up_rgbx(
             *out_ptr.add(out_idx)     = dot4(smp_r, coeffs);
             *out_ptr.add(out_idx + 1) = dot4(smp_g, coeffs);
             *out_ptr.add(out_idx + 2) = dot4(smp_b, coeffs);
-            *out_ptr.add(out_idx + 3) = dot4(smp_x, coeffs);
+            *out_ptr.add(out_idx + 3) = 1.0;
 
             out_idx += 4;
             coeff_idx += 4;
