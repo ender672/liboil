@@ -484,6 +484,116 @@ fn yscale_out_rgba(sums: &mut [f32], width: usize, out: &mut [u8]) {
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+fn xscale_up_rgbx(
+    input: &[u8],
+    width_in: u32,
+    out: &mut [f32],
+    coeff_buf: &[f32],
+    border_buf: &[i32],
+) {
+    let tables = srgb::tables();
+    let mut smp = [[0.0f32; 4]; 4]; // R, G, B, X
+    let mut out_idx = 0usize;
+    let mut coeff_idx = 0usize;
+
+    for i in 0..width_in as usize {
+        let in_base = i * 4;
+        for j in 0..3 {
+            push_f(&mut smp[j], tables.s2l[input[in_base + j] as usize]);
+        }
+        push_f(&mut smp[3], 1.0);
+        for _ in 0..border_buf[i] {
+            let coeffs = &coeff_buf[coeff_idx..coeff_idx + 4];
+            for j in 0..4 {
+                out[out_idx + j] = smp[j][0] * coeffs[0]
+                    + smp[j][1] * coeffs[1]
+                    + smp[j][2] * coeffs[2]
+                    + smp[j][3] * coeffs[3];
+            }
+            out_idx += 4;
+            coeff_idx += 4;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn yscale_up_rgbx(
+    lines: [&[f32]; 4],
+    len: usize,
+    coeffs: &[f32],
+    out: &mut [u8],
+) {
+    let tables = srgb::tables();
+    let mut i = 0;
+    while i < len {
+        let mut sums = [0.0f32; 4];
+        for j in 0..4 {
+            sums[j] = coeffs[0] * lines[0][i + j]
+                + coeffs[1] * lines[1][i + j]
+                + coeffs[2] * lines[2][i + j]
+                + coeffs[3] * lines[3][i + j];
+        }
+        for j in 0..3 {
+            out[i + j] = tables.linear_to_srgb(clampf(sums[j]));
+        }
+        out[i + 3] = 255;
+        i += 4;
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn scale_down_rgbx(
+    input: &[u8],
+    sums_y: &mut [f32],
+    out_width: u32,
+    coeffs_x: &[f32],
+    border_buf: &[i32],
+    coeffs_y: &[f32],
+) {
+    let tables = srgb::tables();
+    let mut sum = [[0.0f32; 4]; 4]; // R, G, B, X
+    let mut in_idx = 0usize;
+    let mut cx_idx = 0usize;
+    let mut sy_idx = 0usize;
+
+    for i in 0..out_width as usize {
+        for _ in 0..border_buf[i] {
+            let cx = &coeffs_x[cx_idx..cx_idx + 4];
+            for k in 0..3 {
+                add_sample_to_sum(tables.s2l[input[in_idx + k] as usize], cx, &mut sum[k]);
+            }
+            add_sample_to_sum(1.0, cx, &mut sum[3]);
+            in_idx += 4;
+            cx_idx += 4;
+        }
+
+        for j in 0..4 {
+            add_sample_to_sum(sum[j][0], coeffs_y, &mut sums_y[sy_idx..sy_idx + 4]);
+            shift_left(&mut sum[j]);
+            sy_idx += 4;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn yscale_out_rgbx(sums: &mut [f32], width: usize, out: &mut [u8]) {
+    let tables = srgb::tables();
+    let mut s_idx = 0usize;
+    let mut o_idx = 0usize;
+
+    for _ in 0..width {
+        for j in 0..3 {
+            out[o_idx + j] = tables.linear_to_srgb(clampf(sums[s_idx + j * 4]));
+            shift_left(&mut sums[s_idx + j * 4..s_idx + j * 4 + 4]);
+        }
+        out[o_idx + 3] = 255;
+        shift_left(&mut sums[s_idx + 12..s_idx + 16]);
+        s_idx += 16;
+        o_idx += 4;
+    }
+}
+
 impl OilScale {
     pub fn new(
         in_height: u32,
@@ -697,6 +807,26 @@ impl OilScale {
                     &self.borders_x,
                 );
             }
+            ColorSpace::RGBX => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::xscale_up_rgbx(
+                        input,
+                        self.in_width,
+                        &mut self.rb[rb_offset..rb_offset + sl_len],
+                        &self.coeffs_x,
+                        &self.borders_x,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                xscale_up_rgbx(
+                    input,
+                    self.in_width,
+                    &mut self.rb[rb_offset..rb_offset + sl_len],
+                    &self.coeffs_x,
+                    &self.borders_x,
+                );
+            }
             ColorSpace::G => {
                 #[cfg(target_arch = "x86_64")]
                 unsafe {
@@ -781,6 +911,14 @@ impl OilScale {
                 #[cfg(not(target_arch = "x86_64"))]
                 yscale_up_rgba(lines, sl_len, coeffs, output);
             }
+            ColorSpace::RGBX => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_up_rgbx(lines, sl_len, coeffs, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_up_rgbx(lines, sl_len, coeffs, output);
+            }
             ColorSpace::G => {
                 #[cfg(target_arch = "x86_64")]
                 unsafe {
@@ -849,6 +987,28 @@ impl OilScale {
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 scale_down_rgba(
+                    input,
+                    &mut self.sums_y,
+                    self.out_width,
+                    &self.coeffs_x,
+                    &self.borders_x,
+                    &coeffs_y,
+                );
+            }
+            ColorSpace::RGBX => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::scale_down_rgbx(
+                        input,
+                        &mut self.sums_y,
+                        self.out_width,
+                        &self.coeffs_x,
+                        &self.borders_x,
+                        &coeffs_y,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                scale_down_rgbx(
                     input,
                     &mut self.sums_y,
                     self.out_width,
@@ -928,6 +1088,14 @@ impl OilScale {
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 yscale_out_rgba(&mut self.sums_y, self.out_width as usize, output);
+            }
+            ColorSpace::RGBX => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_out_rgbx(&mut self.sums_y, self.out_width, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_out_rgbx(&mut self.sums_y, self.out_width as usize, output);
             }
             ColorSpace::G => {
                 #[cfg(target_arch = "x86_64")]

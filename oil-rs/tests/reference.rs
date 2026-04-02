@@ -387,6 +387,7 @@ fn test_scale_each_cs(rng: &mut StdRng, dim_a: u32, dim_b: u32) {
     test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::GA);
     test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::RGB);
     test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::RGBA);
+    test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::RGBX);
 }
 
 fn test_scale_all_permutations(rng: &mut StdRng, dim_a: u32, dim_b: u32) {
@@ -451,4 +452,5 @@ fn scale_catrom_extremes() {
     test_scale_catrom_extremes(ColorSpace::GA);
     test_scale_catrom_extremes(ColorSpace::RGB);
     test_scale_catrom_extremes(ColorSpace::RGBA);
+    test_scale_catrom_extremes(ColorSpace::RGBX);
 }

@@ -131,6 +131,19 @@ fn rgba_to_ga(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 	ga
 }
 
+/// Convert RGBA pixel buffer to RGBX by replacing alpha with 0xFF.
+fn rgba_to_rgbx(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+	let num_pixels = width as usize * height as usize;
+	let mut rgbx = Vec::with_capacity(num_pixels * 4);
+	for i in 0..num_pixels {
+		rgbx.push(rgba[i * 4]);
+		rgbx.push(rgba[i * 4 + 1]);
+		rgbx.push(rgba[i * 4 + 2]);
+		rgbx.push(0xFF);
+	}
+	rgbx
+}
+
 fn main() {
 	let args: Vec<String> = env::args().collect();
 	if args.len() < 2 || args.len() > 3 {
@@ -152,6 +165,7 @@ fn main() {
 		("GA", ColorSpace::GA),
 		("RGB", ColorSpace::RGB),
 		("RGBA", ColorSpace::RGBA),
+		("RGBX", ColorSpace::RGBX),
 	];
 
 	// Filter to a specific colorspace if requested
@@ -165,12 +179,13 @@ fn main() {
 					ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
 					ColorSpace::GA => rgba_to_ga(&image.pixels, image.width, image.height),
 					ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
+					ColorSpace::RGBX => rgba_to_rgbx(&image.pixels, image.width, image.height),
 					_ => image.pixels.clone(),
 				};
 				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
 			}
 			None => {
-				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA");
+				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA, RGBX");
 				process::exit(1);
 			}
 		}
@@ -180,6 +195,7 @@ fn main() {
 				ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
 				ColorSpace::GA => rgba_to_ga(&image.pixels, image.width, image.height),
 				ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
+				ColorSpace::RGBX => rgba_to_rgbx(&image.pixels, image.width, image.height),
 				_ => image.pixels.clone(),
 			};
 			do_bench_sizes(name, &pixels, image.width, image.height, *cs, iterations);
