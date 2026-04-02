@@ -1,6 +1,8 @@
 use crate::colorspace::ColorSpace;
 use crate::kernel;
 use crate::srgb;
+#[cfg(target_arch = "x86_64")]
+use crate::sse2;
 
 const MAX_DIMENSION: u32 = 1_000_000;
 const TAPS: usize = 4;
@@ -342,6 +344,17 @@ impl OilScale {
 
         match self.cs {
             ColorSpace::RGB => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::xscale_up_rgb(
+                        input,
+                        self.in_width,
+                        &mut self.rb[rb_offset..rb_offset + sl_len],
+                        &self.coeffs_x,
+                        &self.borders_x,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 xscale_up_rgb(
                     input,
                     self.in_width,
@@ -378,7 +391,14 @@ impl OilScale {
         let coeffs = &self.coeffs_y[coeff_start..coeff_start + 4];
 
         match self.cs {
-            ColorSpace::RGB => yscale_up_rgb(lines, sl_len, coeffs, output),
+            ColorSpace::RGB => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_up_rgb(lines, sl_len, coeffs, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_up_rgb(lines, sl_len, coeffs, output);
+            }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
 
@@ -396,6 +416,18 @@ impl OilScale {
 
         match self.cs {
             ColorSpace::RGB => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::scale_down_rgb(
+                        input,
+                        &mut self.sums_y,
+                        self.out_width,
+                        &self.coeffs_x,
+                        &self.borders_x,
+                        &coeffs_y,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 scale_down_rgb(
                     input,
                     &mut self.sums_y,
@@ -417,7 +449,14 @@ impl OilScale {
         let sl_len = self.out_width as usize * cmp;
 
         match self.cs {
-            ColorSpace::RGB => yscale_out_rgb(&mut self.sums_y, sl_len, output),
+            ColorSpace::RGB => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_out_rgb(&mut self.sums_y, sl_len, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_out_rgb(&mut self.sums_y, sl_len, output);
+            }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
     }

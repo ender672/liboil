@@ -1,0 +1,390 @@
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+#[cfg(target_arch = "x86")]
+use std::arch::x86::*;
+
+use crate::srgb;
+
+/// Equivalent to C's mm_shuffle(z, y, x, w).
+const fn mm_shuffle(z: u32, y: u32, x: u32, w: u32) -> i32 {
+    ((z << 6) | (y << 4) | (x << 2) | w) as i32
+}
+
+/// SSE2 horizontal upscale for RGB.
+/// Mirrors oil_xscale_up_rgb_sse2: per-channel sliding window with vectorized dot products.
+#[target_feature(enable = "sse2")]
+pub unsafe fn xscale_up_rgb(
+    input: &[u8],
+    width_in: u32,
+    out: &mut [f32],
+    coeff_buf: &[f32],
+    border_buf: &[i32],
+) {
+    let tables = srgb::tables();
+    let mut smp_r = _mm_setzero_ps();
+    let mut smp_g = _mm_setzero_ps();
+    let mut smp_b = _mm_setzero_ps();
+    let mut out_idx = 0usize;
+    let mut coeff_idx = 0usize;
+
+    for i in 0..width_in as usize {
+        let in_base = i * 3;
+
+        // push_f for R: shift left, insert new value at position 3
+        smp_r = push_f_sse2(smp_r, tables.s2l[input[in_base] as usize]);
+        smp_g = push_f_sse2(smp_g, tables.s2l[input[in_base + 1] as usize]);
+        smp_b = push_f_sse2(smp_b, tables.s2l[input[in_base + 2] as usize]);
+
+        let mut j = border_buf[i];
+
+        // Process pairs of outputs
+        while j >= 2 {
+            let c0 = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx));
+            let c1 = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx + 4));
+
+            // R dot products for 2 outputs
+            let t2_r = dot4x2(smp_r, c0, c1);
+            let t2_g = dot4x2(smp_g, c0, c1);
+            let t2_b = dot4x2(smp_b, c0, c1);
+
+            // Store interleaved: [R0, G0, B0, R1, G1, B1]
+            out[out_idx] = _mm_cvtss_f32(t2_r);
+            out[out_idx + 1] = _mm_cvtss_f32(t2_g);
+            out[out_idx + 2] = _mm_cvtss_f32(t2_b);
+            out[out_idx + 3] = _mm_cvtss_f32(
+                _mm_shuffle_ps(t2_r, t2_r, mm_shuffle(1, 1, 1, 1)),
+            );
+            out[out_idx + 4] = _mm_cvtss_f32(
+                _mm_shuffle_ps(t2_g, t2_g, mm_shuffle(1, 1, 1, 1)),
+            );
+            out[out_idx + 5] = _mm_cvtss_f32(
+                _mm_shuffle_ps(t2_b, t2_b, mm_shuffle(1, 1, 1, 1)),
+            );
+
+            out_idx += 6;
+            coeff_idx += 8;
+            j -= 2;
+        }
+
+        // Process remaining single output
+        if j > 0 {
+            let coeffs = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx));
+
+            out[out_idx] = dot4(smp_r, coeffs);
+            out[out_idx + 1] = dot4(smp_g, coeffs);
+            out[out_idx + 2] = dot4(smp_b, coeffs);
+
+            out_idx += 3;
+            coeff_idx += 4;
+        }
+    }
+}
+
+/// SSE2 vertical upscale for RGB.
+/// Mirrors oil_yscale_up_rgb_sse2: 4-tap vertical blend, output through l2s LUT.
+#[target_feature(enable = "sse2")]
+pub unsafe fn yscale_up_rgb(
+    lines: [&[f32]; 4],
+    len: usize,
+    coeffs: &[f32],
+    out: &mut [u8],
+) {
+    let tables = srgb::tables();
+    let lut = tables.l2s_ptr();
+    let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
+
+    let c0 = _mm_set1_ps(coeffs[0]);
+    let c1 = _mm_set1_ps(coeffs[1]);
+    let c2 = _mm_set1_ps(coeffs[2]);
+    let c3 = _mm_set1_ps(coeffs[3]);
+
+    let mut i = 0;
+
+    // Process 8 floats at a time
+    while i + 7 < len {
+        let v0 = _mm_loadu_ps(lines[0].as_ptr().add(i));
+        let v1 = _mm_loadu_ps(lines[1].as_ptr().add(i));
+        let v2 = _mm_loadu_ps(lines[2].as_ptr().add(i));
+        let v3 = _mm_loadu_ps(lines[3].as_ptr().add(i));
+        let sum = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+        );
+        let idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
+
+        let v0b = _mm_loadu_ps(lines[0].as_ptr().add(i + 4));
+        let v1b = _mm_loadu_ps(lines[1].as_ptr().add(i + 4));
+        let v2b = _mm_loadu_ps(lines[2].as_ptr().add(i + 4));
+        let v3b = _mm_loadu_ps(lines[3].as_ptr().add(i + 4));
+        let sum2 = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(c0, v0b), _mm_mul_ps(c1, v1b)),
+            _mm_add_ps(_mm_mul_ps(c2, v2b), _mm_mul_ps(c3, v3b)),
+        );
+        let idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
+
+        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
+        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
+        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+        out[i + 4] = *lut.offset(_mm_cvtsi128_si32(idx2) as isize);
+        out[i + 5] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 4)) as isize);
+        out[i + 6] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 8)) as isize);
+        out[i + 7] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 12)) as isize);
+
+        i += 8;
+    }
+
+    // Process 4 floats at a time
+    while i + 3 < len {
+        let v0 = _mm_loadu_ps(lines[0].as_ptr().add(i));
+        let v1 = _mm_loadu_ps(lines[1].as_ptr().add(i));
+        let v2 = _mm_loadu_ps(lines[2].as_ptr().add(i));
+        let v3 = _mm_loadu_ps(lines[3].as_ptr().add(i));
+        let sum = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+        );
+        let idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
+        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
+        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
+        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+        i += 4;
+    }
+
+    // Scalar tail
+    for ii in i..len {
+        let val = coeffs[0] * lines[0][ii]
+            + coeffs[1] * lines[1][ii]
+            + coeffs[2] * lines[2][ii]
+            + coeffs[3] * lines[3][ii];
+        out[ii] = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+    }
+}
+
+/// SSE2 downscale for RGB: horizontal x-filtering + y-accumulation.
+/// Mirrors oil_scale_down_rgb_sse2.
+#[target_feature(enable = "sse2")]
+pub unsafe fn scale_down_rgb(
+    input: &[u8],
+    sums_y: &mut [f32],
+    out_width: u32,
+    coeffs_x: &[f32],
+    border_buf: &[i32],
+    coeffs_y: &[f32],
+) {
+    let tables = srgb::tables();
+    let cy = _mm_loadu_ps(coeffs_y.as_ptr());
+
+    let mut sum_r = _mm_setzero_ps();
+    let mut sum_g = _mm_setzero_ps();
+    let mut sum_b = _mm_setzero_ps();
+
+    let mut in_idx = 0usize;
+    let mut cx_idx = 0usize;
+    let mut sy_idx = 0usize;
+
+    for i in 0..out_width as usize {
+        if border_buf[i] >= 4 {
+            let mut sum_r2 = _mm_setzero_ps();
+            let mut sum_g2 = _mm_setzero_ps();
+            let mut sum_b2 = _mm_setzero_ps();
+
+            let mut j = 0;
+            while j + 1 < border_buf[i] {
+                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
+                let cx2 = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx + 4));
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 3] as usize]);
+                sum_r2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_r2);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 4] as usize]);
+                sum_g2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_g2);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 5] as usize]);
+                sum_b2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_b2);
+
+                in_idx += 6;
+                cx_idx += 8;
+                j += 2;
+            }
+
+            while j < border_buf[i] {
+                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+
+                in_idx += 3;
+                cx_idx += 4;
+                j += 1;
+            }
+
+            sum_r = _mm_add_ps(sum_r, sum_r2);
+            sum_g = _mm_add_ps(sum_g, sum_g2);
+            sum_b = _mm_add_ps(sum_b, sum_b2);
+        } else {
+            for _ in 0..border_buf[i] {
+                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+
+                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+
+                in_idx += 3;
+                cx_idx += 4;
+            }
+        }
+
+        // Accumulate into y sums: R channel
+        let mut sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_r, sum_r, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        sy_idx += 4;
+
+        // G channel
+        sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_g, sum_g, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        sy_idx += 4;
+
+        // B channel
+        sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_b, sum_b, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        sy_idx += 4;
+
+        // shift_left for each channel
+        sum_r = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_r), 4));
+        sum_g = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_g), 4));
+        sum_b = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_b), 4));
+    }
+}
+
+/// SSE2 output for downscaled linear RGB: convert sums through l2s LUT.
+/// Mirrors oil_yscale_out_linear_sse2.
+#[target_feature(enable = "sse2")]
+pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
+    let tables = srgb::tables();
+    let lut = tables.l2s_ptr();
+    let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
+
+    let mut i = 0;
+    let mut s_idx = 0;
+
+    // Process 4 output values at a time
+    while i + 3 < sl_len {
+        let v0 = _mm_loadu_si128(sums.as_ptr().add(s_idx) as *const __m128i);
+        let v1 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 4) as *const __m128i);
+        let v2 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 8) as *const __m128i);
+        let v3 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 12) as *const __m128i);
+
+        // Gather first element of each 4-float accumulator
+        let f0 = _mm_castsi128_ps(v0);
+        let f1 = _mm_castsi128_ps(v1);
+        let f2 = _mm_castsi128_ps(v2);
+        let f3 = _mm_castsi128_ps(v3);
+        let ab = _mm_shuffle_ps(f0, f1, mm_shuffle(0, 0, 0, 0));
+        let cd = _mm_shuffle_ps(f2, f3, mm_shuffle(0, 0, 0, 0));
+        let vals = _mm_shuffle_ps(ab, cd, mm_shuffle(2, 0, 2, 0));
+
+        let idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
+
+        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
+        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
+        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+
+        // Shift each accumulator left
+        _mm_storeu_si128(sums.as_mut_ptr().add(s_idx) as *mut __m128i, _mm_srli_si128(v0, 4));
+        _mm_storeu_si128(
+            sums.as_mut_ptr().add(s_idx + 4) as *mut __m128i,
+            _mm_srli_si128(v1, 4),
+        );
+        _mm_storeu_si128(
+            sums.as_mut_ptr().add(s_idx + 8) as *mut __m128i,
+            _mm_srli_si128(v2, 4),
+        );
+        _mm_storeu_si128(
+            sums.as_mut_ptr().add(s_idx + 12) as *mut __m128i,
+            _mm_srli_si128(v3, 4),
+        );
+
+        s_idx += 16;
+        i += 4;
+    }
+
+    // Scalar tail
+    for ii in i..sl_len {
+        let val = sums[s_idx];
+        out[ii] = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+        // shift_left
+        sums[s_idx] = sums[s_idx + 1];
+        sums[s_idx + 1] = sums[s_idx + 2];
+        sums[s_idx + 2] = sums[s_idx + 3];
+        sums[s_idx + 3] = 0.0;
+        s_idx += 4;
+    }
+}
+
+// --- Helpers ---
+
+/// SSE2 push_f: shift left by one float, insert new value at position 3.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn push_f_sse2(v: __m128, val: f32) -> __m128 {
+    let shifted = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(v), 4));
+    let newval = _mm_set_ss(val);
+    let hi = _mm_shuffle_ps(shifted, newval, mm_shuffle(0, 0, 3, 2));
+    _mm_shuffle_ps(shifted, hi, mm_shuffle(2, 0, 1, 0))
+}
+
+/// Compute dot product of 4-element vector with one set of coefficients.
+/// Returns the scalar result in the lowest float lane.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn dot4(smp: __m128, coeffs: __m128) -> f32 {
+    let prod = _mm_mul_ps(smp, coeffs);
+    let t1 = _mm_movehl_ps(prod, prod);
+    let t2 = _mm_add_ps(prod, t1);
+    let t3 = _mm_shuffle_ps(t2, t2, mm_shuffle(1, 1, 1, 1));
+    let t4 = _mm_add_ss(t2, t3);
+    _mm_cvtss_f32(t4)
+}
+
+/// Compute two dot products simultaneously (smp * c0 and smp * c1).
+/// Returns [dot0, dot1, ?, ?] in the __m128 result.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn dot4x2(smp: __m128, c0: __m128, c1: __m128) -> __m128 {
+    let p0 = _mm_mul_ps(smp, c0);
+    let p1 = _mm_mul_ps(smp, c1);
+    let lo = _mm_unpacklo_ps(p0, p1);
+    let hi = _mm_unpackhi_ps(p0, p1);
+    let sum = _mm_add_ps(lo, hi);
+    let t1 = _mm_movehl_ps(sum, sum);
+    _mm_add_ps(sum, t1)
+}

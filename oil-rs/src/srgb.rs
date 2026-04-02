@@ -70,6 +70,15 @@ impl SrgbTables {
         let idx = (val * (self.l2s_len - 1) as f32) as i32;
         self.l2s_all[(self.l2s_offset as i32 + idx) as usize]
     }
+
+    /// Return a pointer into l2s_all at the l2s_offset position.
+    /// This mirrors the C `l2s_map` pointer: indices can be negative (for
+    /// Catmull-Rom overshoot) and positive up to l2s_len, relying on padding
+    /// in both directions.
+    #[inline]
+    pub fn l2s_ptr(&self) -> *const u8 {
+        unsafe { self.l2s_all.as_ptr().add(self.l2s_offset) }
+    }
 }
 
 static TABLES: OnceLock<SrgbTables> = OnceLock::new();
