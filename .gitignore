@@ -10,6 +10,9 @@ sdltest
 local.mk
 .vscode/
 
+# Rust
+oil-rs/target/
+
 # OSX
 test.dSYM
 .DS_Store
