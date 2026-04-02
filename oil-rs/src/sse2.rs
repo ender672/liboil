@@ -1864,6 +1864,8 @@ pub unsafe fn scale_down_ga(
     border_buf: &[i32],
     coeffs_y: &[f32],
 ) {
+    let tables = srgb::tables();
+    let i2f = tables.i2f.as_ptr();
     let cy = _mm_loadu_ps(coeffs_y.as_ptr());
 
     let mut sum_g = _mm_setzero_ps();
@@ -1881,21 +1883,73 @@ pub unsafe fn scale_down_ga(
     for i in 0..out_width as usize {
         let border = *border_ptr.add(i);
 
-        let mut j = 0;
-        while j < border {
-            let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+        if border >= 8 {
+            let mut sum_g2 = _mm_setzero_ps();
+            let mut sum_g3 = _mm_setzero_ps();
+            let mut sum_g4 = _mm_setzero_ps();
+            let mut sum_a2 = _mm_setzero_ps();
+            let mut sum_a3 = _mm_setzero_ps();
+            let mut sum_a4 = _mm_setzero_ps();
+            let mut j = 0;
+            while j + 3 < border {
+                let cx0 = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let cx1 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 8));
+                let cx3 = _mm_loadu_ps(cx_ptr.add(cx_idx + 12));
 
-            let alpha = *in_ptr.add(in_idx + 1) as f32 / 255.0;
-            let cx_a = _mm_mul_ps(cx, _mm_set1_ps(alpha));
+                let a0 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                let a1 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize));
+                let a2 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 5) as usize));
+                let a3 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 7) as usize));
 
-            let gray = *in_ptr.add(in_idx) as f32 / 255.0;
-            let s = _mm_set1_ps(gray);
-            sum_g = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_g);
-            sum_a = _mm_add_ps(cx_a, sum_a);
+                let cx_a0 = _mm_mul_ps(cx0, a0);
+                let cx_a1 = _mm_mul_ps(cx1, a1);
+                let cx_a2 = _mm_mul_ps(cx2, a2);
+                let cx_a3 = _mm_mul_ps(cx3, a3);
 
-            in_idx += 2;
-            cx_idx += 4;
-            j += 1;
+                let g0 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                let g1 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 2) as usize));
+                let g2 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 4) as usize));
+                let g3 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 6) as usize));
+
+                sum_g  = _mm_add_ps(_mm_mul_ps(cx_a0, g0), sum_g);
+                sum_g2 = _mm_add_ps(_mm_mul_ps(cx_a1, g1), sum_g2);
+                sum_g3 = _mm_add_ps(_mm_mul_ps(cx_a2, g2), sum_g3);
+                sum_g4 = _mm_add_ps(_mm_mul_ps(cx_a3, g3), sum_g4);
+
+                sum_a  = _mm_add_ps(cx_a0, sum_a);
+                sum_a2 = _mm_add_ps(cx_a1, sum_a2);
+                sum_a3 = _mm_add_ps(cx_a2, sum_a3);
+                sum_a4 = _mm_add_ps(cx_a3, sum_a4);
+
+                in_idx += 8;
+                cx_idx += 16;
+                j += 4;
+            }
+            sum_g = _mm_add_ps(_mm_add_ps(sum_g, sum_g2), _mm_add_ps(sum_g3, sum_g4));
+            sum_a = _mm_add_ps(_mm_add_ps(sum_a, sum_a2), _mm_add_ps(sum_a3, sum_a4));
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let a = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                let cx_a = _mm_mul_ps(cx, a);
+                let g = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum_g = _mm_add_ps(_mm_mul_ps(cx_a, g), sum_g);
+                sum_a = _mm_add_ps(cx_a, sum_a);
+                in_idx += 2;
+                cx_idx += 4;
+                j += 1;
+            }
+        } else {
+            for _ in 0..border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let a = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                let cx_a = _mm_mul_ps(cx, a);
+                let g = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum_g = _mm_add_ps(_mm_mul_ps(cx_a, g), sum_g);
+                sum_a = _mm_add_ps(cx_a, sum_a);
+                in_idx += 2;
+                cx_idx += 4;
+            }
         }
 
         // Accumulate gray into y sums
