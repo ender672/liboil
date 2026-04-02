@@ -976,14 +976,12 @@ pub unsafe fn yscale_up_rgbx(
 ) {
     let tables = srgb::tables();
     let lut = tables.l2s_ptr();
-    let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
-    let one = _mm_set1_ps(1.0);
-    let zero = _mm_setzero_ps();
+    let scale_f = (tables.l2s_len - 1) as f32;
 
-    let c0 = _mm_set1_ps(coeffs[0]);
-    let c1 = _mm_set1_ps(coeffs[1]);
-    let c2 = _mm_set1_ps(coeffs[2]);
-    let c3 = _mm_set1_ps(coeffs[3]);
+    let c0 = _mm_set1_ps(coeffs[0] * scale_f);
+    let c1 = _mm_set1_ps(coeffs[1] * scale_f);
+    let c2 = _mm_set1_ps(coeffs[2] * scale_f);
+    let c3 = _mm_set1_ps(coeffs[3] * scale_f);
 
     let l0 = lines[0].as_ptr();
     let l1 = lines[1].as_ptr();
@@ -992,25 +990,79 @@ pub unsafe fn yscale_up_rgbx(
     let out_ptr = out.as_mut_ptr();
 
     let mut i = 0;
-    while i < len {
-        let v0 = _mm_loadu_ps(l0.add(i));
-        let v1 = _mm_loadu_ps(l1.add(i));
-        let v2 = _mm_loadu_ps(l2.add(i));
-        let v3 = _mm_loadu_ps(l3.add(i));
-        let sum = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+    let mut idx_buf: [i32; 12] = [0i32; 12];
+    let idx_ptr = idx_buf.as_mut_ptr() as *mut __m128i;
+
+    // Process 12 floats at a time (3 RGBX pixels)
+    while i + 11 < len {
+        let sum0 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
+        );
+        let sum1 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 4)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 4)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 4)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+                ),
+            ),
+        );
+        let sum2 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 8)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 8)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 8)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 8))),
+                ),
+            ),
         );
 
-        // Clamp to [0, 1] and compute l2s indices
-        let clamped = _mm_min_ps(_mm_max_ps(sum, zero), one);
-        let idx = _mm_cvttps_epi32(_mm_mul_ps(clamped, scale));
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(sum0));
+        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(sum1));
+        _mm_storeu_si128(idx_ptr.add(2), _mm_cvttps_epi32(sum2));
 
-        *out_ptr.add(i)     = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
-        *out_ptr.add(i + 1) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
-        *out_ptr.add(i + 2) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        *out_ptr.add(i)      = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1)  = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2)  = *lut.offset(idx_buf[2] as isize);
+        *out_ptr.add(i + 3)  = 255;
+        *out_ptr.add(i + 4)  = *lut.offset(idx_buf[4] as isize);
+        *out_ptr.add(i + 5)  = *lut.offset(idx_buf[5] as isize);
+        *out_ptr.add(i + 6)  = *lut.offset(idx_buf[6] as isize);
+        *out_ptr.add(i + 7)  = 255;
+        *out_ptr.add(i + 8)  = *lut.offset(idx_buf[8] as isize);
+        *out_ptr.add(i + 9)  = *lut.offset(idx_buf[9] as isize);
+        *out_ptr.add(i + 10) = *lut.offset(idx_buf[10] as isize);
+        *out_ptr.add(i + 11) = 255;
+
+        i += 12;
+    }
+
+    // Process 4 floats at a time (1 RGBX pixel)
+    while i + 3 < len {
+        let sum = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
+        );
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(sum));
+        *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1) = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2) = *lut.offset(idx_buf[2] as isize);
         *out_ptr.add(i + 3) = 255;
-
         i += 4;
     }
 }
