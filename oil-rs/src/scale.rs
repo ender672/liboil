@@ -42,16 +42,19 @@ pub struct OilScale {
     is_upscale: bool,
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn clampf(x: f32) -> f32 {
     x.clamp(0.0, 1.0)
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn f2i(x: f32) -> u8 {
     (x + 0.5) as u8
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn add_sample_to_sum(sample: f32, coeffs: &[f32], sum: &mut [f32]) {
     for i in 0..4 {
@@ -59,6 +62,7 @@ fn add_sample_to_sum(sample: f32, coeffs: &[f32], sum: &mut [f32]) {
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn push_f(f: &mut [f32; 4], val: f32) {
     f[0] = f[1];
@@ -67,6 +71,7 @@ fn push_f(f: &mut [f32; 4], val: f32) {
     f[3] = val;
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn shift_left(f: &mut [f32]) {
     f[0] = f[1];
@@ -75,8 +80,7 @@ fn shift_left(f: &mut [f32]) {
     f[3] = 0.0;
 }
 
-/// Horizontal upscale for RGB: convert sRGB input to linear, interpolate using
-/// 4-sample sliding window and pre-calculated coefficients.
+#[cfg(not(target_arch = "x86_64"))]
 fn xscale_up_rgb(
     input: &[u8],
     width_in: u32,
@@ -108,7 +112,7 @@ fn xscale_up_rgb(
     }
 }
 
-/// Vertical upscale for RGB: 4-tap interpolation from ring buffer, output through l2s.
+#[cfg(not(target_arch = "x86_64"))]
 fn yscale_up_rgb(
     lines: [&[f32]; 4],
     len: usize,
@@ -125,8 +129,7 @@ fn yscale_up_rgb(
     }
 }
 
-/// Downscale input for RGB: horizontal filtering with x-coefficients,
-/// accumulated into y-sums using y-coefficients.
+#[cfg(not(target_arch = "x86_64"))]
 fn scale_down_rgb(
     input: &[u8],
     sums_y: &mut [f32],
@@ -159,7 +162,7 @@ fn scale_down_rgb(
     }
 }
 
-/// Output downscaled RGB scanline: convert linear sums to sRGB bytes.
+#[cfg(not(target_arch = "x86_64"))]
 fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     let tables = srgb::tables();
     let mut s_idx = 0usize;
