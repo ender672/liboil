@@ -84,7 +84,7 @@ pub unsafe fn xscale_up_rgb(
 
 /// SSE2 vertical upscale for RGB.
 /// Mirrors oil_yscale_up_rgb_sse2: 4-tap vertical blend, output through l2s LUT.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn yscale_up_rgb(
     lines: [&[f32]; 4],
     len: usize,
@@ -112,23 +112,27 @@ pub unsafe fn yscale_up_rgb(
 
     // Process 8 floats at a time
     while i + 7 < len {
-        let v0 = _mm_loadu_ps(l0.add(i));
-        let v1 = _mm_loadu_ps(l1.add(i));
-        let v2 = _mm_loadu_ps(l2.add(i));
-        let v3 = _mm_loadu_ps(l3.add(i));
-        let sum = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+        let sum = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
         );
         _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
 
-        let v0b = _mm_loadu_ps(l0.add(i + 4));
-        let v1b = _mm_loadu_ps(l1.add(i + 4));
-        let v2b = _mm_loadu_ps(l2.add(i + 4));
-        let v3b = _mm_loadu_ps(l3.add(i + 4));
-        let sum2 = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0b), _mm_mul_ps(c1, v1b)),
-            _mm_add_ps(_mm_mul_ps(c2, v2b), _mm_mul_ps(c3, v3b)),
+        let sum2 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 4)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 4)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 4)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+                ),
+            ),
         );
         _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
 
@@ -146,13 +150,15 @@ pub unsafe fn yscale_up_rgb(
 
     // Process 4 floats at a time
     while i + 3 < len {
-        let v0 = _mm_loadu_ps(l0.add(i));
-        let v1 = _mm_loadu_ps(l1.add(i));
-        let v2 = _mm_loadu_ps(l2.add(i));
-        let v3 = _mm_loadu_ps(l3.add(i));
-        let sum = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+        let sum = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
         );
         _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
         *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
