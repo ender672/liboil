@@ -1011,12 +1011,10 @@ pub unsafe fn scale_down_rgbx(
     let tables = srgb::tables();
     let s2l = tables.s2l.as_ptr();
     let cy = _mm_loadu_ps(coeffs_y.as_ptr());
-    let one_f = _mm_set1_ps(1.0);
 
     let mut sum_r = _mm_setzero_ps();
     let mut sum_g = _mm_setzero_ps();
     let mut sum_b = _mm_setzero_ps();
-    let mut sum_x = _mm_setzero_ps();
 
     let in_ptr = input.as_ptr();
     let cx_ptr = coeffs_x.as_ptr();
@@ -1031,10 +1029,10 @@ pub unsafe fn scale_down_rgbx(
         let border = *border_ptr.add(i);
 
         if border >= 4 {
+            // 2-way unroll for moderate borders
             let mut sum_r2 = _mm_setzero_ps();
             let mut sum_g2 = _mm_setzero_ps();
             let mut sum_b2 = _mm_setzero_ps();
-            let mut sum_x2 = _mm_setzero_ps();
 
             let mut j = 0;
             while j + 1 < border {
@@ -1050,8 +1048,6 @@ pub unsafe fn scale_down_rgbx(
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
 
-                sum_x = _mm_add_ps(_mm_mul_ps(cx, one_f), sum_x);
-
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 4) as usize));
                 sum_r2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_r2);
 
@@ -1060,8 +1056,6 @@ pub unsafe fn scale_down_rgbx(
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 6) as usize));
                 sum_b2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_b2);
-
-                sum_x2 = _mm_add_ps(_mm_mul_ps(cx2, one_f), sum_x2);
 
                 in_idx += 8;
                 cx_idx += 8;
@@ -1080,8 +1074,6 @@ pub unsafe fn scale_down_rgbx(
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
 
-                sum_x = _mm_add_ps(_mm_mul_ps(cx, one_f), sum_x);
-
                 in_idx += 4;
                 cx_idx += 4;
                 j += 1;
@@ -1090,7 +1082,20 @@ pub unsafe fn scale_down_rgbx(
             sum_r = _mm_add_ps(sum_r, sum_r2);
             sum_g = _mm_add_ps(sum_g, sum_g2);
             sum_b = _mm_add_ps(sum_b, sum_b2);
-            sum_x = _mm_add_ps(sum_x, sum_x2);
+        } else if border == 1 {
+            let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
+            sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
+            sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
+            sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+
+            in_idx += 4;
+            cx_idx += 4;
         } else {
             let mut j = 0;
             while j < border {
@@ -1104,8 +1109,6 @@ pub unsafe fn scale_down_rgbx(
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
-
-                sum_x = _mm_add_ps(_mm_mul_ps(cx, one_f), sum_x);
 
                 in_idx += 4;
                 cx_idx += 4;
@@ -1134,18 +1137,13 @@ pub unsafe fn scale_down_rgbx(
         _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
         sy_idx += 4;
 
-        // X channel
-        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
-        let sample = _mm_shuffle_ps(sum_x, sum_x, mm_shuffle(0, 0, 0, 0));
-        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        // Skip X channel y-accumulation (X is always 1.0, output always 255)
         sy_idx += 4;
 
         // shift_left for each channel
         sum_r = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_r), 4));
         sum_g = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_g), 4));
         sum_b = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_b), 4));
-        sum_x = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_x), 4));
     }
 }
 
@@ -1166,19 +1164,18 @@ pub unsafe fn yscale_out_rgbx(sums: &mut [f32], width: u32, out: &mut [u8]) {
     for _ in 0..width {
         let sp = s_ptr.add(s_idx) as *mut __m128i;
 
-        // Load 4 accumulators for this pixel: [R0..R3], [G0..G3], [B0..B3], [X0..X3]
+        // Load 3 accumulators for this pixel: [R0..R3], [G0..G3], [B0..B3]
+        // X accumulator is unused (output always 255)
         let v0 = _mm_loadu_si128(sp);
         let v1 = _mm_loadu_si128(sp.add(1));
         let v2 = _mm_loadu_si128(sp.add(2));
-        let v3 = _mm_loadu_si128(sp.add(3));
 
-        // Gather first element of each accumulator: {R, G, B, X}
+        // Gather first element of each accumulator: {R, G, B, _}
         let f0 = _mm_castsi128_ps(v0);
         let f1 = _mm_castsi128_ps(v1);
         let f2 = _mm_castsi128_ps(v2);
-        let f3 = _mm_castsi128_ps(v3);
         let ab = _mm_shuffle_ps(f0, f1, mm_shuffle(0, 0, 0, 0));
-        let cd = _mm_shuffle_ps(f2, f3, mm_shuffle(0, 0, 0, 0));
+        let cd = _mm_shuffle_ps(f2, f2, mm_shuffle(0, 0, 0, 0));
         let vals = _mm_shuffle_ps(ab, cd, mm_shuffle(2, 0, 2, 0));
 
         // Clamp RGB to [0, 1] and compute l2s_map indices
@@ -1190,11 +1187,10 @@ pub unsafe fn yscale_out_rgbx(sums: &mut [f32], width: u32, out: &mut [u8]) {
         *out_ptr.add(o_idx + 2) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
         *out_ptr.add(o_idx + 3) = 255;
 
-        // Shift all 4 accumulators left
+        // Shift R, G, B accumulators left (skip X)
         _mm_storeu_si128(sp, _mm_srli_si128(v0, 4));
         _mm_storeu_si128(sp.add(1), _mm_srli_si128(v1, 4));
         _mm_storeu_si128(sp.add(2), _mm_srli_si128(v2, 4));
-        _mm_storeu_si128(sp.add(3), _mm_srli_si128(v3, 4));
 
         s_idx += 16;
         o_idx += 4;
