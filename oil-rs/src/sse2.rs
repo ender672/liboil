@@ -1028,7 +1028,72 @@ pub unsafe fn scale_down_rgbx(
     for i in 0..out_width as usize {
         let border = *border_ptr.add(i);
 
-        if border >= 4 {
+        if border >= 16 {
+            // 4-way unroll for large borders (extreme downscale)
+            let mut sum_r2 = _mm_setzero_ps();
+            let mut sum_g2 = _mm_setzero_ps();
+            let mut sum_b2 = _mm_setzero_ps();
+            let mut sum_r3 = _mm_setzero_ps();
+            let mut sum_g3 = _mm_setzero_ps();
+            let mut sum_b3 = _mm_setzero_ps();
+            let mut sum_r4 = _mm_setzero_ps();
+            let mut sum_g4 = _mm_setzero_ps();
+            let mut sum_b4 = _mm_setzero_ps();
+
+            let mut j = 0;
+            while j + 3 < border {
+                let cx0 = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
+                sum_r = _mm_add_ps(_mm_mul_ps(cx0, s), sum_r);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
+                sum_g = _mm_add_ps(_mm_mul_ps(cx0, s), sum_g);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
+                sum_b = _mm_add_ps(_mm_mul_ps(cx0, s), sum_b);
+
+                let cx1 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 4) as usize));
+                sum_r2 = _mm_add_ps(_mm_mul_ps(cx1, s), sum_r2);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 5) as usize));
+                sum_g2 = _mm_add_ps(_mm_mul_ps(cx1, s), sum_g2);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 6) as usize));
+                sum_b2 = _mm_add_ps(_mm_mul_ps(cx1, s), sum_b2);
+
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 8));
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 8) as usize));
+                sum_r3 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_r3);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 9) as usize));
+                sum_g3 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_g3);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 10) as usize));
+                sum_b3 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_b3);
+
+                let cx3 = _mm_loadu_ps(cx_ptr.add(cx_idx + 12));
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 12) as usize));
+                sum_r4 = _mm_add_ps(_mm_mul_ps(cx3, s), sum_r4);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 13) as usize));
+                sum_g4 = _mm_add_ps(_mm_mul_ps(cx3, s), sum_g4);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 14) as usize));
+                sum_b4 = _mm_add_ps(_mm_mul_ps(cx3, s), sum_b4);
+
+                in_idx += 16;
+                cx_idx += 16;
+                j += 4;
+            }
+            sum_r = _mm_add_ps(_mm_add_ps(sum_r, sum_r2), _mm_add_ps(sum_r3, sum_r4));
+            sum_g = _mm_add_ps(_mm_add_ps(sum_g, sum_g2), _mm_add_ps(sum_g3, sum_g4));
+            sum_b = _mm_add_ps(_mm_add_ps(sum_b, sum_b2), _mm_add_ps(sum_b3, sum_b4));
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
+                sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
+                sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
+                sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+                in_idx += 4;
+                cx_idx += 4;
+                j += 1;
+            }
+        } else if border >= 4 {
             // 2-way unroll for moderate borders
             let mut sum_r2 = _mm_setzero_ps();
             let mut sum_g2 = _mm_setzero_ps();
