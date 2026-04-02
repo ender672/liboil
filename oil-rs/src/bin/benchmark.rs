@@ -7,6 +7,13 @@ use oil::colorspace::ColorSpace;
 use oil::jpeg::fix_ratio;
 use oil::scale::OilScale;
 
+#[derive(Clone, Copy, PartialEq)]
+enum BenchMode {
+	All,
+	UpOnly,
+	DownOnly,
+}
+
 struct BenchImage {
 	pixels: Vec<u8>,
 	width: u32,
@@ -107,13 +114,17 @@ fn do_bench(pixels: &[u8], width: u32, height: u32, cs: ColorSpace, ratio: f64, 
 	println!("    to {:4}x{:4} {:6.2}ms", out_width, out_height, t_min);
 }
 
-fn do_bench_sizes(name: &str, pixels: &[u8], width: u32, height: u32, cs: ColorSpace, iterations: u32) {
+fn do_bench_sizes(name: &str, pixels: &[u8], width: u32, height: u32, cs: ColorSpace, iterations: u32, mode: BenchMode) {
 	println!("{}x{} {}", width, height, name);
 
-	do_bench(pixels, width, height, cs, 0.01, iterations);
-	do_bench(pixels, width, height, cs, 0.125, iterations);
-	do_bench(pixels, width, height, cs, 0.8, iterations);
-	do_bench(pixels, width, height, cs, 2.14, iterations);
+	if mode != BenchMode::UpOnly {
+		do_bench(pixels, width, height, cs, 0.01, iterations);
+		do_bench(pixels, width, height, cs, 0.125, iterations);
+		do_bench(pixels, width, height, cs, 0.8, iterations);
+	}
+	if mode != BenchMode::DownOnly {
+		do_bench(pixels, width, height, cs, 2.14, iterations);
+	}
 }
 
 /// Convert RGBA pixel buffer to GA (grayscale + alpha).
@@ -146,8 +157,20 @@ fn rgba_to_rgbx(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 
 fn main() {
 	let args: Vec<String> = env::args().collect();
-	if args.len() < 2 || args.len() > 3 {
-		eprintln!("Usage: {} <path.png> [colorspace]", args[0]);
+
+	// Separate flags from positional args
+	let mut mode = BenchMode::All;
+	let mut positional: Vec<&str> = Vec::new();
+	for arg in &args[1..] {
+		match arg.as_str() {
+			"--up" => mode = BenchMode::UpOnly,
+			"--down" => mode = BenchMode::DownOnly,
+			_ => positional.push(arg),
+		}
+	}
+
+	if positional.is_empty() || positional.len() > 2 {
+		eprintln!("Usage: {} [--up|--down] <path.png> [colorspace]", args[0]);
 		process::exit(1);
 	}
 
@@ -158,7 +181,7 @@ fn main() {
 		.unwrap_or(100);
 	eprintln!("Iterations: {}", iterations);
 
-	let image = load_rgba_png(&args[1]);
+	let image = load_rgba_png(positional[0]);
 
 	let spaces: &[(&str, ColorSpace)] = &[
 		("G", ColorSpace::G),
@@ -170,7 +193,7 @@ fn main() {
 	];
 
 	// Filter to a specific colorspace if requested
-	let filter: Option<&str> = args.get(2).map(|s| s.as_str());
+	let filter: Option<&str> = positional.get(1).copied();
 
 	if let Some(name) = filter {
 		let entry = spaces.iter().find(|(n, _)| *n == name);
@@ -183,7 +206,7 @@ fn main() {
 					ColorSpace::RGBX => rgba_to_rgbx(&image.pixels, image.width, image.height),
 					_ => image.pixels.clone(),
 				};
-				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
+				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations, mode);
 			}
 			None => {
 				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA, RGBX, CMYK");
@@ -199,7 +222,7 @@ fn main() {
 				ColorSpace::RGBX => rgba_to_rgbx(&image.pixels, image.width, image.height),
 				_ => image.pixels.clone(),
 			};
-			do_bench_sizes(name, &pixels, image.width, image.height, *cs, iterations);
+			do_bench_sizes(name, &pixels, image.width, image.height, *cs, iterations, mode);
 		}
 	}
 }
