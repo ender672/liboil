@@ -383,6 +383,7 @@ fn test_scale_square_rand(rng: &mut StdRng, in_dim: u32, out_dim: u32, cs: Color
 }
 
 fn test_scale_each_cs(rng: &mut StdRng, dim_a: u32, dim_b: u32) {
+    test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::G);
     test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::RGB);
     test_scale_square_rand(rng, dim_a, dim_b, ColorSpace::RGBA);
 }
@@ -445,6 +446,7 @@ fn scale_2_to_1() {
 
 #[test]
 fn scale_catrom_extremes() {
+    test_scale_catrom_extremes(ColorSpace::G);
     test_scale_catrom_extremes(ColorSpace::RGB);
     test_scale_catrom_extremes(ColorSpace::RGBA);
 }

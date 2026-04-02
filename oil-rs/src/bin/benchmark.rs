@@ -54,6 +54,20 @@ fn rgba_to_rgb(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 	rgb
 }
 
+/// Convert RGBA pixel buffer to grayscale using RGB-to-gray conversion.
+/// Uses the same weighting as libpng's png_set_rgb_to_gray (ITU-R BT.709).
+fn rgba_to_g(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+	let num_pixels = width as usize * height as usize;
+	let mut gray = Vec::with_capacity(num_pixels);
+	for i in 0..num_pixels {
+		let r = rgba[i * 4] as f32;
+		let g = rgba[i * 4 + 1] as f32;
+		let b = rgba[i * 4 + 2] as f32;
+		gray.push((0.2126 * r + 0.7152 * g + 0.0722 * b + 0.5) as u8);
+	}
+	gray
+}
+
 fn resize(pixels: &[u8], width: u32, height: u32, cs: ColorSpace, out_width: u32, out_height: u32) -> f64 {
 	let cmp = cs.components();
 	let in_stride = width as usize * cmp;
@@ -119,6 +133,7 @@ fn main() {
 	let image = load_rgba_png(&args[1]);
 
 	let spaces: &[(&str, ColorSpace)] = &[
+		("G", ColorSpace::G),
 		("RGB", ColorSpace::RGB),
 		("RGBA", ColorSpace::RGBA),
 	];
@@ -131,19 +146,21 @@ fn main() {
 		match entry {
 			Some((n, cs)) => {
 				let pixels = match *cs {
+					ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
 					ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
 					_ => image.pixels.clone(),
 				};
 				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
 			}
 			None => {
-				eprintln!("Colorspace not recognized. Options: RGB, RGBA");
+				eprintln!("Colorspace not recognized. Options: G, RGB, RGBA");
 				process::exit(1);
 			}
 		}
 	} else {
 		for (name, cs) in spaces {
 			let pixels = match *cs {
+				ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
 				ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
 				_ => image.pixels.clone(),
 			};
