@@ -257,6 +257,20 @@ pub unsafe fn scale_down_rgb(
             sum_r = _mm_add_ps(sum_r, sum_r2);
             sum_g = _mm_add_ps(sum_g, sum_g2);
             sum_b = _mm_add_ps(sum_b, sum_b2);
+        } else if border == 1 {
+            let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
+            sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
+            sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
+
+            let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
+            sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
+
+            in_idx += 3;
+            cx_idx += 4;
         } else {
             let mut j = 0;
             while j < border {
