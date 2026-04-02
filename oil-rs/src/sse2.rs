@@ -185,43 +185,51 @@ pub unsafe fn scale_down_rgb(
     coeffs_y: &[f32],
 ) {
     let tables = srgb::tables();
+    let s2l = tables.s2l.as_ptr();
     let cy = _mm_loadu_ps(coeffs_y.as_ptr());
 
     let mut sum_r = _mm_setzero_ps();
     let mut sum_g = _mm_setzero_ps();
     let mut sum_b = _mm_setzero_ps();
 
+    let in_ptr = input.as_ptr();
+    let cx_ptr = coeffs_x.as_ptr();
+    let sy_ptr = sums_y.as_mut_ptr();
+    let border_ptr = border_buf.as_ptr();
+
     let mut in_idx = 0usize;
     let mut cx_idx = 0usize;
     let mut sy_idx = 0usize;
 
     for i in 0..out_width as usize {
-        if border_buf[i] >= 4 {
+        let border = *border_ptr.add(i);
+
+        if border >= 4 {
             let mut sum_r2 = _mm_setzero_ps();
             let mut sum_g2 = _mm_setzero_ps();
             let mut sum_b2 = _mm_setzero_ps();
 
             let mut j = 0;
-            while j + 1 < border_buf[i] {
-                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
-                let cx2 = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx + 4));
+            while j + 1 < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
                 sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
                 sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 3] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 3) as usize));
                 sum_r2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_r2);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 4] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 4) as usize));
                 sum_g2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_g2);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 5] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 5) as usize));
                 sum_b2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_b2);
 
                 in_idx += 6;
@@ -229,16 +237,16 @@ pub unsafe fn scale_down_rgb(
                 j += 2;
             }
 
-            while j < border_buf[i] {
-                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
                 sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
                 sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
 
                 in_idx += 3;
@@ -250,42 +258,44 @@ pub unsafe fn scale_down_rgb(
             sum_g = _mm_add_ps(sum_g, sum_g2);
             sum_b = _mm_add_ps(sum_b, sum_b2);
         } else {
-            for _ in 0..border_buf[i] {
-                let cx = _mm_loadu_ps(coeffs_x.as_ptr().add(cx_idx));
+            let mut j = 0;
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
                 sum_r = _mm_add_ps(_mm_mul_ps(cx, s), sum_r);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 1] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
                 sum_g = _mm_add_ps(_mm_mul_ps(cx, s), sum_g);
 
-                let s = _mm_set1_ps(tables.s2l[input[in_idx + 2] as usize]);
+                let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
                 sum_b = _mm_add_ps(_mm_mul_ps(cx, s), sum_b);
 
                 in_idx += 3;
                 cx_idx += 4;
+                j += 1;
             }
         }
 
         // Accumulate into y sums: R channel
-        let mut sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        let mut sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_r, sum_r, mm_shuffle(0, 0, 0, 0));
         sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
         sy_idx += 4;
 
         // G channel
-        sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_g, sum_g, mm_shuffle(0, 0, 0, 0));
         sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
         sy_idx += 4;
 
         // B channel
-        sy = _mm_loadu_ps(sums_y.as_ptr().add(sy_idx));
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_b, sum_b, mm_shuffle(0, 0, 0, 0));
         sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sums_y.as_mut_ptr().add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
         sy_idx += 4;
 
         // shift_left for each channel
