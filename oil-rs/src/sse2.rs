@@ -1902,7 +1902,7 @@ pub unsafe fn xscale_up_ga(
 
 /// SSE2 vertical upscale for GA.
 /// Vectorized un-premultiply, clamp, and pack to u8.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn yscale_up_ga(
     lines: [&[f32]; 4],
     len: usize,
@@ -1930,26 +1930,26 @@ pub unsafe fn yscale_up_ga(
 
     // Process 4 pixels (8 floats = 2 x __m128) at a time
     while i + 7 < len {
-        // Vertical blend for first 2 pixels: [g0, a0, g1, a1]
-        let sum_lo = _mm_add_ps(
-            _mm_add_ps(
-                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i))),
-                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i))),
-            ),
-            _mm_add_ps(
-                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i))),
-                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+        // Vertical blend for first 2 pixels using FMA: c0*v0 + c1*v1 + c2*v2 + c3*v3
+        let sum_lo = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
             ),
         );
-        // Vertical blend for next 2 pixels: [g2, a2, g3, a3]
-        let sum_hi = _mm_add_ps(
-            _mm_add_ps(
-                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i + 4))),
-                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i + 4))),
-            ),
-            _mm_add_ps(
-                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i + 4))),
-                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+        // Vertical blend for next 2 pixels
+        let sum_hi = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 4)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 4)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 4)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+                ),
             ),
         );
 
@@ -1973,14 +1973,14 @@ pub unsafe fn yscale_up_ga(
 
     // Process 2 pixels (4 floats) at a time
     while i + 3 < len {
-        let sum = _mm_add_ps(
-            _mm_add_ps(
-                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i))),
-                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i))),
-            ),
-            _mm_add_ps(
-                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i))),
-                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+        let sum = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
             ),
         );
 
