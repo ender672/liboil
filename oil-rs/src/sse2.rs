@@ -101,66 +101,73 @@ pub unsafe fn yscale_up_rgb(
     let mut i = 0;
     let mut idx_buf: [i32; 8] = [0i32; 8];
     let idx_ptr = idx_buf.as_mut_ptr() as *mut __m128i;
+    let out_ptr = out.as_mut_ptr();
+
+    let l0 = lines[0].as_ptr();
+    let l1 = lines[1].as_ptr();
+    let l2 = lines[2].as_ptr();
+    let l3 = lines[3].as_ptr();
 
     // Process 8 floats at a time
     while i + 7 < len {
-        let v0 = _mm_loadu_ps(lines[0].as_ptr().add(i));
-        let v1 = _mm_loadu_ps(lines[1].as_ptr().add(i));
-        let v2 = _mm_loadu_ps(lines[2].as_ptr().add(i));
-        let v3 = _mm_loadu_ps(lines[3].as_ptr().add(i));
+        let v0 = _mm_loadu_ps(l0.add(i));
+        let v1 = _mm_loadu_ps(l1.add(i));
+        let v2 = _mm_loadu_ps(l2.add(i));
+        let v3 = _mm_loadu_ps(l3.add(i));
         let sum = _mm_add_ps(
             _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
             _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
         );
         _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
 
-        let v0b = _mm_loadu_ps(lines[0].as_ptr().add(i + 4));
-        let v1b = _mm_loadu_ps(lines[1].as_ptr().add(i + 4));
-        let v2b = _mm_loadu_ps(lines[2].as_ptr().add(i + 4));
-        let v3b = _mm_loadu_ps(lines[3].as_ptr().add(i + 4));
+        let v0b = _mm_loadu_ps(l0.add(i + 4));
+        let v1b = _mm_loadu_ps(l1.add(i + 4));
+        let v2b = _mm_loadu_ps(l2.add(i + 4));
+        let v3b = _mm_loadu_ps(l3.add(i + 4));
         let sum2 = _mm_add_ps(
             _mm_add_ps(_mm_mul_ps(c0, v0b), _mm_mul_ps(c1, v1b)),
             _mm_add_ps(_mm_mul_ps(c2, v2b), _mm_mul_ps(c3, v3b)),
         );
         _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
 
-        out[i]     = *lut.offset(idx_buf[0] as isize);
-        out[i + 1] = *lut.offset(idx_buf[1] as isize);
-        out[i + 2] = *lut.offset(idx_buf[2] as isize);
-        out[i + 3] = *lut.offset(idx_buf[3] as isize);
-        out[i + 4] = *lut.offset(idx_buf[4] as isize);
-        out[i + 5] = *lut.offset(idx_buf[5] as isize);
-        out[i + 6] = *lut.offset(idx_buf[6] as isize);
-        out[i + 7] = *lut.offset(idx_buf[7] as isize);
+        *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1) = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2) = *lut.offset(idx_buf[2] as isize);
+        *out_ptr.add(i + 3) = *lut.offset(idx_buf[3] as isize);
+        *out_ptr.add(i + 4) = *lut.offset(idx_buf[4] as isize);
+        *out_ptr.add(i + 5) = *lut.offset(idx_buf[5] as isize);
+        *out_ptr.add(i + 6) = *lut.offset(idx_buf[6] as isize);
+        *out_ptr.add(i + 7) = *lut.offset(idx_buf[7] as isize);
 
         i += 8;
     }
 
     // Process 4 floats at a time
     while i + 3 < len {
-        let v0 = _mm_loadu_ps(lines[0].as_ptr().add(i));
-        let v1 = _mm_loadu_ps(lines[1].as_ptr().add(i));
-        let v2 = _mm_loadu_ps(lines[2].as_ptr().add(i));
-        let v3 = _mm_loadu_ps(lines[3].as_ptr().add(i));
+        let v0 = _mm_loadu_ps(l0.add(i));
+        let v1 = _mm_loadu_ps(l1.add(i));
+        let v2 = _mm_loadu_ps(l2.add(i));
+        let v3 = _mm_loadu_ps(l3.add(i));
         let sum = _mm_add_ps(
             _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
             _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
         );
         _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
-        out[i]     = *lut.offset(idx_buf[0] as isize);
-        out[i + 1] = *lut.offset(idx_buf[1] as isize);
-        out[i + 2] = *lut.offset(idx_buf[2] as isize);
-        out[i + 3] = *lut.offset(idx_buf[3] as isize);
+        *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1) = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2) = *lut.offset(idx_buf[2] as isize);
+        *out_ptr.add(i + 3) = *lut.offset(idx_buf[3] as isize);
         i += 4;
     }
 
     // Scalar tail
-    for ii in i..len {
-        let val = coeffs[0] * lines[0][ii]
-            + coeffs[1] * lines[1][ii]
-            + coeffs[2] * lines[2][ii]
-            + coeffs[3] * lines[3][ii];
-        out[ii] = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+    while i < len {
+        let val = *coeffs.get_unchecked(0) * *l0.add(i)
+            + *coeffs.get_unchecked(1) * *l1.add(i)
+            + *coeffs.get_unchecked(2) * *l2.add(i)
+            + *coeffs.get_unchecked(3) * *l3.add(i);
+        *out_ptr.add(i) = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+        i += 1;
     }
 }
 
