@@ -21,43 +21,45 @@ pub unsafe fn xscale_up_rgb(
     border_buf: &[i32],
 ) {
     let tables = srgb::tables();
+    let s2l = tables.s2l.as_ptr();
     let mut smp_r = _mm_setzero_ps();
     let mut smp_g = _mm_setzero_ps();
     let mut smp_b = _mm_setzero_ps();
+    let out_ptr = out.as_mut_ptr();
+    let coeff_ptr = coeff_buf.as_ptr();
+    let border_ptr = border_buf.as_ptr();
+    let in_ptr = input.as_ptr();
     let mut out_idx = 0usize;
     let mut coeff_idx = 0usize;
 
     for i in 0..width_in as usize {
         let in_base = i * 3;
 
-        // push_f for R: shift left, insert new value at position 3
-        smp_r = push_f_sse2(smp_r, tables.s2l[input[in_base] as usize]);
-        smp_g = push_f_sse2(smp_g, tables.s2l[input[in_base + 1] as usize]);
-        smp_b = push_f_sse2(smp_b, tables.s2l[input[in_base + 2] as usize]);
+        smp_r = push_f_sse2(smp_r, *s2l.add(*in_ptr.add(in_base) as usize));
+        smp_g = push_f_sse2(smp_g, *s2l.add(*in_ptr.add(in_base + 1) as usize));
+        smp_b = push_f_sse2(smp_b, *s2l.add(*in_ptr.add(in_base + 2) as usize));
 
-        let mut j = border_buf[i];
+        let mut j = *border_ptr.add(i);
 
         // Process pairs of outputs
         while j >= 2 {
-            let c0 = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx));
-            let c1 = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx + 4));
+            let c0 = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+            let c1 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 4));
 
-            // R dot products for 2 outputs
             let t2_r = dot4x2(smp_r, c0, c1);
             let t2_g = dot4x2(smp_g, c0, c1);
             let t2_b = dot4x2(smp_b, c0, c1);
 
-            // Store interleaved: [R0, G0, B0, R1, G1, B1]
-            out[out_idx] = _mm_cvtss_f32(t2_r);
-            out[out_idx + 1] = _mm_cvtss_f32(t2_g);
-            out[out_idx + 2] = _mm_cvtss_f32(t2_b);
-            out[out_idx + 3] = _mm_cvtss_f32(
+            *out_ptr.add(out_idx)     = _mm_cvtss_f32(t2_r);
+            *out_ptr.add(out_idx + 1) = _mm_cvtss_f32(t2_g);
+            *out_ptr.add(out_idx + 2) = _mm_cvtss_f32(t2_b);
+            *out_ptr.add(out_idx + 3) = _mm_cvtss_f32(
                 _mm_shuffle_ps(t2_r, t2_r, mm_shuffle(1, 1, 1, 1)),
             );
-            out[out_idx + 4] = _mm_cvtss_f32(
+            *out_ptr.add(out_idx + 4) = _mm_cvtss_f32(
                 _mm_shuffle_ps(t2_g, t2_g, mm_shuffle(1, 1, 1, 1)),
             );
-            out[out_idx + 5] = _mm_cvtss_f32(
+            *out_ptr.add(out_idx + 5) = _mm_cvtss_f32(
                 _mm_shuffle_ps(t2_b, t2_b, mm_shuffle(1, 1, 1, 1)),
             );
 
@@ -68,11 +70,11 @@ pub unsafe fn xscale_up_rgb(
 
         // Process remaining single output
         if j > 0 {
-            let coeffs = _mm_loadu_ps(coeff_buf.as_ptr().add(coeff_idx));
+            let coeffs = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
 
-            out[out_idx] = dot4(smp_r, coeffs);
-            out[out_idx + 1] = dot4(smp_g, coeffs);
-            out[out_idx + 2] = dot4(smp_b, coeffs);
+            *out_ptr.add(out_idx)     = dot4(smp_r, coeffs);
+            *out_ptr.add(out_idx + 1) = dot4(smp_g, coeffs);
+            *out_ptr.add(out_idx + 2) = dot4(smp_b, coeffs);
 
             out_idx += 3;
             coeff_idx += 4;
