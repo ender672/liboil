@@ -42,16 +42,19 @@ pub struct OilScale {
     is_upscale: bool,
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn clampf(x: f32) -> f32 {
     x.clamp(0.0, 1.0)
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn f2i(x: f32) -> u8 {
     (x + 0.5) as u8
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn add_sample_to_sum(sample: f32, coeffs: &[f32], sum: &mut [f32]) {
     for i in 0..4 {
@@ -59,6 +62,7 @@ fn add_sample_to_sum(sample: f32, coeffs: &[f32], sum: &mut [f32]) {
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn push_f(f: &mut [f32; 4], val: f32) {
     f[0] = f[1];
@@ -67,6 +71,7 @@ fn push_f(f: &mut [f32; 4], val: f32) {
     f[3] = val;
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 #[inline]
 fn shift_left(f: &mut [f32]) {
     f[0] = f[1];
@@ -75,6 +80,7 @@ fn shift_left(f: &mut [f32]) {
     f[3] = 0.0;
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn xscale_up_g(
     input: &[u8],
     width_in: u32,
@@ -100,6 +106,7 @@ fn xscale_up_g(
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn yscale_up_g(
     lines: [&[f32]; 4],
     len: usize,
@@ -115,6 +122,7 @@ fn yscale_up_g(
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn scale_down_g(
     input: &[u8],
     sums_y: &mut [f32],
@@ -142,6 +150,7 @@ fn scale_down_g(
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn yscale_out_g(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     let mut s_idx = 0usize;
     for i in 0..sl_len {
@@ -581,6 +590,17 @@ impl OilScale {
                 );
             }
             ColorSpace::G => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::xscale_up_g(
+                        input,
+                        self.in_width,
+                        &mut self.rb[rb_offset..rb_offset + sl_len],
+                        &self.coeffs_x,
+                        &self.borders_x,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 xscale_up_g(
                     input,
                     self.in_width,
@@ -634,6 +654,11 @@ impl OilScale {
                 yscale_up_rgba(lines, sl_len, coeffs, output);
             }
             ColorSpace::G => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_up_g(lines, sl_len, coeffs, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 yscale_up_g(lines, sl_len, coeffs, output);
             }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
@@ -697,6 +722,18 @@ impl OilScale {
                 );
             }
             ColorSpace::G => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::scale_down_g(
+                        input,
+                        &mut self.sums_y,
+                        self.out_width,
+                        &self.coeffs_x,
+                        &self.borders_x,
+                        &coeffs_y,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 scale_down_g(
                     input,
                     &mut self.sums_y,
@@ -735,6 +772,11 @@ impl OilScale {
                 yscale_out_rgba(&mut self.sums_y, self.out_width as usize, output);
             }
             ColorSpace::G => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_out_g(&mut self.sums_y, sl_len, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 yscale_out_g(&mut self.sums_y, sl_len, output);
             }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
