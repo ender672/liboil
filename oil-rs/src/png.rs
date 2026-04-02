@@ -14,16 +14,17 @@ pub fn resize_png(
     let mut reader = decoder.read_info().map_err(|_| OilError::InvalidArgument)?;
     let info = reader.info();
 
-    if info.color_type != png::ColorType::Rgb {
-        return Err(OilError::InvalidArgument);
-    }
     if info.bit_depth != png::BitDepth::Eight {
         return Err(OilError::InvalidArgument);
     }
 
     let in_width = info.width;
     let in_height = info.height;
-    let cs = ColorSpace::RGB;
+    let cs = match info.color_type {
+        png::ColorType::Rgb => ColorSpace::RGB,
+        png::ColorType::Rgba => ColorSpace::RGBA,
+        _ => return Err(OilError::InvalidArgument),
+    };
     let cmp = cs.components();
 
     let mut scaler = OilScale::new(in_height, out_height, in_width, out_width, cs)?;
@@ -69,7 +70,7 @@ pub fn resize_png(
     let mut result = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut result, out_width, out_height);
-        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_color(if cs == ColorSpace::RGBA { png::ColorType::Rgba } else { png::ColorType::Rgb });
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|_| OilError::AllocationFailed)?;
         writer.write_image_data(&output).map_err(|_| OilError::AllocationFailed)?;
