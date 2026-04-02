@@ -34,12 +34,17 @@ fn main() {
 
     oil::jpeg::fix_ratio(info.width as u32, info.height as u32, &mut width, &mut height)
         .unwrap_or_else(|e| {
-            eprintln!("Error adjusting aspect ratio: {}", e);
+            eprintln!("Error adjusting aspect ratio: {:?}", e);
             process::exit(1);
         });
 
-    let encoded = oil::jpeg::resize_jpeg(&input_data, width, height, 94).unwrap_or_else(|e| {
-        eprintln!("Error resizing image: {}", e);
+    #[cfg(feature = "ffi")]
+    let encoded = oil::jpeg_ffi::resize_jpeg(&input_data, width, height, 94);
+    #[cfg(not(feature = "ffi"))]
+    let encoded = oil::jpeg::resize_jpeg(&input_data, width, height, 94);
+
+    let encoded = encoded.unwrap_or_else(|e| {
+        eprintln!("Error resizing image: {:?}", e);
         process::exit(1);
     });
 
@@ -54,5 +59,8 @@ fn main() {
         process::exit(1);
     });
 
-    eprintln!("Resized to {}x{} -> {}", width, height, output_path);
+    #[cfg(feature = "ffi")]
+    eprintln!("Resized to {}x{} -> {} (ffi)", width, height, output_path);
+    #[cfg(not(feature = "ffi"))]
+    eprintln!("Resized to {}x{} -> {} (pure-rust)", width, height, output_path);
 }

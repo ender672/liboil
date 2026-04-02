@@ -3,9 +3,16 @@ name = "oil"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+ffi = ["dep:libc", "dep:cc"]
+
 [dependencies]
 jpeg-decoder = "0.3"
 jpeg-encoder = "0.6"
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
