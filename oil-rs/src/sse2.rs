@@ -962,7 +962,7 @@ pub unsafe fn xscale_up_rgbx(
 
 /// SSE2 vertical upscale for RGBX.
 /// No alpha un-premultiply; RGB through l2s LUT, X byte always 255.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn yscale_up_rgbx(
     lines: [&[f32]; 4],
     len: usize,
