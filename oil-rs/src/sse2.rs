@@ -645,7 +645,7 @@ pub unsafe fn yscale_up_rgba(
 }
 
 /// SSE2 downscale for RGBA: horizontal x-filtering with premultiplied alpha + y-accumulation.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn scale_down_rgba(
     input: &[u8],
     sums_y: &mut [f32],
@@ -690,26 +690,26 @@ pub unsafe fn scale_down_rgba(
                 let cx_a = _mm_mul_ps(cx, _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize)));
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
-                sum_r = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_r);
+                sum_r = _mm_fmadd_ps(cx_a, s, sum_r);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
-                sum_g = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_g);
+                sum_g = _mm_fmadd_ps(cx_a, s, sum_g);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
-                sum_b = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_b);
+                sum_b = _mm_fmadd_ps(cx_a, s, sum_b);
 
                 sum_a = _mm_add_ps(cx_a, sum_a);
 
                 let cx2_a = _mm_mul_ps(cx2, _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 7) as usize)));
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 4) as usize));
-                sum_r2 = _mm_add_ps(_mm_mul_ps(cx2_a, s), sum_r2);
+                sum_r2 = _mm_fmadd_ps(cx2_a, s, sum_r2);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 5) as usize));
-                sum_g2 = _mm_add_ps(_mm_mul_ps(cx2_a, s), sum_g2);
+                sum_g2 = _mm_fmadd_ps(cx2_a, s, sum_g2);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 6) as usize));
-                sum_b2 = _mm_add_ps(_mm_mul_ps(cx2_a, s), sum_b2);
+                sum_b2 = _mm_fmadd_ps(cx2_a, s, sum_b2);
 
                 sum_a2 = _mm_add_ps(cx2_a, sum_a2);
 
@@ -724,13 +724,13 @@ pub unsafe fn scale_down_rgba(
                 let cx_a = _mm_mul_ps(cx, _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize)));
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
-                sum_r = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_r);
+                sum_r = _mm_fmadd_ps(cx_a, s, sum_r);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
-                sum_g = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_g);
+                sum_g = _mm_fmadd_ps(cx_a, s, sum_g);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
-                sum_b = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_b);
+                sum_b = _mm_fmadd_ps(cx_a, s, sum_b);
 
                 sum_a = _mm_add_ps(cx_a, sum_a);
 
@@ -751,13 +751,13 @@ pub unsafe fn scale_down_rgba(
                 let cx_a = _mm_mul_ps(cx, _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize)));
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx) as usize));
-                sum_r = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_r);
+                sum_r = _mm_fmadd_ps(cx_a, s, sum_r);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 1) as usize));
-                sum_g = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_g);
+                sum_g = _mm_fmadd_ps(cx_a, s, sum_g);
 
                 let s = _mm_set1_ps(*s2l.add(*in_ptr.add(in_idx + 2) as usize));
-                sum_b = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_b);
+                sum_b = _mm_fmadd_ps(cx_a, s, sum_b);
 
                 sum_a = _mm_add_ps(cx_a, sum_a);
 
@@ -770,29 +770,25 @@ pub unsafe fn scale_down_rgba(
         // Accumulate into y sums: R channel
         let mut sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_r, sum_r, mm_shuffle(0, 0, 0, 0));
-        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), _mm_fmadd_ps(cy, sample, sy));
         sy_idx += 4;
 
         // G channel
         sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_g, sum_g, mm_shuffle(0, 0, 0, 0));
-        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), _mm_fmadd_ps(cy, sample, sy));
         sy_idx += 4;
 
         // B channel
         sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_b, sum_b, mm_shuffle(0, 0, 0, 0));
-        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), _mm_fmadd_ps(cy, sample, sy));
         sy_idx += 4;
 
         // A channel
         sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
         let sample = _mm_shuffle_ps(sum_a, sum_a, mm_shuffle(0, 0, 0, 0));
-        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
-        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), _mm_fmadd_ps(cy, sample, sy));
         sy_idx += 4;
 
         // shift_left for each channel
