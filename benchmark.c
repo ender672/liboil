@@ -29,7 +29,7 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 		exit(1);
 	}
 
-	input = fopen(path, "r");
+	input = fopen(path, "rb");
 	if (!input) {
 		fprintf(stderr, "Unable to open file.\n");
 		exit(1);
@@ -197,7 +197,7 @@ int main(int argc, char *argv[])
 	iterations = 100;
 	if (getenv("OILITERATIONS")) {
 		iterations = strtoul(getenv("OILITERATIONS"), &end, 10);
-		if (!end) {
+		if (*end != '\0' || iterations == 0) {
 			fprintf(stderr, "Invalid environment variable OILITERATIONS.");
 			return 1;
 		}
