@@ -93,12 +93,12 @@ pub unsafe fn yscale_up_rgb(
 ) {
     let tables = srgb::tables();
     let lut = tables.l2s_ptr();
-    let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
+    let scale_f = (tables.l2s_len - 1) as f32;
 
-    let c0 = _mm_set1_ps(coeffs[0]);
-    let c1 = _mm_set1_ps(coeffs[1]);
-    let c2 = _mm_set1_ps(coeffs[2]);
-    let c3 = _mm_set1_ps(coeffs[3]);
+    let c0 = _mm_set1_ps(coeffs[0] * scale_f);
+    let c1 = _mm_set1_ps(coeffs[1] * scale_f);
+    let c2 = _mm_set1_ps(coeffs[2] * scale_f);
+    let c3 = _mm_set1_ps(coeffs[3] * scale_f);
 
     let mut i = 0;
     let mut idx_buf: [i32; 12] = [0i32; 12];
@@ -143,9 +143,9 @@ pub unsafe fn yscale_up_rgb(
             ),
         );
 
-        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum0, scale)));
-        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum1, scale)));
-        _mm_storeu_si128(idx_ptr.add(2), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(sum0));
+        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(sum1));
+        _mm_storeu_si128(idx_ptr.add(2), _mm_cvttps_epi32(sum2));
 
         *out_ptr.add(i)      = *lut.offset(idx_buf[0] as isize);
         *out_ptr.add(i + 1)  = *lut.offset(idx_buf[1] as isize);
@@ -175,7 +175,7 @@ pub unsafe fn yscale_up_rgb(
                 ),
             ),
         );
-        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(sum));
         *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
         *out_ptr.add(i + 1) = *lut.offset(idx_buf[1] as isize);
         *out_ptr.add(i + 2) = *lut.offset(idx_buf[2] as isize);
@@ -185,11 +185,11 @@ pub unsafe fn yscale_up_rgb(
 
     // Scalar tail
     while i < len {
-        let val = *coeffs.get_unchecked(0) * *l0.add(i)
-            + *coeffs.get_unchecked(1) * *l1.add(i)
-            + *coeffs.get_unchecked(2) * *l2.add(i)
-            + *coeffs.get_unchecked(3) * *l3.add(i);
-        *out_ptr.add(i) = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+        let val = *coeffs.get_unchecked(0) * scale_f * *l0.add(i)
+            + *coeffs.get_unchecked(1) * scale_f * *l1.add(i)
+            + *coeffs.get_unchecked(2) * scale_f * *l2.add(i)
+            + *coeffs.get_unchecked(3) * scale_f * *l3.add(i);
+        *out_ptr.add(i) = *lut.offset(val as isize);
         i += 1;
     }
 }
