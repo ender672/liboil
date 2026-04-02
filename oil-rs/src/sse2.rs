@@ -1401,7 +1401,7 @@ pub unsafe fn yscale_out_rgbx(sums: &mut [f32], width: u32, out: &mut [u8]) {
 
 /// SSE2 horizontal upscale for G (grayscale).
 /// Mirrors oil_xscale_up_g_sse2: single sliding window with vectorized dot products.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn xscale_up_g(
     input: &[u8],
     width_in: u32,
@@ -1423,6 +1423,45 @@ pub unsafe fn xscale_up_g(
         smp = push_f_sse2(smp, *i2f.add(*in_ptr.add(i) as usize));
 
         let mut j = *border_ptr.add(i);
+
+        // Process quads of outputs: transpose 4 coefficient vectors, broadcast
+        // each sample element, FMA to get 4 dot products, vector store.
+        while j >= 4 {
+            let c0 = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+            let c1 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 4));
+            let c2 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 8));
+            let c3 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 12));
+
+            // Transpose 4x4: [c0,c1,c2,c3] rows -> columns
+            let t01_lo = _mm_unpacklo_ps(c0, c1); // [c0_0, c1_0, c0_1, c1_1]
+            let t01_hi = _mm_unpackhi_ps(c0, c1); // [c0_2, c1_2, c0_3, c1_3]
+            let t23_lo = _mm_unpacklo_ps(c2, c3); // [c2_0, c3_0, c2_1, c3_1]
+            let t23_hi = _mm_unpackhi_ps(c2, c3); // [c2_2, c3_2, c2_3, c3_3]
+            let row0 = _mm_movelh_ps(t01_lo, t23_lo); // [c0_0, c1_0, c2_0, c3_0]
+            let row1 = _mm_movehl_ps(t23_lo, t01_lo); // [c0_1, c1_1, c2_1, c3_1]
+            let row2 = _mm_movelh_ps(t01_hi, t23_hi); // [c0_2, c1_2, c2_2, c3_2]
+            let row3 = _mm_movehl_ps(t23_hi, t01_hi); // [c0_3, c1_3, c2_3, c3_3]
+
+            // Broadcast each sample element
+            let s0 = _mm_shuffle_ps(smp, smp, mm_shuffle(0, 0, 0, 0));
+            let s1 = _mm_shuffle_ps(smp, smp, mm_shuffle(1, 1, 1, 1));
+            let s2 = _mm_shuffle_ps(smp, smp, mm_shuffle(2, 2, 2, 2));
+            let s3 = _mm_shuffle_ps(smp, smp, mm_shuffle(3, 3, 3, 3));
+
+            // result = s0*row0 + s1*row1 + s2*row2 + s3*row3
+            let result = _mm_fmadd_ps(
+                s0, row0,
+                _mm_fmadd_ps(
+                    s1, row1,
+                    _mm_fmadd_ps(s2, row2, _mm_mul_ps(s3, row3)),
+                ),
+            );
+            _mm_storeu_ps(out_ptr.add(out_idx), result);
+
+            out_idx += 4;
+            coeff_idx += 16;
+            j -= 4;
+        }
 
         // Process pairs of outputs
         while j >= 2 {
