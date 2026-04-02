@@ -566,22 +566,11 @@ pub unsafe fn xscale_up_rgba(
             let t2_b = dot4x2(smp_b, c0, c1);
             let t2_a = dot4x2(smp_a, c0, c1);
 
-            *out_ptr.add(out_idx)     = _mm_cvtss_f32(t2_r);
-            *out_ptr.add(out_idx + 1) = _mm_cvtss_f32(t2_g);
-            *out_ptr.add(out_idx + 2) = _mm_cvtss_f32(t2_b);
-            *out_ptr.add(out_idx + 3) = _mm_cvtss_f32(t2_a);
-            *out_ptr.add(out_idx + 4) = _mm_cvtss_f32(
-                _mm_shuffle_ps(t2_r, t2_r, mm_shuffle(1, 1, 1, 1)),
-            );
-            *out_ptr.add(out_idx + 5) = _mm_cvtss_f32(
-                _mm_shuffle_ps(t2_g, t2_g, mm_shuffle(1, 1, 1, 1)),
-            );
-            *out_ptr.add(out_idx + 6) = _mm_cvtss_f32(
-                _mm_shuffle_ps(t2_b, t2_b, mm_shuffle(1, 1, 1, 1)),
-            );
-            *out_ptr.add(out_idx + 7) = _mm_cvtss_f32(
-                _mm_shuffle_ps(t2_a, t2_a, mm_shuffle(1, 1, 1, 1)),
-            );
+            // Transpose [r0,r1] [g0,g1] [b0,b1] [a0,a1] -> [r0,g0,b0,a0] [r1,g1,b1,a1]
+            let rg = _mm_unpacklo_ps(t2_r, t2_g); // [r0, g0, r1, g1]
+            let ba = _mm_unpacklo_ps(t2_b, t2_a); // [b0, a0, b1, a1]
+            _mm_storeu_ps(out_ptr.add(out_idx), _mm_movelh_ps(rg, ba));
+            _mm_storeu_ps(out_ptr.add(out_idx + 4), _mm_movehl_ps(ba, rg));
 
             out_idx += 8;
             coeff_idx += 8;
