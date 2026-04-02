@@ -605,7 +605,7 @@ pub unsafe fn xscale_up_rgba(
 
 /// SSE2 vertical upscale for RGBA (premultiplied alpha).
 /// Processes 4 floats (one RGBA pixel) at a time, un-premultiplies, converts to sRGB.
-#[target_feature(enable = "sse2")]
+#[target_feature(enable = "sse2,fma")]
 pub unsafe fn yscale_up_rgba(
     lines: [&[f32]; 4],
     len: usize,
@@ -617,7 +617,6 @@ pub unsafe fn yscale_up_rgba(
     let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
     let one = _mm_set1_ps(1.0);
     let zero = _mm_setzero_ps();
-
     let c0 = _mm_set1_ps(coeffs[0]);
     let c1 = _mm_set1_ps(coeffs[1]);
     let c2 = _mm_set1_ps(coeffs[2]);
@@ -630,29 +629,113 @@ pub unsafe fn yscale_up_rgba(
     let out_ptr = out.as_mut_ptr();
 
     let mut i = 0;
-    while i < len {
-        // Load one RGBA pixel's worth of data from each line
-        let v0 = _mm_loadu_ps(l0.add(i));
-        let v1 = _mm_loadu_ps(l1.add(i));
-        let v2 = _mm_loadu_ps(l2.add(i));
-        let v3 = _mm_loadu_ps(l3.add(i));
-        let sum = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+    let mut idx_buf: [i32; 12] = [0i32; 12];
+    let idx_ptr = idx_buf.as_mut_ptr() as *mut __m128i;
+
+    // Process 3 RGBA pixels (12 floats) at a time
+    while i + 11 < len {
+        // Vertical blend for pixel 0
+        let sum0 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
+        );
+        // Vertical blend for pixel 1
+        let sum1 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 4)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 4)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 4)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+                ),
+            ),
+        );
+        // Vertical blend for pixel 2
+        let sum2 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 8)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 8)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 8)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 8))),
+                ),
+            ),
         );
 
-        // Clamp alpha to [0, 1]
+        // Un-premultiply pixel 0
+        let a0_v = _mm_shuffle_ps(sum0, sum0, mm_shuffle(3, 3, 3, 3));
+        let a0_v = _mm_min_ps(_mm_max_ps(a0_v, zero), one);
+        let a0 = _mm_cvtss_f32(a0_v);
+        let mut vals0 = sum0;
+        if a0 != 0.0 { vals0 = _mm_mul_ps(vals0, _mm_rcp_ps(a0_v)); }
+        let clamped0 = _mm_min_ps(_mm_max_ps(vals0, zero), one);
+
+        // Un-premultiply pixel 1
+        let a1_v = _mm_shuffle_ps(sum1, sum1, mm_shuffle(3, 3, 3, 3));
+        let a1_v = _mm_min_ps(_mm_max_ps(a1_v, zero), one);
+        let a1 = _mm_cvtss_f32(a1_v);
+        let mut vals1 = sum1;
+        if a1 != 0.0 { vals1 = _mm_mul_ps(vals1, _mm_rcp_ps(a1_v)); }
+        let clamped1 = _mm_min_ps(_mm_max_ps(vals1, zero), one);
+
+        // Un-premultiply pixel 2
+        let a2_v = _mm_shuffle_ps(sum2, sum2, mm_shuffle(3, 3, 3, 3));
+        let a2_v = _mm_min_ps(_mm_max_ps(a2_v, zero), one);
+        let a2 = _mm_cvtss_f32(a2_v);
+        let mut vals2 = sum2;
+        if a2 != 0.0 { vals2 = _mm_mul_ps(vals2, _mm_rcp_ps(a2_v)); }
+        let clamped2 = _mm_min_ps(_mm_max_ps(vals2, zero), one);
+
+        // Batch convert to l2s indices
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(clamped0, scale)));
+        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(clamped1, scale)));
+        _mm_storeu_si128(idx_ptr.add(2), _mm_cvttps_epi32(_mm_mul_ps(clamped2, scale)));
+
+        // Batch LUT lookups for RGB + direct alpha writes
+        *out_ptr.add(i)      = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1)  = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2)  = *lut.offset(idx_buf[2] as isize);
+        *out_ptr.add(i + 3)  = (a0 * 255.0 + 0.5) as u8;
+        *out_ptr.add(i + 4)  = *lut.offset(idx_buf[4] as isize);
+        *out_ptr.add(i + 5)  = *lut.offset(idx_buf[5] as isize);
+        *out_ptr.add(i + 6)  = *lut.offset(idx_buf[6] as isize);
+        *out_ptr.add(i + 7)  = (a1 * 255.0 + 0.5) as u8;
+        *out_ptr.add(i + 8)  = *lut.offset(idx_buf[8] as isize);
+        *out_ptr.add(i + 9)  = *lut.offset(idx_buf[9] as isize);
+        *out_ptr.add(i + 10) = *lut.offset(idx_buf[10] as isize);
+        *out_ptr.add(i + 11) = (a2 * 255.0 + 0.5) as u8;
+
+        i += 12;
+    }
+
+    // Process remaining pixels one at a time
+    while i < len {
+        let sum = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+                ),
+            ),
+        );
+
         let alpha_v = _mm_shuffle_ps(sum, sum, mm_shuffle(3, 3, 3, 3));
         let alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
         let alpha = _mm_cvtss_f32(alpha_v);
 
-        // Divide RGB by alpha (skip if alpha == 0)
         let mut vals = sum;
         if alpha != 0.0 {
             vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
         }
 
-        // Clamp to [0, 1] and compute l2s indices
         let clamped = _mm_min_ps(_mm_max_ps(vals, zero), one);
         let idx = _mm_cvttps_epi32(_mm_mul_ps(clamped, scale));
 
