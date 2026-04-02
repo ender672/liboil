@@ -10,17 +10,19 @@ pub fn resize_png(
     out_width: u32,
     out_height: u32,
 ) -> Result<Vec<u8>, OilError> {
-    let decoder = png::Decoder::new(input);
+    let mut decoder = png::Decoder::new(input);
+    // Match C implementation: expand palette to RGB, sub-8-bit gray to 8-bit,
+    // strip 16-bit to 8-bit, and handle tRNS as alpha.
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|_| OilError::InvalidArgument)?;
     let info = reader.info();
-
-    if info.bit_depth != png::BitDepth::Eight {
-        return Err(OilError::InvalidArgument);
-    }
-
     let in_width = info.width;
     let in_height = info.height;
-    let cs = match info.color_type {
+
+    let (color_type, _) = reader.output_color_type();
+    let cs = match color_type {
+        png::ColorType::Grayscale => ColorSpace::G,
+        png::ColorType::GrayscaleAlpha => ColorSpace::GA,
         png::ColorType::Rgb => ColorSpace::RGB,
         png::ColorType::Rgba => ColorSpace::RGBA,
         _ => return Err(OilError::InvalidArgument),
@@ -70,7 +72,13 @@ pub fn resize_png(
     let mut result = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut result, out_width, out_height);
-        encoder.set_color(if cs == ColorSpace::RGBA { png::ColorType::Rgba } else { png::ColorType::Rgb });
+        let out_color = match cs {
+            ColorSpace::G => png::ColorType::Grayscale,
+            ColorSpace::GA => png::ColorType::GrayscaleAlpha,
+            ColorSpace::RGBA => png::ColorType::Rgba,
+            _ => png::ColorType::Rgb,
+        };
+        encoder.set_color(out_color);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|_| OilError::AllocationFailed)?;
         writer.write_image_data(&output).map_err(|_| OilError::AllocationFailed)?;
