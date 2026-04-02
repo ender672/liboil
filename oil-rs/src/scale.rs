@@ -130,6 +130,70 @@ fn yscale_up_rgb(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
+fn xscale_up_rgba(
+    input: &[u8],
+    width_in: u32,
+    out: &mut [f32],
+    coeff_buf: &[f32],
+    border_buf: &[i32],
+) {
+    let tables = srgb::tables();
+    let mut smp = [[0.0f32; 4]; 4]; // R, G, B, A
+    let mut out_idx = 0usize;
+    let mut coeff_idx = 0usize;
+
+    for i in 0..width_in as usize {
+        let in_base = i * 4;
+        let alpha = input[in_base + 3] as f32 / 255.0;
+        push_f(&mut smp[3], alpha);
+        for j in 0..3 {
+            push_f(&mut smp[j], smp[3][3] * tables.s2l[input[in_base + j] as usize]);
+        }
+        for _ in 0..border_buf[i] {
+            let coeffs = &coeff_buf[coeff_idx..coeff_idx + 4];
+            for j in 0..4 {
+                out[out_idx + j] = smp[j][0] * coeffs[0]
+                    + smp[j][1] * coeffs[1]
+                    + smp[j][2] * coeffs[2]
+                    + smp[j][3] * coeffs[3];
+            }
+            out_idx += 4;
+            coeff_idx += 4;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn yscale_up_rgba(
+    lines: [&[f32]; 4],
+    len: usize,
+    coeffs: &[f32],
+    out: &mut [u8],
+) {
+    let tables = srgb::tables();
+    let mut i = 0;
+    while i < len {
+        let mut sums = [0.0f32; 4];
+        for j in 0..4 {
+            sums[j] = coeffs[0] * lines[0][i + j]
+                + coeffs[1] * lines[1][i + j]
+                + coeffs[2] * lines[2][i + j]
+                + coeffs[3] * lines[3][i + j];
+        }
+        let alpha = clampf(sums[3]);
+        for j in 0..3 {
+            if alpha != 0.0 && alpha != 1.0 {
+                sums[j] /= alpha;
+                sums[j] = clampf(sums[j]);
+            }
+            out[i + j] = tables.linear_to_srgb(sums[j]);
+        }
+        out[i + 3] = f2i(alpha * 255.0);
+        i += 4;
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
 fn scale_down_rgb(
     input: &[u8],
     sums_y: &mut [f32],
@@ -170,6 +234,65 @@ fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
         out[i] = tables.linear_to_srgb(sums[s_idx]);
         shift_left(&mut sums[s_idx..s_idx + 4]);
         s_idx += 4;
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn scale_down_rgba(
+    input: &[u8],
+    sums_y: &mut [f32],
+    out_width: u32,
+    coeffs_x: &[f32],
+    border_buf: &[i32],
+    coeffs_y: &[f32],
+) {
+    let tables = srgb::tables();
+    let mut sum = [[0.0f32; 4]; 4]; // R, G, B, A
+    let mut in_idx = 0usize;
+    let mut cx_idx = 0usize;
+    let mut sy_idx = 0usize;
+
+    for i in 0..out_width as usize {
+        for _ in 0..border_buf[i] {
+            let cx = &coeffs_x[cx_idx..cx_idx + 4];
+            let alpha = tables.i2f[input[in_idx + 3] as usize];
+            for k in 0..3 {
+                add_sample_to_sum(tables.s2l[input[in_idx + k] as usize] * alpha, cx, &mut sum[k]);
+            }
+            add_sample_to_sum(alpha, cx, &mut sum[3]);
+            in_idx += 4;
+            cx_idx += 4;
+        }
+
+        for j in 0..4 {
+            add_sample_to_sum(sum[j][0], coeffs_y, &mut sums_y[sy_idx..sy_idx + 4]);
+            shift_left(&mut sum[j]);
+            sy_idx += 4;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn yscale_out_rgba(sums: &mut [f32], width: usize, out: &mut [u8]) {
+    let tables = srgb::tables();
+    let mut s_idx = 0usize;
+    let mut o_idx = 0usize;
+
+    for _ in 0..width {
+        let alpha = clampf(sums[s_idx + 12]);
+        if alpha != 0.0 {
+            for j in 0..3 {
+                sums[s_idx + j * 4] /= alpha;
+            }
+        }
+        for j in 0..3 {
+            out[o_idx + j] = tables.linear_to_srgb(clampf(sums[s_idx + j * 4]));
+            shift_left(&mut sums[s_idx + j * 4..s_idx + j * 4 + 4]);
+        }
+        out[o_idx + 3] = f2i(alpha * 255.0);
+        shift_left(&mut sums[s_idx + 12..s_idx + 16]);
+        s_idx += 16;
+        o_idx += 4;
     }
 }
 
@@ -366,6 +489,26 @@ impl OilScale {
                     &self.borders_x,
                 );
             }
+            ColorSpace::RGBA => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::xscale_up_rgba(
+                        input,
+                        self.in_width,
+                        &mut self.rb[rb_offset..rb_offset + sl_len],
+                        &self.coeffs_x,
+                        &self.borders_x,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                xscale_up_rgba(
+                    input,
+                    self.in_width,
+                    &mut self.rb[rb_offset..rb_offset + sl_len],
+                    &self.coeffs_x,
+                    &self.borders_x,
+                );
+            }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
 
@@ -401,6 +544,14 @@ impl OilScale {
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 yscale_up_rgb(lines, sl_len, coeffs, output);
+            }
+            ColorSpace::RGBA => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_up_rgba(lines, sl_len, coeffs, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_up_rgba(lines, sl_len, coeffs, output);
             }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
@@ -440,6 +591,28 @@ impl OilScale {
                     &coeffs_y,
                 );
             }
+            ColorSpace::RGBA => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::scale_down_rgba(
+                        input,
+                        &mut self.sums_y,
+                        self.out_width,
+                        &self.coeffs_x,
+                        &self.borders_x,
+                        &coeffs_y,
+                    );
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                scale_down_rgba(
+                    input,
+                    &mut self.sums_y,
+                    self.out_width,
+                    &self.coeffs_x,
+                    &self.borders_x,
+                    &coeffs_y,
+                );
+            }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
 
@@ -459,6 +632,14 @@ impl OilScale {
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 yscale_out_rgb(&mut self.sums_y, sl_len, output);
+            }
+            ColorSpace::RGBA => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe {
+                    sse2::yscale_out_rgba(&mut self.sums_y, self.out_width, output);
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                yscale_out_rgba(&mut self.sums_y, self.out_width as usize, output);
             }
             _ => unimplemented!("colorspace {:?} not yet supported", self.cs),
         }
