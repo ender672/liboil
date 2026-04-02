@@ -313,15 +313,18 @@ pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     let lut = tables.l2s_ptr();
     let scale = _mm_set1_ps((tables.l2s_len - 1) as f32);
 
+    let s_ptr = sums.as_mut_ptr();
+    let out_ptr = out.as_mut_ptr();
     let mut i = 0;
     let mut s_idx = 0;
 
     // Process 4 output values at a time
     while i + 3 < sl_len {
-        let v0 = _mm_loadu_si128(sums.as_ptr().add(s_idx) as *const __m128i);
-        let v1 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 4) as *const __m128i);
-        let v2 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 8) as *const __m128i);
-        let v3 = _mm_loadu_si128(sums.as_ptr().add(s_idx + 12) as *const __m128i);
+        let sp = s_ptr.add(s_idx) as *mut __m128i;
+        let v0 = _mm_loadu_si128(sp);
+        let v1 = _mm_loadu_si128(sp.add(1));
+        let v2 = _mm_loadu_si128(sp.add(2));
+        let v3 = _mm_loadu_si128(sp.add(3));
 
         // Gather first element of each 4-float accumulator
         let f0 = _mm_castsi128_ps(v0);
@@ -334,40 +337,32 @@ pub unsafe fn yscale_out_rgb(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
 
         let idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
-        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
-        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
-        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+        *out_ptr.add(i)     = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
+        *out_ptr.add(i + 1) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
+        *out_ptr.add(i + 2) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
+        *out_ptr.add(i + 3) = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
 
         // Shift each accumulator left
-        _mm_storeu_si128(sums.as_mut_ptr().add(s_idx) as *mut __m128i, _mm_srli_si128(v0, 4));
-        _mm_storeu_si128(
-            sums.as_mut_ptr().add(s_idx + 4) as *mut __m128i,
-            _mm_srli_si128(v1, 4),
-        );
-        _mm_storeu_si128(
-            sums.as_mut_ptr().add(s_idx + 8) as *mut __m128i,
-            _mm_srli_si128(v2, 4),
-        );
-        _mm_storeu_si128(
-            sums.as_mut_ptr().add(s_idx + 12) as *mut __m128i,
-            _mm_srli_si128(v3, 4),
-        );
+        _mm_storeu_si128(sp, _mm_srli_si128(v0, 4));
+        _mm_storeu_si128(sp.add(1), _mm_srli_si128(v1, 4));
+        _mm_storeu_si128(sp.add(2), _mm_srli_si128(v2, 4));
+        _mm_storeu_si128(sp.add(3), _mm_srli_si128(v3, 4));
 
         s_idx += 16;
         i += 4;
     }
 
     // Scalar tail
-    for ii in i..sl_len {
-        let val = sums[s_idx];
-        out[ii] = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
+    while i < sl_len {
+        let val = *s_ptr.add(s_idx);
+        *out_ptr.add(i) = *lut.offset((val * (tables.l2s_len - 1) as f32) as isize);
         // shift_left
-        sums[s_idx] = sums[s_idx + 1];
-        sums[s_idx + 1] = sums[s_idx + 2];
-        sums[s_idx + 2] = sums[s_idx + 3];
-        sums[s_idx + 3] = 0.0;
+        *s_ptr.add(s_idx) = *s_ptr.add(s_idx + 1);
+        *s_ptr.add(s_idx + 1) = *s_ptr.add(s_idx + 2);
+        *s_ptr.add(s_idx + 2) = *s_ptr.add(s_idx + 3);
+        *s_ptr.add(s_idx + 3) = 0.0;
         s_idx += 4;
+        i += 1;
     }
 }
 
