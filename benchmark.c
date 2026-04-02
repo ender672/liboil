@@ -2,6 +2,8 @@
 #include <time.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
+#include <limits.h>
 #include <png.h>
 #include "oil_resample.h"
 #include "oil_libpng.h"
@@ -13,7 +15,7 @@ struct bench_image {
 	enum oil_colorspace cs;
 };
 
-static struct bench_image png(char *path, enum oil_colorspace cs)
+static struct bench_image load_png(char *path, enum oil_colorspace cs)
 {
 	struct bench_image bench_image;
 	int i;
@@ -93,7 +95,7 @@ static struct bench_image png(char *path, enum oil_colorspace cs)
 
 double time_to_ms(clock_t t)
 {
-	return (double)t / (CLOCKS_PER_SEC / 1000);
+	return (double)t * 1000.0 / CLOCKS_PER_SEC;
 }
 
 clock_t resize(struct bench_image image, int out_width, int out_height)
@@ -110,6 +112,10 @@ clock_t resize(struct bench_image image, int out_width, int out_height)
 
 	inbuf = image.buffer;
 	outbuf = malloc(out_width * OIL_CMP(cs));
+	if (!outbuf) {
+		fprintf(stderr, "Unable to allocate output buffer.\n");
+		exit(1);
+	}
 
 	t = clock();
 	oil_scale_init(&os, image.height, out_height, image.width, out_width, cs);
@@ -152,7 +158,7 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs,
 {
 	struct bench_image image;
 
-	image = png(path, cs);
+	image = load_png(path, cs);
 
 	printf("%dx%d %s\n", image.width, image.height, name);
 
@@ -170,6 +176,7 @@ int main(int argc, char *argv[])
 	size_t i, num_spaces;
 	int iterations;
 	char *end;
+	unsigned long ul;
 
 	enum oil_colorspace spaces[] = {
 		OIL_CS_G,
@@ -196,11 +203,13 @@ int main(int argc, char *argv[])
 
 	iterations = 100;
 	if (getenv("OILITERATIONS")) {
-		iterations = strtoul(getenv("OILITERATIONS"), &end, 10);
-		if (*end != '\0' || iterations == 0) {
+		errno = 0;
+		ul = strtoul(getenv("OILITERATIONS"), &end, 10);
+		if (*end != '\0' || errno != 0 || ul == 0 || ul > INT_MAX) {
 			fprintf(stderr, "Invalid environment variable OILITERATIONS.");
 			return 1;
 		}
+		iterations = (int)ul;
 	}
 	fprintf(stderr, "Iterations: %d\n", iterations);
 
