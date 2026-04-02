@@ -1348,21 +1348,29 @@ pub unsafe fn scale_down_g(
     for i in 0..out_width as usize {
         let border = *border_ptr.add(i);
 
-        if border >= 4 {
+        if border >= 8 {
             let mut sum2 = _mm_setzero_ps();
+            let mut sum3 = _mm_setzero_ps();
+            let mut sum4 = _mm_setzero_ps();
             let mut j = 0;
-            while j + 1 < border {
-                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
-                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+            while j + 3 < border {
                 let s0 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
                 let s1 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
-                sum = _mm_add_ps(_mm_mul_ps(cx, s0), sum);
-                sum2 = _mm_add_ps(_mm_mul_ps(cx2, s1), sum2);
-                in_idx += 2;
-                cx_idx += 8;
-                j += 2;
+                let s2 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 2) as usize));
+                let s3 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize));
+                let cx0 = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let cx1 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 8));
+                let cx3 = _mm_loadu_ps(cx_ptr.add(cx_idx + 12));
+                sum = _mm_add_ps(_mm_mul_ps(cx0, s0), sum);
+                sum2 = _mm_add_ps(_mm_mul_ps(cx1, s1), sum2);
+                sum3 = _mm_add_ps(_mm_mul_ps(cx2, s2), sum3);
+                sum4 = _mm_add_ps(_mm_mul_ps(cx3, s3), sum4);
+                in_idx += 4;
+                cx_idx += 16;
+                j += 4;
             }
-            sum = _mm_add_ps(sum, sum2);
+            sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
             while j < border {
                 let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
                 let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
