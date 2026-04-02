@@ -13,29 +13,7 @@ struct BenchImage {
 	height: u32,
 }
 
-fn load_jpeg(path: &str) -> BenchImage {
-	let data = fs::read(path).unwrap_or_else(|e| {
-		eprintln!("Unable to open file: {}", e);
-		process::exit(1);
-	});
-	let mut decoder = jpeg_decoder::Decoder::new(&data[..]);
-	let pixels = decoder.decode().unwrap_or_else(|e| {
-		eprintln!("JPEG decode error: {}", e);
-		process::exit(1);
-	});
-	let info = decoder.info().unwrap();
-	if info.pixel_format != jpeg_decoder::PixelFormat::RGB24 {
-		eprintln!("Input image must be RGB.");
-		process::exit(1);
-	}
-	BenchImage {
-		pixels,
-		width: info.width as u32,
-		height: info.height as u32,
-	}
-}
-
-fn load_png(path: &str) -> BenchImage {
+fn load_rgba_png(path: &str) -> BenchImage {
 	let data = fs::read(path).unwrap_or_else(|e| {
 		eprintln!("Unable to open file: {}", e);
 		process::exit(1);
@@ -46,8 +24,8 @@ fn load_png(path: &str) -> BenchImage {
 		process::exit(1);
 	});
 	let info = reader.info();
-	if info.color_type != png::ColorType::Rgb || info.bit_depth != png::BitDepth::Eight {
-		eprintln!("Input PNG must be 8-bit RGB.");
+	if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+		eprintln!("Input PNG must be 8-bit RGBA.");
 		process::exit(1);
 	}
 	let width = info.width;
@@ -64,28 +42,31 @@ fn load_png(path: &str) -> BenchImage {
 	}
 }
 
-fn load_image(path: &str) -> BenchImage {
-	if path.ends_with(".png") {
-		load_png(path)
-	} else {
-		load_jpeg(path)
+/// Convert RGBA pixel buffer to RGB by stripping alpha.
+fn rgba_to_rgb(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+	let num_pixels = width as usize * height as usize;
+	let mut rgb = Vec::with_capacity(num_pixels * 3);
+	for i in 0..num_pixels {
+		rgb.push(rgba[i * 4]);
+		rgb.push(rgba[i * 4 + 1]);
+		rgb.push(rgba[i * 4 + 2]);
 	}
+	rgb
 }
 
-fn resize(image: &BenchImage, out_width: u32, out_height: u32) -> f64 {
-	let cs = ColorSpace::RGB;
+fn resize(pixels: &[u8], width: u32, height: u32, cs: ColorSpace, out_width: u32, out_height: u32) -> f64 {
 	let cmp = cs.components();
-	let in_stride = image.width as usize * cmp;
+	let in_stride = width as usize * cmp;
 
 	let mut outbuf = vec![0u8; out_width as usize * cmp];
 
 	let start = Instant::now();
-	let mut scaler = OilScale::new(image.height, out_height, image.width, out_width, cs).unwrap();
+	let mut scaler = OilScale::new(height, out_height, width, out_width, cs).unwrap();
 	let mut in_line = 0usize;
 	for _ in 0..out_height {
 		while scaler.slots() > 0 {
 			let row_start = in_line * in_stride;
-			scaler.push_scanline(&image.pixels[row_start..row_start + in_stride]);
+			scaler.push_scanline(&pixels[row_start..row_start + in_stride]);
 			in_line += 1;
 		}
 		scaler.read_scanline(&mut outbuf);
@@ -95,15 +76,15 @@ fn resize(image: &BenchImage, out_width: u32, out_height: u32) -> f64 {
 	elapsed.as_secs_f64() * 1000.0
 }
 
-fn do_bench(image: &BenchImage, ratio: f64, iterations: u32) {
-	let mut out_width = (image.width as f64 * ratio).round() as u32;
+fn do_bench(pixels: &[u8], width: u32, height: u32, cs: ColorSpace, ratio: f64, iterations: u32) {
+	let mut out_width = (width as f64 * ratio).round() as u32;
 	let mut out_height = 500_000;
 
-	fix_ratio(image.width, image.height, &mut out_width, &mut out_height).unwrap();
+	fix_ratio(width, height, &mut out_width, &mut out_height).unwrap();
 
 	let mut t_min: f64 = f64::MAX;
 	for _ in 0..iterations {
-		let t = resize(image, out_width, out_height);
+		let t = resize(pixels, width, height, cs, out_width, out_height);
 		if t < t_min {
 			t_min = t;
 		}
@@ -112,10 +93,19 @@ fn do_bench(image: &BenchImage, ratio: f64, iterations: u32) {
 	println!("    to {:4}x{:4} {:6.2}ms", out_width, out_height, t_min);
 }
 
+fn do_bench_sizes(name: &str, pixels: &[u8], width: u32, height: u32, cs: ColorSpace, iterations: u32) {
+	println!("{}x{} {}", width, height, name);
+
+	do_bench(pixels, width, height, cs, 0.01, iterations);
+	do_bench(pixels, width, height, cs, 0.125, iterations);
+	do_bench(pixels, width, height, cs, 0.8, iterations);
+	do_bench(pixels, width, height, cs, 2.14, iterations);
+}
+
 fn main() {
 	let args: Vec<String> = env::args().collect();
-	if args.len() != 2 {
-		eprintln!("Usage: {} <path.jpg|path.png>", args[0]);
+	if args.len() < 2 || args.len() > 3 {
+		eprintln!("Usage: {} <path.png> [colorspace]", args[0]);
 		process::exit(1);
 	}
 
@@ -126,11 +116,38 @@ fn main() {
 		.unwrap_or(100);
 	eprintln!("Iterations: {}", iterations);
 
-	let image = load_image(&args[1]);
-	println!("{}x{} RGB", image.width, image.height);
+	let image = load_rgba_png(&args[1]);
 
-	do_bench(&image, 0.01, iterations);
-	do_bench(&image, 0.125, iterations);
-	do_bench(&image, 0.8, iterations);
-	do_bench(&image, 2.14, iterations);
+	let spaces: &[(&str, ColorSpace)] = &[
+		("RGB", ColorSpace::RGB),
+		("RGBA", ColorSpace::RGBA),
+	];
+
+	// Filter to a specific colorspace if requested
+	let filter: Option<&str> = args.get(2).map(|s| s.as_str());
+
+	if let Some(name) = filter {
+		let entry = spaces.iter().find(|(n, _)| *n == name);
+		match entry {
+			Some((n, cs)) => {
+				let pixels = match *cs {
+					ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
+					_ => image.pixels.clone(),
+				};
+				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
+			}
+			None => {
+				eprintln!("Colorspace not recognized. Options: RGB, RGBA");
+				process::exit(1);
+			}
+		}
+	} else {
+		for (name, cs) in spaces {
+			let pixels = match *cs {
+				ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
+				_ => image.pixels.clone(),
+			};
+			do_bench_sizes(name, &pixels, image.width, image.height, *cs, iterations);
+		}
+	}
 }
