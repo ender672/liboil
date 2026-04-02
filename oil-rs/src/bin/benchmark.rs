@@ -116,6 +116,21 @@ fn do_bench_sizes(name: &str, pixels: &[u8], width: u32, height: u32, cs: ColorS
 	do_bench(pixels, width, height, cs, 2.14, iterations);
 }
 
+/// Convert RGBA pixel buffer to GA (grayscale + alpha).
+fn rgba_to_ga(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+	let num_pixels = width as usize * height as usize;
+	let mut ga = Vec::with_capacity(num_pixels * 2);
+	for i in 0..num_pixels {
+		let r = rgba[i * 4] as f32;
+		let g = rgba[i * 4 + 1] as f32;
+		let b = rgba[i * 4 + 2] as f32;
+		let a = rgba[i * 4 + 3];
+		ga.push((0.2126 * r + 0.7152 * g + 0.0722 * b + 0.5) as u8);
+		ga.push(a);
+	}
+	ga
+}
+
 fn main() {
 	let args: Vec<String> = env::args().collect();
 	if args.len() < 2 || args.len() > 3 {
@@ -134,6 +149,7 @@ fn main() {
 
 	let spaces: &[(&str, ColorSpace)] = &[
 		("G", ColorSpace::G),
+		("GA", ColorSpace::GA),
 		("RGB", ColorSpace::RGB),
 		("RGBA", ColorSpace::RGBA),
 	];
@@ -147,13 +163,14 @@ fn main() {
 			Some((n, cs)) => {
 				let pixels = match *cs {
 					ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
+					ColorSpace::GA => rgba_to_ga(&image.pixels, image.width, image.height),
 					ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
 					_ => image.pixels.clone(),
 				};
 				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
 			}
 			None => {
-				eprintln!("Colorspace not recognized. Options: G, RGB, RGBA");
+				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA");
 				process::exit(1);
 			}
 		}
@@ -161,6 +178,7 @@ fn main() {
 		for (name, cs) in spaces {
 			let pixels = match *cs {
 				ColorSpace::G => rgba_to_g(&image.pixels, image.width, image.height),
+				ColorSpace::GA => rgba_to_ga(&image.pixels, image.width, image.height),
 				ColorSpace::RGB => rgba_to_rgb(&image.pixels, image.width, image.height),
 				_ => image.pixels.clone(),
 			};

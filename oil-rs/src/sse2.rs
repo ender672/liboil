@@ -1088,6 +1088,252 @@ pub unsafe fn yscale_out_g(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     }
 }
 
+// --- Grayscale + Alpha (GA) SSE2 ---
+
+/// SSE2 horizontal upscale for GA (grayscale with premultiplied alpha).
+/// Two sliding windows: gray (premultiplied) and alpha.
+#[target_feature(enable = "sse2")]
+pub unsafe fn xscale_up_ga(
+    input: &[u8],
+    width_in: u32,
+    out: &mut [f32],
+    coeff_buf: &[f32],
+    border_buf: &[i32],
+) {
+    let mut smp_g = _mm_setzero_ps();
+    let mut smp_a = _mm_setzero_ps();
+    let out_ptr = out.as_mut_ptr();
+    let coeff_ptr = coeff_buf.as_ptr();
+    let border_ptr = border_buf.as_ptr();
+    let in_ptr = input.as_ptr();
+    let mut out_idx = 0usize;
+    let mut coeff_idx = 0usize;
+
+    for i in 0..width_in as usize {
+        let in_base = i * 2;
+        let alpha = *in_ptr.add(in_base + 1) as f32 / 255.0;
+        smp_a = push_f_sse2(smp_a, alpha);
+        // Extract alpha we just pushed (position 3) to premultiply gray
+        let gray = *in_ptr.add(in_base) as f32 / 255.0;
+        smp_g = push_f_sse2(smp_g, alpha * gray);
+
+        let mut j = *border_ptr.add(i);
+
+        while j >= 2 {
+            let c0 = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+            let c1 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 4));
+
+            let t2_g = dot4x2(smp_g, c0, c1);
+            let t2_a = dot4x2(smp_a, c0, c1);
+
+            *out_ptr.add(out_idx)     = _mm_cvtss_f32(t2_g);
+            *out_ptr.add(out_idx + 1) = _mm_cvtss_f32(t2_a);
+            *out_ptr.add(out_idx + 2) = _mm_cvtss_f32(
+                _mm_shuffle_ps(t2_g, t2_g, mm_shuffle(1, 1, 1, 1)),
+            );
+            *out_ptr.add(out_idx + 3) = _mm_cvtss_f32(
+                _mm_shuffle_ps(t2_a, t2_a, mm_shuffle(1, 1, 1, 1)),
+            );
+
+            out_idx += 4;
+            coeff_idx += 8;
+            j -= 2;
+        }
+
+        if j > 0 {
+            let coeffs = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+
+            *out_ptr.add(out_idx)     = dot4(smp_g, coeffs);
+            *out_ptr.add(out_idx + 1) = dot4(smp_a, coeffs);
+
+            out_idx += 2;
+            coeff_idx += 4;
+        }
+    }
+}
+
+/// SSE2 vertical upscale for GA.
+/// Processes 2 floats (one GA pixel) at a time, un-premultiplies gray.
+#[target_feature(enable = "sse2")]
+pub unsafe fn yscale_up_ga(
+    lines: [&[f32]; 4],
+    len: usize,
+    coeffs: &[f32],
+    out: &mut [u8],
+) {
+    let c0 = _mm_set1_ps(coeffs[0]);
+    let c1 = _mm_set1_ps(coeffs[1]);
+    let c2 = _mm_set1_ps(coeffs[2]);
+    let c3 = _mm_set1_ps(coeffs[3]);
+
+    let l0 = lines[0].as_ptr();
+    let l1 = lines[1].as_ptr();
+    let l2 = lines[2].as_ptr();
+    let l3 = lines[3].as_ptr();
+    let out_ptr = out.as_mut_ptr();
+
+    let mut i = 0;
+
+    // Process 2 pixels (4 floats) at a time
+    while i + 3 < len {
+        let v0 = _mm_loadu_ps(l0.add(i));
+        let v1 = _mm_loadu_ps(l1.add(i));
+        let v2 = _mm_loadu_ps(l2.add(i));
+        let v3 = _mm_loadu_ps(l3.add(i));
+        let sum = _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+        );
+
+        // sum = [g0, a0, g1, a1]
+        // Process pixel 0
+        let alpha0 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(1, 1, 1, 1)));
+        let alpha0_clamped = if alpha0 < 0.0 { 0.0 } else if alpha0 > 1.0 { 1.0 } else { alpha0 };
+        let mut gray0 = _mm_cvtss_f32(sum);
+        if alpha0_clamped != 0.0 {
+            gray0 /= alpha0_clamped;
+        }
+        let gray0_clamped = if gray0 < 0.0 { 0.0 } else if gray0 > 1.0 { 1.0 } else { gray0 };
+        *out_ptr.add(i) = (gray0_clamped * 255.0 + 0.5) as u8;
+        *out_ptr.add(i + 1) = (alpha0_clamped * 255.0 + 0.5) as u8;
+
+        // Process pixel 1
+        let alpha1 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(3, 3, 3, 3)));
+        let alpha1_clamped = if alpha1 < 0.0 { 0.0 } else if alpha1 > 1.0 { 1.0 } else { alpha1 };
+        let mut gray1 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(2, 2, 2, 2)));
+        if alpha1_clamped != 0.0 {
+            gray1 /= alpha1_clamped;
+        }
+        let gray1_clamped = if gray1 < 0.0 { 0.0 } else if gray1 > 1.0 { 1.0 } else { gray1 };
+        *out_ptr.add(i + 2) = (gray1_clamped * 255.0 + 0.5) as u8;
+        *out_ptr.add(i + 3) = (alpha1_clamped * 255.0 + 0.5) as u8;
+
+        i += 4;
+    }
+
+    // Process remaining single pixel (2 floats)
+    while i + 1 < len {
+        let g = coeffs[0] * *l0.add(i) + coeffs[1] * *l1.add(i)
+            + coeffs[2] * *l2.add(i) + coeffs[3] * *l3.add(i);
+        let a = coeffs[0] * *l0.add(i + 1) + coeffs[1] * *l1.add(i + 1)
+            + coeffs[2] * *l2.add(i + 1) + coeffs[3] * *l3.add(i + 1);
+        let alpha = if a < 0.0 { 0.0 } else if a > 1.0 { 1.0 } else { a };
+        let mut gray = g;
+        if alpha != 0.0 {
+            gray /= alpha;
+        }
+        let gray = if gray < 0.0 { 0.0 } else if gray > 1.0 { 1.0 } else { gray };
+        *out_ptr.add(i) = (gray * 255.0 + 0.5) as u8;
+        *out_ptr.add(i + 1) = (alpha * 255.0 + 0.5) as u8;
+        i += 2;
+    }
+}
+
+/// SSE2 downscale for GA: horizontal x-filtering with premultiplied alpha + y-accumulation.
+#[target_feature(enable = "sse2")]
+pub unsafe fn scale_down_ga(
+    input: &[u8],
+    sums_y: &mut [f32],
+    out_width: u32,
+    coeffs_x: &[f32],
+    border_buf: &[i32],
+    coeffs_y: &[f32],
+) {
+    let cy = _mm_loadu_ps(coeffs_y.as_ptr());
+
+    let mut sum_g = _mm_setzero_ps();
+    let mut sum_a = _mm_setzero_ps();
+
+    let in_ptr = input.as_ptr();
+    let cx_ptr = coeffs_x.as_ptr();
+    let sy_ptr = sums_y.as_mut_ptr();
+    let border_ptr = border_buf.as_ptr();
+
+    let mut in_idx = 0usize;
+    let mut cx_idx = 0usize;
+    let mut sy_idx = 0usize;
+
+    for i in 0..out_width as usize {
+        let border = *border_ptr.add(i);
+
+        let mut j = 0;
+        while j < border {
+            let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+
+            let alpha = *in_ptr.add(in_idx + 1) as f32 / 255.0;
+            let cx_a = _mm_mul_ps(cx, _mm_set1_ps(alpha));
+
+            let gray = *in_ptr.add(in_idx) as f32 / 255.0;
+            let s = _mm_set1_ps(gray);
+            sum_g = _mm_add_ps(_mm_mul_ps(cx_a, s), sum_g);
+            sum_a = _mm_add_ps(cx_a, sum_a);
+
+            in_idx += 2;
+            cx_idx += 4;
+            j += 1;
+        }
+
+        // Accumulate gray into y sums
+        let mut sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_g, sum_g, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // Accumulate alpha into y sums
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_a, sum_a, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // shift_left for each channel
+        sum_g = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_g), 4));
+        sum_a = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_a), 4));
+    }
+}
+
+/// SSE2 output for downscaled GA: un-premultiply gray, convert to bytes.
+#[target_feature(enable = "sse2")]
+pub unsafe fn yscale_out_ga(sums: &mut [f32], width: u32, out: &mut [u8]) {
+    let s_ptr = sums.as_mut_ptr();
+    let out_ptr = out.as_mut_ptr();
+    let mut s_idx = 0usize;
+    let mut o_idx = 0usize;
+
+    for _ in 0..width {
+        let sp = s_ptr.add(s_idx) as *mut __m128i;
+
+        // Load 2 accumulators: [G0..G3], [A0..A3]
+        let v0 = _mm_loadu_si128(sp);
+        let v1 = _mm_loadu_si128(sp.add(1));
+
+        // Extract first element of each: gray, alpha
+        let gray_val = _mm_cvtss_f32(_mm_castsi128_ps(v0));
+        let alpha_val = _mm_cvtss_f32(_mm_castsi128_ps(v1));
+
+        // Clamp alpha
+        let alpha = if alpha_val < 0.0 { 0.0 } else if alpha_val > 1.0 { 1.0 } else { alpha_val };
+
+        // Un-premultiply gray
+        let mut gray = gray_val;
+        if alpha != 0.0 {
+            gray /= alpha;
+        }
+        let gray = if gray < 0.0 { 0.0 } else if gray > 1.0 { 1.0 } else { gray };
+
+        *out_ptr.add(o_idx) = (gray * 255.0 + 0.5) as u8;
+        *out_ptr.add(o_idx + 1) = (alpha * 255.0 + 0.5) as u8;
+
+        // Shift both accumulators left
+        _mm_storeu_si128(sp, _mm_srli_si128(v0, 4));
+        _mm_storeu_si128(sp.add(1), _mm_srli_si128(v1, 4));
+
+        s_idx += 8;
+        o_idx += 2;
+    }
+}
+
 // --- Helpers ---
 
 /// SSE2 push_f: shift left by one float, insert new value at position 3.
