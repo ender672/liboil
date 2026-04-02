@@ -166,6 +166,7 @@ fn main() {
 		("RGB", ColorSpace::RGB),
 		("RGBA", ColorSpace::RGBA),
 		("RGBX", ColorSpace::RGBX),
+		("CMYK", ColorSpace::CMYK),
 	];
 
 	// Filter to a specific colorspace if requested
@@ -185,7 +186,7 @@ fn main() {
 				do_bench_sizes(n, &pixels, image.width, image.height, *cs, iterations);
 			}
 			None => {
-				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA, RGBX");
+				eprintln!("Colorspace not recognized. Options: G, GA, RGB, RGBA, RGBX, CMYK");
 				process::exit(1);
 			}
 		}

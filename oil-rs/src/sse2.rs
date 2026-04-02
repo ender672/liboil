@@ -1423,6 +1423,257 @@ pub unsafe fn yscale_out_g(sums: &mut [f32], sl_len: usize, out: &mut [u8]) {
     }
 }
 
+// --- CMYK SSE2 ---
+
+/// SSE2 horizontal upscale for CMYK.
+/// Interleaved layout: each smpN = [C, M, Y, K] for one tap position.
+/// Mirrors oil_xscale_up_cmyk_sse2.
+#[target_feature(enable = "sse2")]
+pub unsafe fn xscale_up_cmyk(
+    input: &[u8],
+    width_in: u32,
+    out: &mut [f32],
+    coeff_buf: &[f32],
+    border_buf: &[i32],
+) {
+    let inv255 = _mm_set1_ps(1.0 / 255.0);
+    let zero_i = _mm_setzero_si128();
+    let mut smp0;
+    let mut smp1 = _mm_setzero_ps();
+    let mut smp2 = _mm_setzero_ps();
+    let mut smp3 = _mm_setzero_ps();
+    let out_ptr = out.as_mut_ptr();
+    let coeff_ptr = coeff_buf.as_ptr();
+    let border_ptr = border_buf.as_ptr();
+    let in_ptr = input.as_ptr();
+    let mut out_idx = 0usize;
+    let mut coeff_idx = 0usize;
+
+    for i in 0..width_in as usize {
+        // Load 4 bytes [C,M,Y,K], unpack to 4 floats, divide by 255
+        let px = _mm_cvtsi32_si128(*(in_ptr.add(i * 4) as *const i32));
+        let px = _mm_unpacklo_epi8(px, zero_i);
+        let px = _mm_unpacklo_epi16(px, zero_i);
+        smp0 = smp1;
+        smp1 = smp2;
+        smp2 = smp3;
+        smp3 = _mm_mul_ps(_mm_cvtepi32_ps(px), inv255);
+
+        let mut j = *border_ptr.add(i);
+
+        // Process pairs of outputs
+        while j >= 2 {
+            let c0 = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+            let c1 = _mm_loadu_ps(coeff_ptr.add(coeff_idx + 4));
+
+            let result0 = _mm_add_ps(
+                _mm_add_ps(
+                    _mm_mul_ps(smp0, _mm_shuffle_ps(c0, c0, mm_shuffle(0, 0, 0, 0))),
+                    _mm_mul_ps(smp1, _mm_shuffle_ps(c0, c0, mm_shuffle(1, 1, 1, 1))),
+                ),
+                _mm_add_ps(
+                    _mm_mul_ps(smp2, _mm_shuffle_ps(c0, c0, mm_shuffle(2, 2, 2, 2))),
+                    _mm_mul_ps(smp3, _mm_shuffle_ps(c0, c0, mm_shuffle(3, 3, 3, 3))),
+                ),
+            );
+
+            let result1 = _mm_add_ps(
+                _mm_add_ps(
+                    _mm_mul_ps(smp0, _mm_shuffle_ps(c1, c1, mm_shuffle(0, 0, 0, 0))),
+                    _mm_mul_ps(smp1, _mm_shuffle_ps(c1, c1, mm_shuffle(1, 1, 1, 1))),
+                ),
+                _mm_add_ps(
+                    _mm_mul_ps(smp2, _mm_shuffle_ps(c1, c1, mm_shuffle(2, 2, 2, 2))),
+                    _mm_mul_ps(smp3, _mm_shuffle_ps(c1, c1, mm_shuffle(3, 3, 3, 3))),
+                ),
+            );
+
+            _mm_storeu_ps(out_ptr.add(out_idx), result0);
+            _mm_storeu_ps(out_ptr.add(out_idx + 4), result1);
+
+            out_idx += 8;
+            coeff_idx += 8;
+            j -= 2;
+        }
+
+        // Process remaining single output
+        if j > 0 {
+            let c = _mm_loadu_ps(coeff_ptr.add(coeff_idx));
+
+            let result = _mm_add_ps(
+                _mm_add_ps(
+                    _mm_mul_ps(smp0, _mm_shuffle_ps(c, c, mm_shuffle(0, 0, 0, 0))),
+                    _mm_mul_ps(smp1, _mm_shuffle_ps(c, c, mm_shuffle(1, 1, 1, 1))),
+                ),
+                _mm_add_ps(
+                    _mm_mul_ps(smp2, _mm_shuffle_ps(c, c, mm_shuffle(2, 2, 2, 2))),
+                    _mm_mul_ps(smp3, _mm_shuffle_ps(c, c, mm_shuffle(3, 3, 3, 3))),
+                ),
+            );
+
+            _mm_storeu_ps(out_ptr.add(out_idx), result);
+
+            out_idx += 4;
+            coeff_idx += 4;
+        }
+    }
+}
+
+/// SSE2 downscale for CMYK: horizontal x-filtering with i2f + y-accumulation.
+/// Mirrors oil_scale_down_cmyk_sse2.
+#[target_feature(enable = "sse2")]
+pub unsafe fn scale_down_cmyk(
+    input: &[u8],
+    sums_y: &mut [f32],
+    out_width: u32,
+    coeffs_x: &[f32],
+    border_buf: &[i32],
+    coeffs_y: &[f32],
+) {
+    let tables = srgb::tables();
+    let i2f = tables.i2f.as_ptr();
+    let cy = _mm_loadu_ps(coeffs_y.as_ptr());
+
+    let mut sum_c = _mm_setzero_ps();
+    let mut sum_m = _mm_setzero_ps();
+    let mut sum_yc = _mm_setzero_ps();
+    let mut sum_k = _mm_setzero_ps();
+
+    let in_ptr = input.as_ptr();
+    let cx_ptr = coeffs_x.as_ptr();
+    let sy_ptr = sums_y.as_mut_ptr();
+    let border_ptr = border_buf.as_ptr();
+
+    let mut in_idx = 0usize;
+    let mut cx_idx = 0usize;
+    let mut sy_idx = 0usize;
+
+    for i in 0..out_width as usize {
+        let border = *border_ptr.add(i);
+
+        if border >= 4 {
+            let mut sum_c2 = _mm_setzero_ps();
+            let mut sum_m2 = _mm_setzero_ps();
+            let mut sum_yc2 = _mm_setzero_ps();
+            let mut sum_k2 = _mm_setzero_ps();
+
+            let mut j = 0;
+            while j + 1 < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum_c = _mm_add_ps(_mm_mul_ps(cx, s), sum_c);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                sum_m = _mm_add_ps(_mm_mul_ps(cx, s), sum_m);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 2) as usize));
+                sum_yc = _mm_add_ps(_mm_mul_ps(cx, s), sum_yc);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize));
+                sum_k = _mm_add_ps(_mm_mul_ps(cx, s), sum_k);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 4) as usize));
+                sum_c2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_c2);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 5) as usize));
+                sum_m2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_m2);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 6) as usize));
+                sum_yc2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_yc2);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 7) as usize));
+                sum_k2 = _mm_add_ps(_mm_mul_ps(cx2, s), sum_k2);
+
+                in_idx += 8;
+                cx_idx += 8;
+                j += 2;
+            }
+
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum_c = _mm_add_ps(_mm_mul_ps(cx, s), sum_c);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                sum_m = _mm_add_ps(_mm_mul_ps(cx, s), sum_m);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 2) as usize));
+                sum_yc = _mm_add_ps(_mm_mul_ps(cx, s), sum_yc);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize));
+                sum_k = _mm_add_ps(_mm_mul_ps(cx, s), sum_k);
+
+                in_idx += 4;
+                cx_idx += 4;
+                j += 1;
+            }
+
+            sum_c = _mm_add_ps(sum_c, sum_c2);
+            sum_m = _mm_add_ps(sum_m, sum_m2);
+            sum_yc = _mm_add_ps(sum_yc, sum_yc2);
+            sum_k = _mm_add_ps(sum_k, sum_k2);
+        } else {
+            let mut j = 0;
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum_c = _mm_add_ps(_mm_mul_ps(cx, s), sum_c);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                sum_m = _mm_add_ps(_mm_mul_ps(cx, s), sum_m);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 2) as usize));
+                sum_yc = _mm_add_ps(_mm_mul_ps(cx, s), sum_yc);
+
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 3) as usize));
+                sum_k = _mm_add_ps(_mm_mul_ps(cx, s), sum_k);
+
+                in_idx += 4;
+                cx_idx += 4;
+                j += 1;
+            }
+        }
+
+        // C channel
+        let mut sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_c, sum_c, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // M channel
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_m, sum_m, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // Y channel
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_yc, sum_yc, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // K channel
+        sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
+        let sample = _mm_shuffle_ps(sum_k, sum_k, mm_shuffle(0, 0, 0, 0));
+        sy = _mm_add_ps(_mm_mul_ps(cy, sample), sy);
+        _mm_storeu_ps(sy_ptr.add(sy_idx), sy);
+        sy_idx += 4;
+
+        // shift_left for each channel
+        sum_c = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_c), 4));
+        sum_m = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_m), 4));
+        sum_yc = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_yc), 4));
+        sum_k = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(sum_k), 4));
+    }
+}
+
 // --- Grayscale + Alpha (GA) SSE2 ---
 
 /// SSE2 horizontal upscale for GA (grayscale with premultiplied alpha).
