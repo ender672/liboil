@@ -101,7 +101,7 @@ pub unsafe fn yscale_up_rgb(
     let c3 = _mm_set1_ps(coeffs[3]);
 
     let mut i = 0;
-    let mut idx_buf: [i32; 8] = [0i32; 8];
+    let mut idx_buf: [i32; 12] = [0i32; 12];
     let idx_ptr = idx_buf.as_mut_ptr() as *mut __m128i;
     let out_ptr = out.as_mut_ptr();
 
@@ -110,9 +110,9 @@ pub unsafe fn yscale_up_rgb(
     let l2 = lines[2].as_ptr();
     let l3 = lines[3].as_ptr();
 
-    // Process 8 floats at a time
-    while i + 7 < len {
-        let sum = _mm_fmadd_ps(
+    // Process 12 floats at a time (4 RGB pixels)
+    while i + 11 < len {
+        let sum0 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i)),
@@ -122,9 +122,7 @@ pub unsafe fn yscale_up_rgb(
                 ),
             ),
         );
-        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
-
-        let sum2 = _mm_fmadd_ps(
+        let sum1 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i + 4)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i + 4)),
@@ -134,18 +132,35 @@ pub unsafe fn yscale_up_rgb(
                 ),
             ),
         );
-        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
+        let sum2 = _mm_fmadd_ps(
+            c0, _mm_loadu_ps(l0.add(i + 8)),
+            _mm_fmadd_ps(
+                c1, _mm_loadu_ps(l1.add(i + 8)),
+                _mm_fmadd_ps(
+                    c2, _mm_loadu_ps(l2.add(i + 8)),
+                    _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 8))),
+                ),
+            ),
+        );
 
-        *out_ptr.add(i)     = *lut.offset(idx_buf[0] as isize);
-        *out_ptr.add(i + 1) = *lut.offset(idx_buf[1] as isize);
-        *out_ptr.add(i + 2) = *lut.offset(idx_buf[2] as isize);
-        *out_ptr.add(i + 3) = *lut.offset(idx_buf[3] as isize);
-        *out_ptr.add(i + 4) = *lut.offset(idx_buf[4] as isize);
-        *out_ptr.add(i + 5) = *lut.offset(idx_buf[5] as isize);
-        *out_ptr.add(i + 6) = *lut.offset(idx_buf[6] as isize);
-        *out_ptr.add(i + 7) = *lut.offset(idx_buf[7] as isize);
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum0, scale)));
+        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum1, scale)));
+        _mm_storeu_si128(idx_ptr.add(2), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
 
-        i += 8;
+        *out_ptr.add(i)      = *lut.offset(idx_buf[0] as isize);
+        *out_ptr.add(i + 1)  = *lut.offset(idx_buf[1] as isize);
+        *out_ptr.add(i + 2)  = *lut.offset(idx_buf[2] as isize);
+        *out_ptr.add(i + 3)  = *lut.offset(idx_buf[3] as isize);
+        *out_ptr.add(i + 4)  = *lut.offset(idx_buf[4] as isize);
+        *out_ptr.add(i + 5)  = *lut.offset(idx_buf[5] as isize);
+        *out_ptr.add(i + 6)  = *lut.offset(idx_buf[6] as isize);
+        *out_ptr.add(i + 7)  = *lut.offset(idx_buf[7] as isize);
+        *out_ptr.add(i + 8)  = *lut.offset(idx_buf[8] as isize);
+        *out_ptr.add(i + 9)  = *lut.offset(idx_buf[9] as isize);
+        *out_ptr.add(i + 10) = *lut.offset(idx_buf[10] as isize);
+        *out_ptr.add(i + 11) = *lut.offset(idx_buf[11] as isize);
+
+        i += 12;
     }
 
     // Process 4 floats at a time
