@@ -99,6 +99,8 @@ pub unsafe fn yscale_up_rgb(
     let c3 = _mm_set1_ps(coeffs[3]);
 
     let mut i = 0;
+    let mut idx_buf: [i32; 8] = [0i32; 8];
+    let idx_ptr = idx_buf.as_mut_ptr() as *mut __m128i;
 
     // Process 8 floats at a time
     while i + 7 < len {
@@ -110,7 +112,7 @@ pub unsafe fn yscale_up_rgb(
             _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
             _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
         );
-        let idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
 
         let v0b = _mm_loadu_ps(lines[0].as_ptr().add(i + 4));
         let v1b = _mm_loadu_ps(lines[1].as_ptr().add(i + 4));
@@ -120,16 +122,16 @@ pub unsafe fn yscale_up_rgb(
             _mm_add_ps(_mm_mul_ps(c0, v0b), _mm_mul_ps(c1, v1b)),
             _mm_add_ps(_mm_mul_ps(c2, v2b), _mm_mul_ps(c3, v3b)),
         );
-        let idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
+        _mm_storeu_si128(idx_ptr.add(1), _mm_cvttps_epi32(_mm_mul_ps(sum2, scale)));
 
-        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
-        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
-        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
-        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
-        out[i + 4] = *lut.offset(_mm_cvtsi128_si32(idx2) as isize);
-        out[i + 5] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 4)) as isize);
-        out[i + 6] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 8)) as isize);
-        out[i + 7] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx2, 12)) as isize);
+        out[i]     = *lut.offset(idx_buf[0] as isize);
+        out[i + 1] = *lut.offset(idx_buf[1] as isize);
+        out[i + 2] = *lut.offset(idx_buf[2] as isize);
+        out[i + 3] = *lut.offset(idx_buf[3] as isize);
+        out[i + 4] = *lut.offset(idx_buf[4] as isize);
+        out[i + 5] = *lut.offset(idx_buf[5] as isize);
+        out[i + 6] = *lut.offset(idx_buf[6] as isize);
+        out[i + 7] = *lut.offset(idx_buf[7] as isize);
 
         i += 8;
     }
@@ -144,11 +146,11 @@ pub unsafe fn yscale_up_rgb(
             _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
             _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
         );
-        let idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-        out[i] = *lut.offset(_mm_cvtsi128_si32(idx) as isize);
-        out[i + 1] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 4)) as isize);
-        out[i + 2] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 8)) as isize);
-        out[i + 3] = *lut.offset(_mm_cvtsi128_si32(_mm_srli_si128(idx, 12)) as isize);
+        _mm_storeu_si128(idx_ptr, _mm_cvttps_epi32(_mm_mul_ps(sum, scale)));
+        out[i]     = *lut.offset(idx_buf[0] as isize);
+        out[i + 1] = *lut.offset(idx_buf[1] as isize);
+        out[i + 2] = *lut.offset(idx_buf[2] as isize);
+        out[i + 3] = *lut.offset(idx_buf[3] as isize);
         i += 4;
     }
 
