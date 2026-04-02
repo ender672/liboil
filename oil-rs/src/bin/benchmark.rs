@@ -35,6 +35,43 @@ fn load_jpeg(path: &str) -> BenchImage {
 	}
 }
 
+fn load_png(path: &str) -> BenchImage {
+	let data = fs::read(path).unwrap_or_else(|e| {
+		eprintln!("Unable to open file: {}", e);
+		process::exit(1);
+	});
+	let decoder = png::Decoder::new(&data[..]);
+	let mut reader = decoder.read_info().unwrap_or_else(|e| {
+		eprintln!("PNG decode error: {}", e);
+		process::exit(1);
+	});
+	let info = reader.info();
+	if info.color_type != png::ColorType::Rgb || info.bit_depth != png::BitDepth::Eight {
+		eprintln!("Input PNG must be 8-bit RGB.");
+		process::exit(1);
+	}
+	let width = info.width;
+	let height = info.height;
+	let mut pixels = vec![0u8; reader.output_buffer_size()];
+	reader.next_frame(&mut pixels).unwrap_or_else(|e| {
+		eprintln!("PNG frame decode error: {}", e);
+		process::exit(1);
+	});
+	BenchImage {
+		pixels,
+		width,
+		height,
+	}
+}
+
+fn load_image(path: &str) -> BenchImage {
+	if path.ends_with(".png") {
+		load_png(path)
+	} else {
+		load_jpeg(path)
+	}
+}
+
 fn resize(image: &BenchImage, out_width: u32, out_height: u32) -> f64 {
 	let cs = ColorSpace::RGB;
 	let cmp = cs.components();
@@ -78,7 +115,7 @@ fn do_bench(image: &BenchImage, ratio: f64, iterations: u32) {
 fn main() {
 	let args: Vec<String> = env::args().collect();
 	if args.len() != 2 {
-		eprintln!("Usage: {} <path.jpg>", args[0]);
+		eprintln!("Usage: {} <path.jpg|path.png>", args[0]);
 		process::exit(1);
 	}
 
@@ -89,7 +126,7 @@ fn main() {
 		.unwrap_or(100);
 	eprintln!("Iterations: {}", iterations);
 
-	let image = load_jpeg(&args[1]);
+	let image = load_image(&args[1]);
 	println!("{}x{} RGB", image.width, image.height);
 
 	do_bench(&image, 0.01, iterations);
