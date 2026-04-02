@@ -1901,7 +1901,7 @@ pub unsafe fn xscale_up_ga(
 }
 
 /// SSE2 vertical upscale for GA.
-/// Processes 2 floats (one GA pixel) at a time, un-premultiplies gray.
+/// Vectorized un-premultiply, clamp, and pack to u8.
 #[target_feature(enable = "sse2")]
 pub unsafe fn yscale_up_ga(
     lines: [&[f32]; 4],
@@ -1913,6 +1913,12 @@ pub unsafe fn yscale_up_ga(
     let c1 = _mm_set1_ps(coeffs[1]);
     let c2 = _mm_set1_ps(coeffs[2]);
     let c3 = _mm_set1_ps(coeffs[3]);
+    let one = _mm_set1_ps(1.0);
+    let zero = _mm_setzero_ps();
+    let v255 = _mm_set1_ps(255.0);
+    let half = _mm_set1_ps(0.5);
+    // Mask selecting alpha channel positions (1 and 3) in [g, a, g, a]
+    let alpha_mask = _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, 0));
 
     let l0 = lines[0].as_ptr();
     let l1 = lines[1].as_ptr();
@@ -1922,39 +1928,71 @@ pub unsafe fn yscale_up_ga(
 
     let mut i = 0;
 
-    // Process 2 pixels (4 floats) at a time
-    while i + 3 < len {
-        let v0 = _mm_loadu_ps(l0.add(i));
-        let v1 = _mm_loadu_ps(l1.add(i));
-        let v2 = _mm_loadu_ps(l2.add(i));
-        let v3 = _mm_loadu_ps(l3.add(i));
-        let sum = _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-            _mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)),
+    // Process 4 pixels (8 floats = 2 x __m128) at a time
+    while i + 7 < len {
+        // Vertical blend for first 2 pixels: [g0, a0, g1, a1]
+        let sum_lo = _mm_add_ps(
+            _mm_add_ps(
+                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i))),
+                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i))),
+            ),
+            _mm_add_ps(
+                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i))),
+                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+            ),
+        );
+        // Vertical blend for next 2 pixels: [g2, a2, g3, a3]
+        let sum_hi = _mm_add_ps(
+            _mm_add_ps(
+                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i + 4))),
+                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i + 4))),
+            ),
+            _mm_add_ps(
+                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i + 4))),
+                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i + 4))),
+            ),
         );
 
-        // sum = [g0, a0, g1, a1]
-        // Process pixel 0
-        let alpha0 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(1, 1, 1, 1)));
-        let alpha0_clamped = if alpha0 < 0.0 { 0.0 } else if alpha0 > 1.0 { 1.0 } else { alpha0 };
-        let mut gray0 = _mm_cvtss_f32(sum);
-        if alpha0_clamped != 0.0 {
-            gray0 /= alpha0_clamped;
-        }
-        let gray0_clamped = if gray0 < 0.0 { 0.0 } else if gray0 > 1.0 { 1.0 } else { gray0 };
-        *out_ptr.add(i) = (gray0_clamped * 255.0 + 0.5) as u8;
-        *out_ptr.add(i + 1) = (alpha0_clamped * 255.0 + 0.5) as u8;
+        // Un-premultiply and pack first pair
+        let result_lo = yscale_up_ga_unpremultiply(sum_lo, alpha_mask, zero, one, v255, half);
+        // Un-premultiply and pack second pair
+        let result_hi = yscale_up_ga_unpremultiply(sum_hi, alpha_mask, zero, one, v255, half);
 
-        // Process pixel 1
-        let alpha1 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(3, 3, 3, 3)));
-        let alpha1_clamped = if alpha1 < 0.0 { 0.0 } else if alpha1 > 1.0 { 1.0 } else { alpha1 };
-        let mut gray1 = _mm_cvtss_f32(_mm_shuffle_ps(sum, sum, mm_shuffle(2, 2, 2, 2)));
-        if alpha1_clamped != 0.0 {
-            gray1 /= alpha1_clamped;
-        }
-        let gray1_clamped = if gray1 < 0.0 { 0.0 } else if gray1 > 1.0 { 1.0 } else { gray1 };
-        *out_ptr.add(i + 2) = (gray1_clamped * 255.0 + 0.5) as u8;
-        *out_ptr.add(i + 3) = (alpha1_clamped * 255.0 + 0.5) as u8;
+        // Pack i32 -> i16 -> u8
+        let packed16 = _mm_packs_epi32(result_lo, result_hi);
+        let packed8 = _mm_packus_epi16(packed16, packed16);
+
+        // Store 8 bytes (4 pixels x 2 channels)
+        std::ptr::write_unaligned(
+            out_ptr.add(i) as *mut u64,
+            _mm_cvtsi128_si64(packed8) as u64,
+        );
+
+        i += 8;
+    }
+
+    // Process 2 pixels (4 floats) at a time
+    while i + 3 < len {
+        let sum = _mm_add_ps(
+            _mm_add_ps(
+                _mm_mul_ps(c0, _mm_loadu_ps(l0.add(i))),
+                _mm_mul_ps(c1, _mm_loadu_ps(l1.add(i))),
+            ),
+            _mm_add_ps(
+                _mm_mul_ps(c2, _mm_loadu_ps(l2.add(i))),
+                _mm_mul_ps(c3, _mm_loadu_ps(l3.add(i))),
+            ),
+        );
+
+        let result = yscale_up_ga_unpremultiply(sum, alpha_mask, zero, one, v255, half);
+
+        // Pack and store 4 bytes (2 pixels)
+        let packed16 = _mm_packs_epi32(result, result);
+        let packed8 = _mm_packus_epi16(packed16, packed16);
+        std::ptr::write_unaligned(
+            out_ptr.add(i) as *mut u32,
+            _mm_cvtsi128_si32(packed8) as u32,
+        );
 
         i += 4;
     }
@@ -1975,6 +2013,40 @@ pub unsafe fn yscale_up_ga(
         *out_ptr.add(i + 1) = (alpha * 255.0 + 0.5) as u8;
         i += 2;
     }
+}
+
+/// Vectorized un-premultiply, clamp, scale, and convert to i32 for a [g, a, g, a] vector.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn yscale_up_ga_unpremultiply(
+    sum: __m128,
+    alpha_mask: __m128,
+    zero: __m128,
+    one: __m128,
+    v255: __m128,
+    half: __m128,
+) -> __m128i {
+    // Spread alpha to both channels: [g0, a0, g1, a1] -> [a0, a0, a1, a1]
+    let alpha_spread = _mm_shuffle_ps(sum, sum, mm_shuffle(3, 3, 1, 1));
+    let alpha_clamped = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+
+    // Safe division: where alpha == 0, substitute 1.0 to avoid inf/nan
+    let nonzero = _mm_cmpneq_ps(alpha_clamped, zero);
+    let safe_alpha = _mm_or_ps(
+        _mm_and_ps(nonzero, alpha_clamped),
+        _mm_andnot_ps(nonzero, one),
+    );
+    let divided = _mm_div_ps(sum, safe_alpha);
+    let clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+
+    // Merge: gray channels from divided, alpha channels from original clamped
+    let result = _mm_or_ps(
+        _mm_andnot_ps(alpha_mask, clamped),
+        _mm_and_ps(alpha_mask, alpha_clamped),
+    );
+
+    // Scale to [0, 255] with rounding and convert to i32
+    _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, v255), half))
 }
 
 /// SSE2 downscale for GA: horizontal x-filtering with premultiplied alpha + y-accumulation.
