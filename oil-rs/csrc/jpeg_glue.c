@@ -28,7 +28,18 @@ oil_jpeg_reader *oil_jpeg_reader_create(const unsigned char *data,
 	jpeg_create_decompress(&r->dinfo);
 	jpeg_mem_src(&r->dinfo, data, size);
 	jpeg_read_header(&r->dinfo, TRUE);
-	r->dinfo.out_color_space = JCS_RGB;
+	switch (r->dinfo.jpeg_color_space) {
+	case JCS_GRAYSCALE:
+		r->dinfo.out_color_space = JCS_GRAYSCALE;
+		break;
+	case JCS_CMYK:
+	case JCS_YCCK:
+		r->dinfo.out_color_space = JCS_CMYK;
+		break;
+	default:
+		r->dinfo.out_color_space = JCS_RGB;
+		break;
+	}
 	jpeg_start_decompress(&r->dinfo);
 	return r;
 }
@@ -49,7 +60,18 @@ oil_jpeg_reader *oil_jpeg_reader_create_file(const char *path)
 	jpeg_create_decompress(&r->dinfo);
 	jpeg_stdio_src(&r->dinfo, fp);
 	jpeg_read_header(&r->dinfo, TRUE);
-	r->dinfo.out_color_space = JCS_RGB;
+	switch (r->dinfo.jpeg_color_space) {
+	case JCS_GRAYSCALE:
+		r->dinfo.out_color_space = JCS_GRAYSCALE;
+		break;
+	case JCS_CMYK:
+	case JCS_YCCK:
+		r->dinfo.out_color_space = JCS_CMYK;
+		break;
+	default:
+		r->dinfo.out_color_space = JCS_RGB;
+		break;
+	}
 	jpeg_start_decompress(&r->dinfo);
 	return r;
 }
@@ -89,6 +111,11 @@ int oil_jpeg_reader_components(const oil_jpeg_reader *r)
 	return r->dinfo.output_components;
 }
 
+int oil_jpeg_reader_color_space(const oil_jpeg_reader *r)
+{
+	return (int)r->dinfo.out_color_space;
+}
+
 void oil_jpeg_reader_read_scanline(oil_jpeg_reader *r, unsigned char *buf)
 {
 	jpeg_read_scanlines(&r->dinfo, &buf, 1);
@@ -108,7 +135,7 @@ void oil_jpeg_reader_destroy(oil_jpeg_reader *r)
 }
 
 oil_jpeg_writer *oil_jpeg_writer_create(unsigned int width,
-	unsigned int height, int components, int quality)
+	unsigned int height, int components, int color_space, int quality)
 {
 	oil_jpeg_writer *w = calloc(1, sizeof(oil_jpeg_writer));
 	if (!w) {
@@ -120,7 +147,7 @@ oil_jpeg_writer *oil_jpeg_writer_create(unsigned int width,
 	w->cinfo.image_width = width;
 	w->cinfo.image_height = height;
 	w->cinfo.input_components = components;
-	w->cinfo.in_color_space = JCS_RGB;
+	w->cinfo.in_color_space = (J_COLOR_SPACE)color_space;
 	jpeg_set_defaults(&w->cinfo);
 	jpeg_set_quality(&w->cinfo, quality, FALSE);
 	jpeg_start_compress(&w->cinfo, TRUE);

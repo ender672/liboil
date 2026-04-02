@@ -4,6 +4,33 @@ use std::path::Path;
 use crate::colorspace::ColorSpace;
 use crate::scale::{OilError, OilScale};
 
+// libjpeg J_COLOR_SPACE constants.
+const JCS_GRAYSCALE: libc::c_int = 1;
+const JCS_RGB: libc::c_int = 2;
+const JCS_CMYK: libc::c_int = 4;
+const JCS_EXT_RGBX: libc::c_int = 7;
+const JCS_EXT_BGRX: libc::c_int = 9;
+
+fn jcs_to_colorspace(jcs: libc::c_int) -> Result<ColorSpace, OilError> {
+    match jcs {
+        JCS_GRAYSCALE => Ok(ColorSpace::G),
+        JCS_RGB => Ok(ColorSpace::RGB),
+        JCS_CMYK => Ok(ColorSpace::CMYK),
+        JCS_EXT_RGBX | JCS_EXT_BGRX => Ok(ColorSpace::RGBX),
+        _ => Err(OilError::InvalidArgument),
+    }
+}
+
+fn colorspace_to_jcs(cs: ColorSpace) -> libc::c_int {
+    match cs {
+        ColorSpace::G => JCS_GRAYSCALE,
+        ColorSpace::RGB => JCS_RGB,
+        ColorSpace::CMYK => JCS_CMYK,
+        ColorSpace::RGBX => JCS_EXT_RGBX,
+        _ => JCS_RGB,
+    }
+}
+
 // Opaque handles matching the C glue typedefs.
 enum OilJpegReader {}
 enum OilJpegWriter {}
@@ -18,7 +45,7 @@ extern "C" {
     ) -> libc::c_int;
     fn oil_jpeg_reader_width(r: *const OilJpegReader) -> libc::c_uint;
     fn oil_jpeg_reader_height(r: *const OilJpegReader) -> libc::c_uint;
-    fn oil_jpeg_reader_components(r: *const OilJpegReader) -> libc::c_int;
+    fn oil_jpeg_reader_color_space(r: *const OilJpegReader) -> libc::c_int;
     fn oil_jpeg_reader_read_scanline(r: *mut OilJpegReader, buf: *mut u8);
     fn oil_jpeg_reader_destroy(r: *mut OilJpegReader);
 
@@ -26,6 +53,7 @@ extern "C" {
         width: libc::c_uint,
         height: libc::c_uint,
         components: libc::c_int,
+        color_space: libc::c_int,
         quality: libc::c_int,
     ) -> *mut OilJpegWriter;
     fn oil_jpeg_writer_write_scanline(w: *mut OilJpegWriter, buf: *mut u8);
@@ -65,8 +93,8 @@ impl JpegReader {
         unsafe { oil_jpeg_reader_height(self.ptr) }
     }
 
-    fn components(&self) -> usize {
-        unsafe { oil_jpeg_reader_components(self.ptr) as usize }
+    fn color_space(&self) -> libc::c_int {
+        unsafe { oil_jpeg_reader_color_space(self.ptr) }
     }
 
     fn read_scanline(&mut self, buf: &mut [u8]) {
@@ -86,9 +114,9 @@ struct JpegWriter {
 }
 
 impl JpegWriter {
-    fn new(width: u32, height: u32, components: usize, quality: u8) -> Result<Self, OilError> {
+    fn new(width: u32, height: u32, components: usize, color_space: libc::c_int, quality: u8) -> Result<Self, OilError> {
         let ptr = unsafe {
-            oil_jpeg_writer_create(width, height, components as libc::c_int, quality as libc::c_int)
+            oil_jpeg_writer_create(width, height, components as libc::c_int, color_space, quality as libc::c_int)
         };
         if ptr.is_null() {
             return Err(OilError::AllocationFailed);
@@ -151,13 +179,10 @@ pub fn resize_jpeg_file(
 
     let in_width = reader.width();
     let in_height = reader.height();
-    let cmp = reader.components();
+    let jcs = reader.color_space();
+    let cs = jcs_to_colorspace(jcs)?;
+    let cmp = cs.components();
 
-    if cmp != ColorSpace::RGB.components() {
-        return Err(OilError::InvalidArgument);
-    }
-
-    let cs = ColorSpace::RGB;
     let mut scaler = OilScale::new(in_height, out_height, in_width, out_width, cs)?;
 
     let in_stride = in_width as usize * cmp;
@@ -166,7 +191,7 @@ pub fn resize_jpeg_file(
     let mut inbuf = vec![0u8; in_stride];
     let mut outbuf = vec![0u8; out_stride];
 
-    let mut writer = JpegWriter::new(out_width, out_height, cmp, quality)?;
+    let mut writer = JpegWriter::new(out_width, out_height, cmp, colorspace_to_jcs(cs), quality)?;
 
     for _ in 0..out_height {
         while scaler.slots() > 0 {
@@ -192,13 +217,10 @@ pub fn resize_jpeg(
 
     let in_width = reader.width();
     let in_height = reader.height();
-    let cmp = reader.components();
+    let jcs = reader.color_space();
+    let cs = jcs_to_colorspace(jcs)?;
+    let cmp = cs.components();
 
-    if cmp != ColorSpace::RGB.components() {
-        return Err(OilError::InvalidArgument);
-    }
-
-    let cs = ColorSpace::RGB;
     let mut scaler = OilScale::new(in_height, out_height, in_width, out_width, cs)?;
 
     let in_stride = in_width as usize * cmp;
@@ -207,7 +229,7 @@ pub fn resize_jpeg(
     let mut inbuf = vec![0u8; in_stride];
     let mut outbuf = vec![0u8; out_stride];
 
-    let mut writer = JpegWriter::new(out_width, out_height, cmp, quality)?;
+    let mut writer = JpegWriter::new(out_width, out_height, cmp, colorspace_to_jcs(cs), quality)?;
 
     for _ in 0..out_height {
         while scaler.slots() > 0 {

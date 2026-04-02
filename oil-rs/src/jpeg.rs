@@ -15,12 +15,12 @@ pub fn resize_jpeg(
     let in_width = info.width as u32;
     let in_height = info.height as u32;
 
-    // Only RGB supported in Phase 1
-    if info.pixel_format != jpeg_decoder::PixelFormat::RGB24 {
-        return Err(OilError::InvalidArgument);
-    }
-
-    let cs = ColorSpace::RGB;
+    let cs = match info.pixel_format {
+        jpeg_decoder::PixelFormat::L8 => ColorSpace::G,
+        jpeg_decoder::PixelFormat::RGB24 => ColorSpace::RGB,
+        jpeg_decoder::PixelFormat::CMYK32 => ColorSpace::CMYK,
+        _ => return Err(OilError::InvalidArgument),
+    };
     let cmp = cs.components();
 
     let mut scaler = OilScale::new(in_height, out_height, in_width, out_width, cs)?;
@@ -39,10 +39,17 @@ pub fn resize_jpeg(
         scaler.read_scanline(&mut output[i * out_stride..(i + 1) * out_stride]);
     }
 
+    let enc_color_type = match cs {
+        ColorSpace::G => jpeg_encoder::ColorType::Luma,
+        ColorSpace::RGB => jpeg_encoder::ColorType::Rgb,
+        ColorSpace::CMYK => jpeg_encoder::ColorType::Cmyk,
+        _ => return Err(OilError::InvalidArgument),
+    };
+
     let mut buf = Vec::new();
     let encoder = jpeg_encoder::Encoder::new(&mut buf, quality);
     encoder
-        .encode(&output, out_width as u16, out_height as u16, jpeg_encoder::ColorType::Rgb)
+        .encode(&output, out_width as u16, out_height as u16, enc_color_type)
         .map_err(|_| OilError::AllocationFailed)?;
 
     Ok(buf)
