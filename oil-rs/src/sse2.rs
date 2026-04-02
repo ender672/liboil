@@ -1502,8 +1502,6 @@ pub unsafe fn yscale_up_g(
     let c3 = _mm_set1_ps(coeffs[3]);
     let scale = _mm_set1_ps(255.0);
     let half = _mm_set1_ps(0.5);
-    let zero = _mm_setzero_ps();
-    let one = _mm_set1_ps(1.0);
 
     let l0 = lines[0].as_ptr();
     let l1 = lines[1].as_ptr();
@@ -1512,9 +1510,12 @@ pub unsafe fn yscale_up_g(
     let out_ptr = out.as_mut_ptr();
     let mut i = 0;
 
+    // Clamp is omitted in SIMD paths: packs_epi32 (i32→i16 saturate) +
+    // packus_epi16 (i16→u8 saturate) naturally clamp to [0, 255].
+
     // Process 16 pixels at a time
     while i + 15 < len {
-        let mut sum = _mm_fmadd_ps(
+        let sum = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i)),
@@ -1524,10 +1525,9 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
         let idx = _mm_cvttps_epi32(_mm_fmadd_ps(sum, scale, half));
 
-        let mut sum2 = _mm_fmadd_ps(
+        let sum2 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i + 4)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i + 4)),
@@ -1537,10 +1537,9 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
         let idx2 = _mm_cvttps_epi32(_mm_fmadd_ps(sum2, scale, half));
 
-        let mut sum3 = _mm_fmadd_ps(
+        let sum3 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i + 8)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i + 8)),
@@ -1550,10 +1549,9 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum3 = _mm_min_ps(_mm_max_ps(sum3, zero), one);
         let idx3 = _mm_cvttps_epi32(_mm_fmadd_ps(sum3, scale, half));
 
-        let mut sum4 = _mm_fmadd_ps(
+        let sum4 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i + 12)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i + 12)),
@@ -1563,7 +1561,6 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum4 = _mm_min_ps(_mm_max_ps(sum4, zero), one);
         let idx4 = _mm_cvttps_epi32(_mm_fmadd_ps(sum4, scale, half));
 
         let packed12 = _mm_packs_epi32(idx, idx2);
@@ -1575,7 +1572,7 @@ pub unsafe fn yscale_up_g(
 
     // Process 8 pixels at a time
     while i + 7 < len {
-        let mut sum = _mm_fmadd_ps(
+        let sum = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i)),
@@ -1585,10 +1582,9 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
         let idx = _mm_cvttps_epi32(_mm_fmadd_ps(sum, scale, half));
 
-        let mut sum2 = _mm_fmadd_ps(
+        let sum2 = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i + 4)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i + 4)),
@@ -1598,7 +1594,6 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
         let idx2 = _mm_cvttps_epi32(_mm_fmadd_ps(sum2, scale, half));
 
         let packed = _mm_packs_epi32(idx, idx2);
@@ -1609,7 +1604,7 @@ pub unsafe fn yscale_up_g(
 
     // Process 4 pixels at a time
     while i + 3 < len {
-        let mut sum = _mm_fmadd_ps(
+        let sum = _mm_fmadd_ps(
             c0, _mm_loadu_ps(l0.add(i)),
             _mm_fmadd_ps(
                 c1, _mm_loadu_ps(l1.add(i)),
@@ -1619,7 +1614,6 @@ pub unsafe fn yscale_up_g(
                 ),
             ),
         );
-        sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
         let idx = _mm_cvttps_epi32(_mm_fmadd_ps(sum, scale, half));
         let packed = _mm_packs_epi32(idx, idx);
         let result = _mm_packus_epi16(packed, packed);
