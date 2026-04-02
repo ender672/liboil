@@ -1147,6 +1147,8 @@ pub unsafe fn xscale_up_g(
     coeff_buf: &[f32],
     border_buf: &[i32],
 ) {
+    let tables = srgb::tables();
+    let i2f = tables.i2f.as_ptr();
     let mut smp = _mm_setzero_ps();
     let out_ptr = out.as_mut_ptr();
     let coeff_ptr = coeff_buf.as_ptr();
@@ -1156,7 +1158,7 @@ pub unsafe fn xscale_up_g(
     let mut coeff_idx = 0usize;
 
     for i in 0..width_in as usize {
-        smp = push_f_sse2(smp, *in_ptr.add(i) as f32 / 255.0);
+        smp = push_f_sse2(smp, *i2f.add(*in_ptr.add(i) as usize));
 
         let mut j = *border_ptr.add(i);
 
@@ -1331,6 +1333,8 @@ pub unsafe fn scale_down_g(
     border_buf: &[i32],
     coeffs_y: &[f32],
 ) {
+    let tables = srgb::tables();
+    let i2f = tables.i2f.as_ptr();
     let cy = _mm_loadu_ps(coeffs_y.as_ptr());
     let mut sum = _mm_setzero_ps();
     let in_ptr = input.as_ptr();
@@ -1342,12 +1346,39 @@ pub unsafe fn scale_down_g(
     let mut sy_idx = 0usize;
 
     for i in 0..out_width as usize {
-        for _ in 0..*border_ptr.add(i) {
-            let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
-            let sample = _mm_set1_ps(*in_ptr.add(in_idx) as f32 / 255.0);
-            sum = _mm_add_ps(_mm_mul_ps(cx, sample), sum);
-            in_idx += 1;
-            cx_idx += 4;
+        let border = *border_ptr.add(i);
+
+        if border >= 4 {
+            let mut sum2 = _mm_setzero_ps();
+            let mut j = 0;
+            while j + 1 < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let cx2 = _mm_loadu_ps(cx_ptr.add(cx_idx + 4));
+                let s0 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                let s1 = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx + 1) as usize));
+                sum = _mm_add_ps(_mm_mul_ps(cx, s0), sum);
+                sum2 = _mm_add_ps(_mm_mul_ps(cx2, s1), sum2);
+                in_idx += 2;
+                cx_idx += 8;
+                j += 2;
+            }
+            sum = _mm_add_ps(sum, sum2);
+            while j < border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum = _mm_add_ps(_mm_mul_ps(cx, s), sum);
+                in_idx += 1;
+                cx_idx += 4;
+                j += 1;
+            }
+        } else {
+            for _ in 0..border {
+                let cx = _mm_loadu_ps(cx_ptr.add(cx_idx));
+                let s = _mm_set1_ps(*i2f.add(*in_ptr.add(in_idx) as usize));
+                sum = _mm_add_ps(_mm_mul_ps(cx, s), sum);
+                in_idx += 1;
+                cx_idx += 4;
+            }
         }
 
         let sy = _mm_loadu_ps(sy_ptr.add(sy_idx));
