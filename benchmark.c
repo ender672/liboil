@@ -158,19 +158,24 @@ void do_bench(struct bench_image image, double ratio, int iterations)
 	printf("    to %4dx%4d %6.2fms\n", out_width, out_height, time_to_ms(t_min));
 }
 
+/* filter: 0=all, 1=downscale only (ratio<1), 2=upscale only (ratio>=1) */
 void do_bench_sizes(char *name, char *path, enum oil_colorspace cs,
-	int iterations)
+	int iterations, int filter)
 {
 	struct bench_image image;
+	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
+	size_t i, num_ratios;
 
 	image = load_png(path, cs);
 
 	printf("%dx%d %s\n", image.width, image.height, name);
 
-	do_bench(image, 0.01, iterations);
-	do_bench(image, 0.125, iterations);
-	do_bench(image, 0.8, iterations);
-	do_bench(image, 2.14, iterations);
+	num_ratios = sizeof(ratios)/sizeof(ratios[0]);
+	for (i=0; i<num_ratios; i++) {
+		if (filter == 1 && ratios[i] >= 1.0) continue;
+		if (filter == 2 && ratios[i] < 1.0) continue;
+		do_bench(image, ratios[i], iterations);
+	}
 
 	free(image.buffer);
 }
@@ -179,8 +184,8 @@ int main(int argc, char *argv[])
 {
 	clock_t t;
 	size_t i, num_spaces;
-	int iterations;
-	char *end;
+	int iterations, filter, arg_pos;
+	char *end, *path, *cs_arg;
 	unsigned long ul;
 
 	enum oil_colorspace spaces[] = {
@@ -207,10 +212,25 @@ int main(int argc, char *argv[])
 		"RGBX_NOGAMMA",
 	};
 
-	if (argc < 2 || argc > 3) {
-		fprintf(stderr, "Usage: %s <path> [colorspace]\n", argv[0]);
+	/* Parse --up/--down flag */
+	filter = 0;
+	arg_pos = 1;
+	if (argc > 1 && strcmp(argv[1], "--down") == 0) {
+		filter = 1;
+		arg_pos = 2;
+	} else if (argc > 1 && strcmp(argv[1], "--up") == 0) {
+		filter = 2;
+		arg_pos = 2;
+	}
+
+	if (argc - arg_pos < 1 || argc - arg_pos > 2) {
+		fprintf(stderr, "Usage: %s [--up|--down] <path> [colorspace]\n",
+			argv[0]);
 		return 1;
 	}
+
+	path = argv[arg_pos];
+	cs_arg = (argc - arg_pos == 2) ? argv[arg_pos + 1] : NULL;
 
 	iterations = 100;
 	if (getenv("OILITERATIONS")) {
@@ -230,15 +250,16 @@ int main(int argc, char *argv[])
 	printf("global init: %6.2fms\n", time_to_ms(t));
 
 	num_spaces = sizeof(spaces)/sizeof(spaces[0]);
-	if (argc == 2) {
+	if (!cs_arg) {
 		for (i=0; i<num_spaces; i++) {
-			do_bench_sizes(space_names[i], argv[1], spaces[i], iterations);
+			do_bench_sizes(space_names[i], path, spaces[i],
+				iterations, filter);
 		}
 		return 0;
 	}
 
 	for (i=0; i<num_spaces; i++) {
-		if (strcmp(space_names[i], argv[2]) == 0) {
+		if (strcmp(space_names[i], cs_arg) == 0) {
 			break;
 		}
 	}
@@ -248,6 +269,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	do_bench_sizes(space_names[i], argv[1], spaces[i], iterations);
+	do_bench_sizes(space_names[i], path, spaces[i], iterations, filter);
 	return 0;
 }
