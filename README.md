@@ -18,6 +18,7 @@ Features
  * Antialiasing - the interpolator is scaled when shrinking images.
  * Color space aware - liboil converts images to linear RGB for processing.
  * Pre-multiplied alpha - avoids artifacts when resizing with transparency.
+ * SIMD acceleration - SSE2 on x86\_64, NEON on AArch64 (ARM64).
 
 imgscale
 --------
@@ -63,6 +64,29 @@ Reference Documentation
 
 Refer to oil_resample.h for reference documentation.
 
+Building
+--------
+
+Dependencies: libjpeg, libpng, libm.
+
+On macOS with Homebrew:
+
+    brew install jpeg libpng
+
+The Makefile auto-detects the architecture and enables SIMD (SSE2 on x86\_64, NEON on ARM64). To disable SIMD:
+
+    make SIMD=none
+
+Per-machine compiler settings go in `local.mk` (gitignored, included by the Makefile). For example, on Apple Silicon:
+
+    CFLAGS += -O3 -mcpu=apple-m1
+    LDFLAGS += -L/opt/homebrew/lib
+    CFLAGS += -I/opt/homebrew/include
+
+For a generic AArch64 target:
+
+    CFLAGS += -O3 -march=armv8-a
+
 Testing
 -------
 
@@ -77,3 +101,11 @@ And run it with:
 It is recommended to run it with valgrind as well: 
 
     valgrind ./test
+
+Benchmarking
+------------
+
+    make benchmark
+    ./benchmark <path-to-rgba-png> [colorspace]
+
+Set `OILITERATIONS=N` to control iteration count (default 100).
