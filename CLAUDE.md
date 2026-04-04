@@ -16,15 +16,15 @@ make benchmark     # build perf benchmark
 make clean         # remove all build artifacts
 ```
 
-Compiler settings are in `local.mk` (included by Makefile). Toggle between `-O3` and `-O0 -g` there for release/debug builds.
+Compiler settings are in `local.mk` (gitignored, included by Makefile). Toggle between `-O3` and `-O0 -g` there for release/debug builds. On macOS/Homebrew, also add `-I/opt/homebrew/include` and `-L/opt/homebrew/lib` in `local.mk`.
 
-Dependencies: libjpeg, libpng, libm. Optional: SDL2 (`make sdltest`), GTK+3 (`make oilview`).
+Dependencies: libjpeg, libpng, libm. On macOS: `brew install jpeg libpng`. Optional: SDL2 (`make sdltest`), GTK+3 (`make oilview`).
 
 ## Architecture
 
 Three layers, all C with no external build system beyond make:
 
-- **Core resampler** (`oil_resample.h/c`): The scaling engine. `struct oil_scale` holds all state. Callers feed input scanlines with `oil_scale_in()` and read output with `oil_scale_out()`. Supports color spaces G, GA, RGB, RGBA, CMYK. Has optional SSE/SIMD paths (`oil_set_use_sse()`). The filter widens its tap count automatically when downsampling to prevent aliasing.
+- **Core resampler** (`oil_resample.h/c`): The scaling engine. `struct oil_scale` holds all state. Callers feed input scanlines with `oil_scale_in()` and read output with `oil_scale_out()`. Supports color spaces G, GA, RGB, RGBA, CMYK. Has optional SIMD paths: SSE2 on x86\_64 (`oil_resample_sse2.c`), NEON on AArch64 (`oil_resample_neon.c`). Dispatch is compile-time via `OIL_USE_SSE2`/`OIL_USE_NEON` in `oil_resample_internal.h`. Build with `SIMD=none` to disable. The filter widens its tap count automatically when downsampling to prevent aliasing.
 
 - **JPEG wrapper** (`oil_libjpeg.h/c`): Integrates with `libjpeg`'s `jpeg_decompress_struct` to feed scanlines into the core resampler.
 
