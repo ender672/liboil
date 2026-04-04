@@ -1611,9 +1611,11 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
-	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_c, sum_m, sum_y, sum_k;
+	float32x4_t coeffs_x, coeffs_x2, sum_c, sum_m, sum_y, sum_k;
 	float32x4_t sum_c2, sum_m2, sum_y2, sum_k2;
-	float32x4_t coeffs_y, sums_yv, sample_y;
+	float32x4_t coeffs_y, sums_yv;
+	float32x4_t pix1, pix2;
+	float32x4_t inv255 = vdupq_n_f32(1.0f / 255.0f);
 
 	coeffs_y = vld1q_f32(coeffs_y_f);
 
@@ -1630,32 +1632,28 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			sum_k2 = vdupq_n_f32(0.0f);
 
 			for (j=0; j+1<border_buf[i]; j+=2) {
+				uint8x8_t bytes;
+				uint16x8_t u16;
+
 				coeffs_x = vld1q_f32(coeffs_x_f);
 				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
 
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_c = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_c);
+				bytes = vld1_u8(in);
+				u16 = vmovl_u8(bytes);
+				pix1 = vmulq_f32(vcvtq_f32_u32(
+					vmovl_u16(vget_low_u16(u16))), inv255);
+				pix2 = vmulq_f32(vcvtq_f32_u32(
+					vmovl_u16(vget_high_u16(u16))), inv255);
 
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_m = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_m);
+				sum_c = vfmaq_laneq_f32(sum_c, coeffs_x, pix1, 0);
+				sum_m = vfmaq_laneq_f32(sum_m, coeffs_x, pix1, 1);
+				sum_y = vfmaq_laneq_f32(sum_y, coeffs_x, pix1, 2);
+				sum_k = vfmaq_laneq_f32(sum_k, coeffs_x, pix1, 3);
 
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_y = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_y);
-
-				sample_x = vdupq_n_f32(i2f_map[in[3]]);
-				sum_k = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_k);
-
-				sample_x = vdupq_n_f32(i2f_map[in[4]]);
-				sum_c2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_c2);
-
-				sample_x = vdupq_n_f32(i2f_map[in[5]]);
-				sum_m2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_m2);
-
-				sample_x = vdupq_n_f32(i2f_map[in[6]]);
-				sum_y2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_y2);
-
-				sample_x = vdupq_n_f32(i2f_map[in[7]]);
-				sum_k2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_k2);
+				sum_c2 = vfmaq_laneq_f32(sum_c2, coeffs_x2, pix2, 0);
+				sum_m2 = vfmaq_laneq_f32(sum_m2, coeffs_x2, pix2, 1);
+				sum_y2 = vfmaq_laneq_f32(sum_y2, coeffs_x2, pix2, 2);
+				sum_k2 = vfmaq_laneq_f32(sum_k2, coeffs_x2, pix2, 3);
 
 				in += 8;
 				coeffs_x_f += 8;
@@ -1664,17 +1662,15 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			for (; j<border_buf[i]; j++) {
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_c = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_c);
+				pix1 = vmulq_f32(vcvtq_f32_u32(vmovl_u16(
+					vget_low_u16(vmovl_u8(
+					vreinterpret_u8_u32(vld1_dup_u32(
+					(const uint32_t *)in)))))), inv255);
 
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_m = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_m);
-
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_y = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_y);
-
-				sample_x = vdupq_n_f32(i2f_map[in[3]]);
-				sum_k = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_k);
+				sum_c = vfmaq_laneq_f32(sum_c, coeffs_x, pix1, 0);
+				sum_m = vfmaq_laneq_f32(sum_m, coeffs_x, pix1, 1);
+				sum_y = vfmaq_laneq_f32(sum_y, coeffs_x, pix1, 2);
+				sum_k = vfmaq_laneq_f32(sum_k, coeffs_x, pix1, 3);
 
 				in += 4;
 				coeffs_x_f += 4;
@@ -1688,17 +1684,15 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			for (j=0; j<border_buf[i]; j++) {
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_c = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_c);
+				pix1 = vmulq_f32(vcvtq_f32_u32(vmovl_u16(
+					vget_low_u16(vmovl_u8(
+					vreinterpret_u8_u32(vld1_dup_u32(
+					(const uint32_t *)in)))))), inv255);
 
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_m = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_m);
-
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_y = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_y);
-
-				sample_x = vdupq_n_f32(i2f_map[in[3]]);
-				sum_k = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_k);
+				sum_c = vfmaq_laneq_f32(sum_c, coeffs_x, pix1, 0);
+				sum_m = vfmaq_laneq_f32(sum_m, coeffs_x, pix1, 1);
+				sum_y = vfmaq_laneq_f32(sum_y, coeffs_x, pix1, 2);
+				sum_k = vfmaq_laneq_f32(sum_k, coeffs_x, pix1, 3);
 
 				in += 4;
 				coeffs_x_f += 4;
@@ -1706,26 +1700,22 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 		}
 
 		sums_yv = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_c, 0));
-		sums_yv = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_yv);
+		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_c, 0);
 		vst1q_f32(sums_y_out, sums_yv);
 		sums_y_out += 4;
 
 		sums_yv = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_m, 0));
-		sums_yv = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_yv);
+		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_m, 0);
 		vst1q_f32(sums_y_out, sums_yv);
 		sums_y_out += 4;
 
 		sums_yv = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_y, 0));
-		sums_yv = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_yv);
+		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_y, 0);
 		vst1q_f32(sums_y_out, sums_yv);
 		sums_y_out += 4;
 
 		sums_yv = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_k, 0));
-		sums_yv = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_yv);
+		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_k, 0);
 		vst1q_f32(sums_y_out, sums_yv);
 		sums_y_out += 4;
 
