@@ -528,6 +528,74 @@ static void test_scale_all_permutations(int dim_a, int dim_b)
 	test_scale_each_cs(dim_b, dim_a);
 }
 
+static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
+{
+	int i, j, in_line, out_row_stride;
+	struct oil_scale os_discard;
+	unsigned char **input_image, **normal_output, *discard_line;
+
+	in_line = OIL_CMP(cs) * in_dim;
+	out_row_stride = OIL_CMP(cs) * out_dim;
+
+	input_image = alloc_2d_uchar(in_line, in_dim);
+	for (i=0; i<in_dim; i++) {
+		fill_rand8(input_image[i], in_line);
+	}
+
+	/* normal scale for reference */
+	normal_output = alloc_2d_uchar(out_row_stride, out_dim);
+	do_oil_scale(input_image, in_dim, in_dim, normal_output, out_dim,
+		out_dim, cs);
+
+	/* scale with every other line discarded */
+	discard_line = malloc(out_row_stride);
+	oil_scale_init(&os_discard, in_dim, out_dim, in_dim, out_dim, cs);
+	in_line = 0;
+	for (i=0; i<out_dim; i++) {
+		while(oil_scale_slots(&os_discard)) {
+			assert(oil_scale_in(&os_discard, input_image[in_line++]) == 0);
+		}
+		if (i % 2 == 0) {
+			oil_scale_out(&os_discard, discard_line);
+			for (j=0; j<out_row_stride; j++) {
+				assert(discard_line[j] == normal_output[i][j]);
+			}
+		} else {
+			oil_scale_out_discard(&os_discard);
+		}
+	}
+	oil_scale_free(&os_discard);
+
+	/* verify oil_scale_in returns -1 when output is ready */
+	oil_scale_init(&os_discard, in_dim, out_dim, in_dim, out_dim, cs);
+	in_line = 0;
+	while(oil_scale_slots(&os_discard)) {
+		assert(oil_scale_in(&os_discard, input_image[in_line++]) == 0);
+	}
+	assert(oil_scale_in(&os_discard, input_image[0]) == -1);
+	oil_scale_free(&os_discard);
+
+	free(discard_line);
+	free_2d_uchar(normal_output, out_dim);
+	free_2d_uchar(input_image, in_dim);
+}
+
+static void test_out_discard_all(void)
+{
+	/* downscale */
+	test_out_discard(100, 50, OIL_CS_G);
+	test_out_discard(100, 50, OIL_CS_RGB);
+	test_out_discard(100, 50, OIL_CS_RGBA);
+	test_out_discard(100, 50, OIL_CS_CMYK);
+	test_out_discard(100, 50, OIL_CS_GA);
+	/* upscale */
+	test_out_discard(50, 100, OIL_CS_G);
+	test_out_discard(50, 100, OIL_CS_RGB);
+	test_out_discard(50, 100, OIL_CS_RGBA);
+	test_out_discard(50, 100, OIL_CS_CMYK);
+	test_out_discard(50, 100, OIL_CS_GA);
+}
+
 static void test_scale_all(void)
 {
 	test_scale_all_permutations(5, 1);
@@ -547,6 +615,7 @@ int main(void)
 	oil_global_init();
 	test_scale_all();
 	test_scale_catrom_extremes();
+	test_out_discard_all();
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");
 	return 0;

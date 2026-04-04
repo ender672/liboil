@@ -1410,13 +1410,17 @@ void _oil_scale_in(struct oil_scale *os, unsigned char *in)
 	os->in_pos++;
 }
 
-void oil_scale_in(struct oil_scale *os, unsigned char *in)
+int oil_scale_in(struct oil_scale *os, unsigned char *in)
 {
+	if (oil_scale_slots(os) == 0) {
+		return -1;
+	}
 	if (os->out_width > os->in_width) {
 		up_scale_in(os, in);
 	} else {
 		down_scale_in(os, in);
 	}
+	return 0;
 }
 
 void _oil_scale_out(struct oil_scale *os, unsigned char *out)
@@ -1442,6 +1446,22 @@ void oil_scale_out(struct oil_scale *os, unsigned char *out)
 		}
 		yscale_up(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
 			os->cs);
+		os->borders_y[os->in_pos - 1] -= 1;
+	}
+
+	os->out_pos++;
+}
+
+void oil_scale_out_discard(struct oil_scale *os)
+{
+	int i, sl_len;
+
+	if (os->out_height <= os->in_height) {
+		sl_len = os->out_width * OIL_CMP(os->cs);
+		for (i=0; i<sl_len; i++) {
+			shift_left_f(os->sums_y + i * 4);
+		}
+	} else {
 		os->borders_y[os->in_pos - 1] -= 1;
 	}
 
