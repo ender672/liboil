@@ -170,15 +170,21 @@ int oil_scale_in(struct oil_scale *os, unsigned char *in);
  * scanline.
  * @os: Pointer to the scaler struct.
  * @out: Pointer to the buffer where the output scanline will be written.
+ *
+ * Returns 0 on success.
+ * Returns -1 if not enough input scanlines have been fed yet.
  */
-void oil_scale_out(struct oil_scale *os, unsigned char *out);
+int oil_scale_out(struct oil_scale *os, unsigned char *out);
 
 /**
  * Discard the next output scanline without producing it. Advances internal
  * state so that input feeding can continue.
  * @os: Pointer to the scaler struct.
+ *
+ * Returns 0 on success.
+ * Returns -1 if not enough input scanlines have been fed yet.
  */
-void oil_scale_out_discard(struct oil_scale *os);
+int oil_scale_out_discard(struct oil_scale *os);
 
 /**
  * Calculate an output ratio that preserves the input aspect ratio.

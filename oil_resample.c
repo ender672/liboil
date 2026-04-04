@@ -1432,10 +1432,14 @@ void _oil_scale_out(struct oil_scale *os, unsigned char *out)
 	os->out_pos++;
 }
 
-void oil_scale_out(struct oil_scale *os, unsigned char *out)
+int oil_scale_out(struct oil_scale *os, unsigned char *out)
 {
 	int i, sl_len;
 	float *in[4];
+
+	if (oil_scale_slots(os) != 0) {
+		return -1;
+	}
 
 	if (os->out_height <= os->in_height) {
 		yscale_out(os->sums_y, os->out_width, out, os->cs);
@@ -1450,11 +1454,16 @@ void oil_scale_out(struct oil_scale *os, unsigned char *out)
 	}
 
 	os->out_pos++;
+	return 0;
 }
 
-void oil_scale_out_discard(struct oil_scale *os)
+int oil_scale_out_discard(struct oil_scale *os)
 {
 	int i, sl_len;
+
+	if (oil_scale_slots(os) != 0) {
+		return -1;
+	}
 
 	if (os->out_height <= os->in_height) {
 		sl_len = os->out_width * OIL_CMP(os->cs);
@@ -1466,6 +1475,7 @@ void oil_scale_out_discard(struct oil_scale *os)
 	}
 
 	os->out_pos++;
+	return 0;
 }
 
 int oil_fix_ratio(int src_width, int src_height, int *out_width,

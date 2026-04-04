@@ -596,6 +596,70 @@ static void test_out_discard_all(void)
 	test_out_discard(50, 100, OIL_CS_GA);
 }
 
+static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
+{
+	struct oil_scale os;
+	int out_row_stride;
+	unsigned char *buf;
+
+	out_row_stride = OIL_CMP(cs) * out_dim;
+	buf = malloc(out_row_stride);
+
+	/* calling oil_scale_out before any input should fail */
+	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
+	assert(oil_scale_out(&os, buf) == -1);
+	assert(oil_scale_out_discard(&os) == -1);
+
+	/* feed one input line when more are needed, should still fail */
+	if (oil_scale_slots(&os) > 1) {
+		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
+		assert(oil_scale_in(&os, in_line) == 0);
+		assert(oil_scale_slots(&os) > 0);
+		assert(oil_scale_out(&os, buf) == -1);
+		assert(oil_scale_out_discard(&os) == -1);
+		free(in_line);
+	}
+	oil_scale_free(&os);
+
+	/* feed enough input, then oil_scale_out should succeed */
+	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
+	while (oil_scale_slots(&os)) {
+		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
+		assert(oil_scale_in(&os, in_line) == 0);
+		free(in_line);
+	}
+	assert(oil_scale_out(&os, buf) == 0);
+	oil_scale_free(&os);
+
+	/* same but with discard */
+	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
+	while (oil_scale_slots(&os)) {
+		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
+		assert(oil_scale_in(&os, in_line) == 0);
+		free(in_line);
+	}
+	assert(oil_scale_out_discard(&os) == 0);
+	oil_scale_free(&os);
+
+	free(buf);
+}
+
+static void test_out_not_ready_all(void)
+{
+	/* downscale */
+	test_out_not_ready(100, 50, OIL_CS_G);
+	test_out_not_ready(100, 50, OIL_CS_RGB);
+	test_out_not_ready(100, 50, OIL_CS_RGBA);
+	test_out_not_ready(100, 50, OIL_CS_CMYK);
+	test_out_not_ready(100, 50, OIL_CS_GA);
+	/* upscale */
+	test_out_not_ready(50, 100, OIL_CS_G);
+	test_out_not_ready(50, 100, OIL_CS_RGB);
+	test_out_not_ready(50, 100, OIL_CS_RGBA);
+	test_out_not_ready(50, 100, OIL_CS_CMYK);
+	test_out_not_ready(50, 100, OIL_CS_GA);
+}
+
 static void test_scale_all(void)
 {
 	test_scale_all_permutations(5, 1);
@@ -616,6 +680,7 @@ int main(void)
 	test_scale_all();
 	test_scale_catrom_extremes();
 	test_out_discard_all();
+	test_out_not_ready_all();
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");
 	return 0;
