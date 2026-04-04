@@ -292,10 +292,10 @@ void oil_yscale_out_rgba_neon(float *sums, int width, unsigned char *out)
 void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
 {
 	int i;
-	float32x4_t scale_v, vals, f0, f1, f2, f3;
+	float32x4_t scale_v, vals, vals2, f0, f1, f2, f3, g0, g1, g2, g3;
 	float32x4_t zero, one, half;
-	int32x4_t idx;
-	int16x4_t narrowed16;
+	int32x4_t idx, idx2;
+	int16x4_t narrowed16, narrowed16b;
 	uint8x8_t narrowed8;
 
 	scale_v = vdupq_n_f32(255.0f);
@@ -303,7 +303,44 @@ void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
 	one = vdupq_n_f32(1.0f);
 	half = vdupq_n_f32(0.5f);
 
-	for (i=0; i+3<len; i+=4) {
+	for (i=0; i+7<len; i+=8) {
+		f0 = vld1q_f32(sums);
+		f1 = vld1q_f32(sums + 4);
+		f2 = vld1q_f32(sums + 8);
+		f3 = vld1q_f32(sums + 12);
+		g0 = vld1q_f32(sums + 16);
+		g1 = vld1q_f32(sums + 20);
+		g2 = vld1q_f32(sums + 24);
+		g3 = vld1q_f32(sums + 28);
+
+		vals = gather_lane0(f0, f1, f2, f3);
+		vals2 = gather_lane0(g0, g1, g2, g3);
+
+		vals = vminq_f32(vmaxq_f32(vals, zero), one);
+		vals2 = vminq_f32(vmaxq_f32(vals2, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
+		idx2 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals2, scale_v), half));
+
+		narrowed16 = vqmovn_s32(idx);
+		narrowed16b = vqmovn_s32(idx2);
+		narrowed8 = vqmovun_s16(vcombine_s16(narrowed16, narrowed16b));
+
+		/* Store 8 bytes */
+		vst1_u8(&out[i], narrowed8);
+
+		vst1q_f32(sums,      shift_right_1(f0));
+		vst1q_f32(sums + 4,  shift_right_1(f1));
+		vst1q_f32(sums + 8,  shift_right_1(f2));
+		vst1q_f32(sums + 12, shift_right_1(f3));
+		vst1q_f32(sums + 16, shift_right_1(g0));
+		vst1q_f32(sums + 20, shift_right_1(g1));
+		vst1q_f32(sums + 24, shift_right_1(g2));
+		vst1q_f32(sums + 28, shift_right_1(g3));
+
+		sums += 32;
+	}
+
+	for (; i+3<len; i+=4) {
 		f0 = vld1q_f32(sums);
 		f1 = vld1q_f32(sums + 4);
 		f2 = vld1q_f32(sums + 8);
@@ -311,15 +348,12 @@ void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
 
 		vals = gather_lane0(f0, f1, f2, f3);
 
-		/* clamp to [0, 1] then scale to [0, 255] */
 		vals = vminq_f32(vmaxq_f32(vals, zero), one);
 		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
 
-		/* Pack 32-bit ints to 16-bit then to 8-bit */
 		narrowed16 = vqmovn_s32(idx);
 		narrowed8 = vqmovun_s16(vcombine_s16(narrowed16, narrowed16));
 
-		/* Store 4 bytes */
 		vst1_lane_u32((uint32_t *)&out[i],
 			vreinterpret_u32_u8(narrowed8), 0);
 
