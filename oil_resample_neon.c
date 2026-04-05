@@ -257,19 +257,57 @@ void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
 void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out)
 {
 	int i;
-	float32x4_t scale_v, vals, f0, f1, f2;
-	int32x4_t idx;
+	float32x4_t scale_v, vals, vals2, f0, f1, f2, g0, g1, g2;
+	int32x4_t idx, idx2;
 	unsigned char *lut;
 
 	lut = l2s_map;
 	scale_v = vdupq_n_f32((float)(l2s_len - 1));
 
-	for (i=0; i<width; i++) {
+	for (i=0; i+1<width; i+=2) {
+		f0 = vld1q_f32(sums);
+		f1 = vld1q_f32(sums + 4);
+		f2 = vld1q_f32(sums + 8);
+		g0 = vld1q_f32(sums + 12);
+		g1 = vld1q_f32(sums + 16);
+		g2 = vld1q_f32(sums + 20);
+
+		vals = vsetq_lane_f32(vgetq_lane_f32(f0, 0), vdupq_n_f32(0), 0);
+		vals = vsetq_lane_f32(vgetq_lane_f32(f1, 0), vals, 1);
+		vals = vsetq_lane_f32(vgetq_lane_f32(f2, 0), vals, 2);
+
+		vals2 = vsetq_lane_f32(vgetq_lane_f32(g0, 0), vdupq_n_f32(0), 0);
+		vals2 = vsetq_lane_f32(vgetq_lane_f32(g1, 0), vals2, 1);
+		vals2 = vsetq_lane_f32(vgetq_lane_f32(g2, 0), vals2, 2);
+
+		idx = vcvtq_s32_f32(vmulq_f32(vals, scale_v));
+		idx2 = vcvtq_s32_f32(vmulq_f32(vals2, scale_v));
+
+		out[0] = lut[vgetq_lane_s32(idx, 0)];
+		out[1] = lut[vgetq_lane_s32(idx, 1)];
+		out[2] = lut[vgetq_lane_s32(idx, 2)];
+		out[3] = 255;
+		out[4] = lut[vgetq_lane_s32(idx2, 0)];
+		out[5] = lut[vgetq_lane_s32(idx2, 1)];
+		out[6] = lut[vgetq_lane_s32(idx2, 2)];
+		out[7] = 255;
+
+		vst1q_f32(sums,      shift_right_1(f0));
+		vst1q_f32(sums + 4,  shift_right_1(f1));
+		vst1q_f32(sums + 8,  shift_right_1(f2));
+		vst1q_f32(sums + 12, shift_right_1(g0));
+		vst1q_f32(sums + 16, shift_right_1(g1));
+		vst1q_f32(sums + 20, shift_right_1(g2));
+
+		sums += 24;
+		out += 8;
+	}
+
+	for (; i<width; i++) {
 		f0 = vld1q_f32(sums);
 		f1 = vld1q_f32(sums + 4);
 		f2 = vld1q_f32(sums + 8);
 
-		/* Gather lane 0 from f0, f1, f2 into vals (lane 3 unused) */
 		vals = vsetq_lane_f32(vgetq_lane_f32(f0, 0), vdupq_n_f32(0), 0);
 		vals = vsetq_lane_f32(vgetq_lane_f32(f1, 0), vals, 1);
 		vals = vsetq_lane_f32(vgetq_lane_f32(f2, 0), vals, 2);
