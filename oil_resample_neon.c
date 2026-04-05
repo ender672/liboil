@@ -1370,40 +1370,48 @@ void oil_xscale_up_rgbx_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	float32x4_t smp_r, smp_g, smp_b, smp_x;
+	float32x4_t smp0, smp1, smp2, smp3;
+	float *sl;
 
-	smp_r = vdupq_n_f32(0.0f);
-	smp_g = vdupq_n_f32(0.0f);
-	smp_b = vdupq_n_f32(0.0f);
-	smp_x = vdupq_n_f32(0.0f);
+	sl = s2l_map;
+	smp0 = vdupq_n_f32(0.0f);
+	smp1 = vdupq_n_f32(0.0f);
+	smp2 = vdupq_n_f32(0.0f);
+	smp3 = vdupq_n_f32(0.0f);
 
 	for (i=0; i<width_in; i++) {
-		smp_r = push_f(smp_r, s2l_map[in[0]]);
-		smp_g = push_f(smp_g, s2l_map[in[1]]);
-		smp_b = push_f(smp_b, s2l_map[in[2]]);
-		smp_x = push_f(smp_x, 1.0f);
+		float32x4_t pixel;
+
+		/* Shift tap window: oldest tap falls off */
+		smp0 = smp1;
+		smp1 = smp2;
+		smp2 = smp3;
+
+		/* New pixel: [R_linear, G_linear, B_linear, 1.0] */
+		pixel = vsetq_lane_f32(sl[in[0]], vdupq_n_f32(1.0f), 0);
+		pixel = vsetq_lane_f32(sl[in[1]], pixel, 1);
+		pixel = vsetq_lane_f32(sl[in[2]], pixel, 2);
+		smp3 = pixel;
 
 		j = border_buf[i];
 
 		/* process pairs of outputs */
 		while (j >= 2) {
-			float32x4_t c0 = vld1q_f32(coeff_buf);
-			float32x4_t c1 = vld1q_f32(coeff_buf + 4);
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result0, result1;
 
-			float32x4_t t2_r = dot2(smp_r, c0, c1);
-			float32x4_t t2_g = dot2(smp_g, c0, c1);
-			float32x4_t t2_b = dot2(smp_b, c0, c1);
-			float32x4_t t2_x = dot2(smp_x, c0, c1);
+			result0 = vmulq_laneq_f32(smp0, co, 0);
+			result0 = vfmaq_laneq_f32(result0, smp1, co, 1);
+			result0 = vfmaq_laneq_f32(result0, smp2, co, 2);
+			result0 = vfmaq_laneq_f32(result0, smp3, co, 3);
+			vst1q_f32(out, result0);
 
-			/* Store interleaved: [R0, G0, B0, X0, R1, G1, B1, X1] */
-			out[0] = vgetq_lane_f32(t2_r, 0);
-			out[1] = vgetq_lane_f32(t2_g, 0);
-			out[2] = vgetq_lane_f32(t2_b, 0);
-			out[3] = vgetq_lane_f32(t2_x, 0);
-			out[4] = vgetq_lane_f32(t2_r, 1);
-			out[5] = vgetq_lane_f32(t2_g, 1);
-			out[6] = vgetq_lane_f32(t2_b, 1);
-			out[7] = vgetq_lane_f32(t2_x, 1);
+			co = vld1q_f32(coeff_buf + 4);
+			result1 = vmulq_laneq_f32(smp0, co, 0);
+			result1 = vfmaq_laneq_f32(result1, smp1, co, 1);
+			result1 = vfmaq_laneq_f32(result1, smp2, co, 2);
+			result1 = vfmaq_laneq_f32(result1, smp3, co, 3);
+			vst1q_f32(out + 4, result1);
 
 			out += 8;
 			coeff_buf += 8;
@@ -1412,12 +1420,14 @@ void oil_xscale_up_rgbx_neon(unsigned char *in, int width_in, float *out,
 
 		/* process remaining single output */
 		if (j) {
-			float32x4_t coeffs = vld1q_f32(coeff_buf);
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result;
 
-			out[0] = hsum_f32(vmulq_f32(smp_r, coeffs));
-			out[1] = hsum_f32(vmulq_f32(smp_g, coeffs));
-			out[2] = hsum_f32(vmulq_f32(smp_b, coeffs));
-			out[3] = hsum_f32(vmulq_f32(smp_x, coeffs));
+			result = vmulq_laneq_f32(smp0, co, 0);
+			result = vfmaq_laneq_f32(result, smp1, co, 1);
+			result = vfmaq_laneq_f32(result, smp2, co, 2);
+			result = vfmaq_laneq_f32(result, smp3, co, 3);
+			vst1q_f32(out, result);
 
 			out += 4;
 			coeff_buf += 4;
