@@ -621,17 +621,19 @@ void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 
 		v0 = vld1q_f32(in[0] + i + 4);
 		v1 = vld1q_f32(in[1] + i + 4);
 		v2 = vld1q_f32(in[2] + i + 4);
 		v3 = vld1q_f32(in[3] + i + 4);
-		sum2 = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
 
 		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
 
@@ -681,9 +683,10 @@ void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 
 		{
 			float a0 = vgetq_lane_f32(sum, 1);
