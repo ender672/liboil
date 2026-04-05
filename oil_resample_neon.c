@@ -1276,8 +1276,9 @@ void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 {
 	int i, j;
 	float alpha;
-	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_g, sum_a;
-	float32x4_t sum_g2, sum_a2;
+	float32x4_t coeffs_x, coeffs_x2, coeffs_x3, coeffs_x4;
+	float32x4_t sample_x, sum_g, sum_a;
+	float32x4_t sum_g2, sum_a2, sum_g3, sum_a3, sum_g4, sum_a4;
 	float32x4_t coeffs_y, sums_y, sample_y;
 
 	coeffs_y = vld1q_f32(coeffs_y_f);
@@ -1286,7 +1287,64 @@ void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 	sum_a = vdupq_n_f32(0.0f);
 
 	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
+		if (border_buf[i] >= 8) {
+			sum_g2 = vdupq_n_f32(0.0f);
+			sum_a2 = vdupq_n_f32(0.0f);
+			sum_g3 = vdupq_n_f32(0.0f);
+			sum_a3 = vdupq_n_f32(0.0f);
+			sum_g4 = vdupq_n_f32(0.0f);
+			sum_a4 = vdupq_n_f32(0.0f);
+
+			for (j=0; j+3<border_buf[i]; j+=4) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
+				coeffs_x3 = vld1q_f32(coeffs_x_f + 8);
+				coeffs_x4 = vld1q_f32(coeffs_x_f + 12);
+
+				alpha = i2f_map[in[1]];
+				sample_x = vdupq_n_f32(i2f_map[in[0]] * alpha);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
+				sample_x = vdupq_n_f32(alpha);
+				sum_a = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_a);
+
+				alpha = i2f_map[in[3]];
+				sample_x = vdupq_n_f32(i2f_map[in[2]] * alpha);
+				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
+				sample_x = vdupq_n_f32(alpha);
+				sum_a2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_a2);
+
+				alpha = i2f_map[in[5]];
+				sample_x = vdupq_n_f32(i2f_map[in[4]] * alpha);
+				sum_g3 = vaddq_f32(vmulq_f32(coeffs_x3, sample_x), sum_g3);
+				sample_x = vdupq_n_f32(alpha);
+				sum_a3 = vaddq_f32(vmulq_f32(coeffs_x3, sample_x), sum_a3);
+
+				alpha = i2f_map[in[7]];
+				sample_x = vdupq_n_f32(i2f_map[in[6]] * alpha);
+				sum_g4 = vaddq_f32(vmulq_f32(coeffs_x4, sample_x), sum_g4);
+				sample_x = vdupq_n_f32(alpha);
+				sum_a4 = vaddq_f32(vmulq_f32(coeffs_x4, sample_x), sum_a4);
+
+				in += 8;
+				coeffs_x_f += 16;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+				alpha = i2f_map[in[1]];
+				sample_x = vdupq_n_f32(i2f_map[in[0]] * alpha);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
+				sample_x = vdupq_n_f32(alpha);
+				sum_a = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_a);
+				in += 2;
+				coeffs_x_f += 4;
+			}
+
+			sum_g = vaddq_f32(vaddq_f32(sum_g, sum_g2),
+				vaddq_f32(sum_g3, sum_g4));
+			sum_a = vaddq_f32(vaddq_f32(sum_a, sum_a2),
+				vaddq_f32(sum_a3, sum_a4));
+		} else if (border_buf[i] >= 4) {
 			sum_g2 = vdupq_n_f32(0.0f);
 			sum_a2 = vdupq_n_f32(0.0f);
 
