@@ -1543,28 +1543,20 @@ void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
 
 		/* process pairs of outputs */
 		while (j >= 2) {
-			float32x4_t coeffs0 = vld1q_f32(coeff_buf);
-			float32x4_t coeffs1 = vld1q_f32(coeff_buf + 4);
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result0, result1;
 
-			/* First output: broadcast each coeff and multiply */
-			float32x4_t result0 = vaddq_f32(
-				vaddq_f32(
-					vmulq_f32(smp0, vdupq_laneq_f32(coeffs0, 0)),
-					vmulq_f32(smp1, vdupq_laneq_f32(coeffs0, 1))),
-				vaddq_f32(
-					vmulq_f32(smp2, vdupq_laneq_f32(coeffs0, 2)),
-					vmulq_f32(smp3, vdupq_laneq_f32(coeffs0, 3))));
-
-			/* Second output */
-			float32x4_t result1 = vaddq_f32(
-				vaddq_f32(
-					vmulq_f32(smp0, vdupq_laneq_f32(coeffs1, 0)),
-					vmulq_f32(smp1, vdupq_laneq_f32(coeffs1, 1))),
-				vaddq_f32(
-					vmulq_f32(smp2, vdupq_laneq_f32(coeffs1, 2)),
-					vmulq_f32(smp3, vdupq_laneq_f32(coeffs1, 3))));
-
+			result0 = vmulq_laneq_f32(smp0, co, 0);
+			result0 = vfmaq_laneq_f32(result0, smp1, co, 1);
+			result0 = vfmaq_laneq_f32(result0, smp2, co, 2);
+			result0 = vfmaq_laneq_f32(result0, smp3, co, 3);
 			vst1q_f32(out, result0);
+
+			co = vld1q_f32(coeff_buf + 4);
+			result1 = vmulq_laneq_f32(smp0, co, 0);
+			result1 = vfmaq_laneq_f32(result1, smp1, co, 1);
+			result1 = vfmaq_laneq_f32(result1, smp2, co, 2);
+			result1 = vfmaq_laneq_f32(result1, smp3, co, 3);
 			vst1q_f32(out + 4, result1);
 
 			out += 8;
@@ -1574,16 +1566,13 @@ void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
 
 		/* process remaining single output */
 		if (j) {
-			float32x4_t coeffs = vld1q_f32(coeff_buf);
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result;
 
-			float32x4_t result = vaddq_f32(
-				vaddq_f32(
-					vmulq_f32(smp0, vdupq_laneq_f32(coeffs, 0)),
-					vmulq_f32(smp1, vdupq_laneq_f32(coeffs, 1))),
-				vaddq_f32(
-					vmulq_f32(smp2, vdupq_laneq_f32(coeffs, 2)),
-					vmulq_f32(smp3, vdupq_laneq_f32(coeffs, 3))));
-
+			result = vmulq_laneq_f32(smp0, co, 0);
+			result = vfmaq_laneq_f32(result, smp1, co, 1);
+			result = vfmaq_laneq_f32(result, smp2, co, 2);
+			result = vfmaq_laneq_f32(result, smp3, co, 3);
 			vst1q_f32(out, result);
 
 			out += 4;
