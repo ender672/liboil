@@ -2406,10 +2406,10 @@ void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum;
+	__m128 v0, v1, v2, v3, sum_a, sum_b;
 	__m128 scale, half, one, zero;
 	__m128 alpha_v, clamped;
-	__m128i idx, packed;
+	__m128i idx_a, idx_b, packed;
 	float alpha;
 
 	c0 = _mm_set1_ps(coeffs[0]);
@@ -2421,37 +2421,90 @@ void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
 
-	for (i=0; i<len; i+=4) {
+	for (i=0; i+7<len; i+=8) {
+		/* Pixel 1 */
 		v0 = _mm_loadu_ps(in[0] + i);
 		v1 = _mm_loadu_ps(in[1] + i);
 		v2 = _mm_loadu_ps(in[2] + i);
 		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
+		sum_a = _mm_add_ps(
 			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
 			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 
-		/* Clamp alpha to [0, 1] */
-		alpha_v = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 3, 3));
+		/* Pixel 2 */
+		v0 = _mm_loadu_ps(in[0] + i + 4);
+		v1 = _mm_loadu_ps(in[1] + i + 4);
+		v2 = _mm_loadu_ps(in[2] + i + 4);
+		v3 = _mm_loadu_ps(in[3] + i + 4);
+		sum_b = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		/* Unpremultiply pixel 1 */
+		alpha_v = _mm_shuffle_ps(sum_a, sum_a, _MM_SHUFFLE(3, 3, 3, 3));
 		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
 		alpha = _mm_cvtss_f32(alpha_v);
-
-		/* Divide RGB by alpha (skip if alpha == 0) */
 		if (alpha != 0) {
-			sum = _mm_mul_ps(sum, _mm_rcp_ps(alpha_v));
+			sum_a = _mm_mul_ps(sum_a, _mm_rcp_ps(alpha_v));
 		}
-
-		/* Clamp to [0, 1], replace alpha with clamped alpha */
-		clamped = _mm_min_ps(_mm_max_ps(sum, zero), one);
+		clamped = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
 		{
 			__m128 hi = _mm_shuffle_ps(clamped, alpha_v,
 				_MM_SHUFFLE(0, 0, 2, 2));
 			clamped = _mm_shuffle_ps(clamped, hi,
 				_MM_SHUFFLE(2, 0, 1, 0));
 		}
+		idx_a = _mm_cvttps_epi32(_mm_add_ps(
+			_mm_mul_ps(clamped, scale), half));
 
-		/* Scale to [0, 255], round, pack to bytes */
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(clamped, scale), half));
-		packed = _mm_packs_epi32(idx, idx);
+		/* Unpremultiply pixel 2 */
+		alpha_v = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(3, 3, 3, 3));
+		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+		alpha = _mm_cvtss_f32(alpha_v);
+		if (alpha != 0) {
+			sum_b = _mm_mul_ps(sum_b, _mm_rcp_ps(alpha_v));
+		}
+		clamped = _mm_min_ps(_mm_max_ps(sum_b, zero), one);
+		{
+			__m128 hi = _mm_shuffle_ps(clamped, alpha_v,
+				_MM_SHUFFLE(0, 0, 2, 2));
+			clamped = _mm_shuffle_ps(clamped, hi,
+				_MM_SHUFFLE(2, 0, 1, 0));
+		}
+		idx_b = _mm_cvttps_epi32(_mm_add_ps(
+			_mm_mul_ps(clamped, scale), half));
+
+		/* Pack both pixels to bytes and store 8 bytes */
+		packed = _mm_packs_epi32(idx_a, idx_b);
+		packed = _mm_packus_epi16(packed, packed);
+		_mm_storel_epi64((__m128i *)(out + i), packed);
+	}
+
+	for (; i<len; i+=4) {
+		v0 = _mm_loadu_ps(in[0] + i);
+		v1 = _mm_loadu_ps(in[1] + i);
+		v2 = _mm_loadu_ps(in[2] + i);
+		v3 = _mm_loadu_ps(in[3] + i);
+		sum_a = _mm_add_ps(
+			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+
+		alpha_v = _mm_shuffle_ps(sum_a, sum_a, _MM_SHUFFLE(3, 3, 3, 3));
+		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+		alpha = _mm_cvtss_f32(alpha_v);
+		if (alpha != 0) {
+			sum_a = _mm_mul_ps(sum_a, _mm_rcp_ps(alpha_v));
+		}
+		clamped = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
+		{
+			__m128 hi = _mm_shuffle_ps(clamped, alpha_v,
+				_MM_SHUFFLE(0, 0, 2, 2));
+			clamped = _mm_shuffle_ps(clamped, hi,
+				_MM_SHUFFLE(2, 0, 1, 0));
+		}
+		idx_a = _mm_cvttps_epi32(_mm_add_ps(
+			_mm_mul_ps(clamped, scale), half));
+		packed = _mm_packs_epi32(idx_a, idx_a);
 		packed = _mm_packus_epi16(packed, packed);
 		*(int *)(out + i) = _mm_cvtsi128_si32(packed);
 	}
