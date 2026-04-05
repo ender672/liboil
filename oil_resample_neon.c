@@ -871,12 +871,12 @@ void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 {
 	int i;
 	float32x4_t c0, c1, c2, c3;
-	float32x4_t v0, v1, v2, v3, sum;
+	float32x4_t v0, v1, v2, v3, sum, sum2;
 	float32x4_t scale_v, one, zero;
 	float32x4_t alpha_v, clamped;
 	int32x4_t idx;
 	unsigned char *lut;
-	float alpha;
+	float alpha, alpha2;
 
 	c0 = vdupq_n_f32(coeffs[0]);
 	c1 = vdupq_n_f32(coeffs[1]);
@@ -887,7 +887,8 @@ void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 	one = vdupq_n_f32(1.0f);
 	zero = vdupq_n_f32(0.0f);
 
-	for (i=0; i<len; i+=4) {
+	for (i=0; i+7<len; i+=8) {
+		/* Pixel 0 */
 		v0 = vld1q_f32(in[0] + i);
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
@@ -897,21 +898,66 @@ void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 		sum = vfmaq_f32(sum, c2, v2);
 		sum = vfmaq_f32(sum, c3, v3);
 
-		/* Clamp alpha to [0, 1] */
+		/* Pixel 1 */
+		v0 = vld1q_f32(in[0] + i + 4);
+		v1 = vld1q_f32(in[1] + i + 4);
+		v2 = vld1q_f32(in[2] + i + 4);
+		v3 = vld1q_f32(in[3] + i + 4);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+
+		/* Alpha for pixel 0 */
 		alpha = vgetq_lane_f32(sum, 3);
 		if (alpha > 1.0f) alpha = 1.0f;
 		else if (alpha < 0.0f) alpha = 0.0f;
-		alpha_v = vdupq_n_f32(alpha);
-
-		/* Divide RGB by alpha (skip if alpha == 0) */
 		if (alpha != 0) {
+			alpha_v = vdupq_n_f32(alpha);
 			sum = vdivq_f32(sum, alpha_v);
 		}
-
-		/* Clamp to [0, 1] and compute l2s_map indices */
 		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
 		idx = vcvtq_s32_f32(vmulq_f32(clamped, scale_v));
+		out[i]   = lut[vgetq_lane_s32(idx, 0)];
+		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
+		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
+		out[i+3] = (int)(alpha * 255.0f + 0.5f);
 
+		/* Alpha for pixel 1 */
+		alpha2 = vgetq_lane_f32(sum2, 3);
+		if (alpha2 > 1.0f) alpha2 = 1.0f;
+		else if (alpha2 < 0.0f) alpha2 = 0.0f;
+		if (alpha2 != 0) {
+			alpha_v = vdupq_n_f32(alpha2);
+			sum2 = vdivq_f32(sum2, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(sum2, zero), one);
+		idx = vcvtq_s32_f32(vmulq_f32(clamped, scale_v));
+		out[i+4] = lut[vgetq_lane_s32(idx, 0)];
+		out[i+5] = lut[vgetq_lane_s32(idx, 1)];
+		out[i+6] = lut[vgetq_lane_s32(idx, 2)];
+		out[i+7] = (int)(alpha2 * 255.0f + 0.5f);
+	}
+
+	for (; i<len; i+=4) {
+		v0 = vld1q_f32(in[0] + i);
+		v1 = vld1q_f32(in[1] + i);
+		v2 = vld1q_f32(in[2] + i);
+		v3 = vld1q_f32(in[3] + i);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+
+		alpha = vgetq_lane_f32(sum, 3);
+		if (alpha > 1.0f) alpha = 1.0f;
+		else if (alpha < 0.0f) alpha = 0.0f;
+		if (alpha != 0) {
+			alpha_v = vdupq_n_f32(alpha);
+			sum = vdivq_f32(sum, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
+		idx = vcvtq_s32_f32(vmulq_f32(clamped, scale_v));
 		out[i]   = lut[vgetq_lane_s32(idx, 0)];
 		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
 		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
