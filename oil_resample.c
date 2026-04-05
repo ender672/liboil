@@ -722,6 +722,8 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 	case OIL_CS_RGB_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_yscale_up_g_cmyk_sse2(in, len, coeffs, out);
+#elif defined(OIL_USE_NEON)
+		oil_yscale_up_g_cmyk_neon(in, len, coeffs, out);
 #else
 		yscale_up_g_cmyk(in, len, coeffs, out);
 #endif
