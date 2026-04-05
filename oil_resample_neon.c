@@ -787,22 +787,26 @@ void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 		sum4 = vfmaq_f32(sum4, c3, v3);
 		idx4 = vcvtq_s32_f32(vmulq_f32(sum4, scale_v));
 
-		out[i]    = lut[vgetq_lane_s32(idx, 0)];
-		out[i+1]  = lut[vgetq_lane_s32(idx, 1)];
-		out[i+2]  = lut[vgetq_lane_s32(idx, 2)];
-		out[i+3]  = lut[vgetq_lane_s32(idx, 3)];
-		out[i+4]  = lut[vgetq_lane_s32(idx2, 0)];
-		out[i+5]  = lut[vgetq_lane_s32(idx2, 1)];
-		out[i+6]  = lut[vgetq_lane_s32(idx2, 2)];
-		out[i+7]  = lut[vgetq_lane_s32(idx2, 3)];
-		out[i+8]  = lut[vgetq_lane_s32(idx3, 0)];
-		out[i+9]  = lut[vgetq_lane_s32(idx3, 1)];
-		out[i+10] = lut[vgetq_lane_s32(idx3, 2)];
-		out[i+11] = lut[vgetq_lane_s32(idx3, 3)];
-		out[i+12] = lut[vgetq_lane_s32(idx4, 0)];
-		out[i+13] = lut[vgetq_lane_s32(idx4, 1)];
-		out[i+14] = lut[vgetq_lane_s32(idx4, 2)];
-		out[i+15] = lut[vgetq_lane_s32(idx4, 3)];
+		{
+			uint8x16_t bytes;
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 0)], vdupq_n_u8(0), 0);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 1)], bytes, 1);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 2)], bytes, 2);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 3)], bytes, 3);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 0)], bytes, 4);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 1)], bytes, 5);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 2)], bytes, 6);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 3)], bytes, 7);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 0)], bytes, 8);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 1)], bytes, 9);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 2)], bytes, 10);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 3)], bytes, 11);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 0)], bytes, 12);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 1)], bytes, 13);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 2)], bytes, 14);
+			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 3)], bytes, 15);
+			vst1q_u8(out + i, bytes);
+		}
 	}
 
 	for (; i+7<len; i+=8) {
