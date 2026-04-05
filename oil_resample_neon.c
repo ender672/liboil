@@ -2574,4 +2574,464 @@ void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
+void oil_yscale_out_rgba_nogamma_neon(float *sums, int width, unsigned char *out)
+{
+	int i;
+	float32x4_t scale_v, one, zero, half;
+	float32x4_t f0, f1, f2, f3, vals, alpha_v;
+	int32x4_t idx;
+	float alpha;
+
+	scale_v = vdupq_n_f32(255.0f);
+	one = vdupq_n_f32(1.0f);
+	zero = vdupq_n_f32(0.0f);
+	half = vdupq_n_f32(0.5f);
+
+	for (i=0; i<width; i++) {
+		f0 = vld1q_f32(sums);
+		f1 = vld1q_f32(sums + 4);
+		f2 = vld1q_f32(sums + 8);
+		f3 = vld1q_f32(sums + 12);
+
+		/* Gather first element of each accumulator: {R, G, B, A} */
+		vals = gather_lane0(f0, f1, f2, f3);
+
+		/* Clamp alpha to [0, 1] */
+		alpha = vgetq_lane_f32(vals, 3);
+		if (alpha > 1.0f) alpha = 1.0f;
+		else if (alpha < 0.0f) alpha = 0.0f;
+		alpha_v = vdupq_n_f32(alpha);
+
+		/* Divide RGB by alpha (skip if alpha == 0) */
+		if (alpha != 0) {
+			vals = vdivq_f32(vals, alpha_v);
+		}
+
+		/* Clamp RGB to [0, 1], scale to [0, 255], round */
+		vals = vminq_f32(vmaxq_f32(vals, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
+
+		out[0] = vgetq_lane_s32(idx, 0);
+		out[1] = vgetq_lane_s32(idx, 1);
+		out[2] = vgetq_lane_s32(idx, 2);
+		out[3] = (int)(alpha * 255.0f + 0.5f);
+
+		vst1q_f32(sums,      shift_right_1(f0));
+		vst1q_f32(sums + 4,  shift_right_1(f1));
+		vst1q_f32(sums + 8,  shift_right_1(f2));
+		vst1q_f32(sums + 12, shift_right_1(f3));
+
+		sums += 16;
+		out += 4;
+	}
+}
+
+void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	int i;
+	float32x4_t c0, c1, c2, c3;
+	float32x4_t v0, v1, v2, v3, sum, sum2;
+	float32x4_t scale_v, one, zero, half;
+	float32x4_t alpha_v, clamped;
+	int32x4_t idx;
+	float alpha, alpha2;
+
+	c0 = vdupq_n_f32(coeffs[0]);
+	c1 = vdupq_n_f32(coeffs[1]);
+	c2 = vdupq_n_f32(coeffs[2]);
+	c3 = vdupq_n_f32(coeffs[3]);
+	scale_v = vdupq_n_f32(255.0f);
+	one = vdupq_n_f32(1.0f);
+	zero = vdupq_n_f32(0.0f);
+	half = vdupq_n_f32(0.5f);
+
+	for (i=0; i+15<len; i+=16) {
+		float32x4_t s0, s1, s2, s3;
+		float a0, a1, a2, a3;
+
+		/* Compute weighted sums for 4 pixels */
+		v0 = vld1q_f32(in[0] + i);
+		v1 = vld1q_f32(in[1] + i);
+		v2 = vld1q_f32(in[2] + i);
+		v3 = vld1q_f32(in[3] + i);
+		s0 = vmulq_f32(c0, v0);
+		s0 = vfmaq_f32(s0, c1, v1);
+		s0 = vfmaq_f32(s0, c2, v2);
+		s0 = vfmaq_f32(s0, c3, v3);
+
+		v0 = vld1q_f32(in[0] + i + 4);
+		v1 = vld1q_f32(in[1] + i + 4);
+		v2 = vld1q_f32(in[2] + i + 4);
+		v3 = vld1q_f32(in[3] + i + 4);
+		s1 = vmulq_f32(c0, v0);
+		s1 = vfmaq_f32(s1, c1, v1);
+		s1 = vfmaq_f32(s1, c2, v2);
+		s1 = vfmaq_f32(s1, c3, v3);
+
+		v0 = vld1q_f32(in[0] + i + 8);
+		v1 = vld1q_f32(in[1] + i + 8);
+		v2 = vld1q_f32(in[2] + i + 8);
+		v3 = vld1q_f32(in[3] + i + 8);
+		s2 = vmulq_f32(c0, v0);
+		s2 = vfmaq_f32(s2, c1, v1);
+		s2 = vfmaq_f32(s2, c2, v2);
+		s2 = vfmaq_f32(s2, c3, v3);
+
+		v0 = vld1q_f32(in[0] + i + 12);
+		v1 = vld1q_f32(in[1] + i + 12);
+		v2 = vld1q_f32(in[2] + i + 12);
+		v3 = vld1q_f32(in[3] + i + 12);
+		s3 = vmulq_f32(c0, v0);
+		s3 = vfmaq_f32(s3, c1, v1);
+		s3 = vfmaq_f32(s3, c2, v2);
+		s3 = vfmaq_f32(s3, c3, v3);
+
+		/* Alpha handling for pixel 0 */
+		a0 = vgetq_lane_f32(s0, 3);
+		if (a0 > 1.0f) a0 = 1.0f;
+		else if (a0 < 0.0f) a0 = 0.0f;
+		if (a0 != 0) {
+			alpha_v = vdupq_n_f32(a0);
+			s0 = vdivq_f32(s0, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(s0, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i]   = vgetq_lane_s32(idx, 0);
+		out[i+1] = vgetq_lane_s32(idx, 1);
+		out[i+2] = vgetq_lane_s32(idx, 2);
+		out[i+3] = (int)(a0 * 255.0f + 0.5f);
+
+		/* Alpha handling for pixel 1 */
+		a1 = vgetq_lane_f32(s1, 3);
+		if (a1 > 1.0f) a1 = 1.0f;
+		else if (a1 < 0.0f) a1 = 0.0f;
+		if (a1 != 0) {
+			alpha_v = vdupq_n_f32(a1);
+			s1 = vdivq_f32(s1, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(s1, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i+4] = vgetq_lane_s32(idx, 0);
+		out[i+5] = vgetq_lane_s32(idx, 1);
+		out[i+6] = vgetq_lane_s32(idx, 2);
+		out[i+7] = (int)(a1 * 255.0f + 0.5f);
+
+		/* Alpha handling for pixel 2 */
+		a2 = vgetq_lane_f32(s2, 3);
+		if (a2 > 1.0f) a2 = 1.0f;
+		else if (a2 < 0.0f) a2 = 0.0f;
+		if (a2 != 0) {
+			alpha_v = vdupq_n_f32(a2);
+			s2 = vdivq_f32(s2, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(s2, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i+8]  = vgetq_lane_s32(idx, 0);
+		out[i+9]  = vgetq_lane_s32(idx, 1);
+		out[i+10] = vgetq_lane_s32(idx, 2);
+		out[i+11] = (int)(a2 * 255.0f + 0.5f);
+
+		/* Alpha handling for pixel 3 */
+		a3 = vgetq_lane_f32(s3, 3);
+		if (a3 > 1.0f) a3 = 1.0f;
+		else if (a3 < 0.0f) a3 = 0.0f;
+		if (a3 != 0) {
+			alpha_v = vdupq_n_f32(a3);
+			s3 = vdivq_f32(s3, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(s3, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i+12] = vgetq_lane_s32(idx, 0);
+		out[i+13] = vgetq_lane_s32(idx, 1);
+		out[i+14] = vgetq_lane_s32(idx, 2);
+		out[i+15] = (int)(a3 * 255.0f + 0.5f);
+	}
+
+	for (; i+7<len; i+=8) {
+		/* Pixel 0 */
+		v0 = vld1q_f32(in[0] + i);
+		v1 = vld1q_f32(in[1] + i);
+		v2 = vld1q_f32(in[2] + i);
+		v3 = vld1q_f32(in[3] + i);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+
+		/* Pixel 1 */
+		v0 = vld1q_f32(in[0] + i + 4);
+		v1 = vld1q_f32(in[1] + i + 4);
+		v2 = vld1q_f32(in[2] + i + 4);
+		v3 = vld1q_f32(in[3] + i + 4);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+
+		alpha = vgetq_lane_f32(sum, 3);
+		if (alpha > 1.0f) alpha = 1.0f;
+		else if (alpha < 0.0f) alpha = 0.0f;
+		if (alpha != 0) {
+			alpha_v = vdupq_n_f32(alpha);
+			sum = vdivq_f32(sum, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i]   = vgetq_lane_s32(idx, 0);
+		out[i+1] = vgetq_lane_s32(idx, 1);
+		out[i+2] = vgetq_lane_s32(idx, 2);
+		out[i+3] = (int)(alpha * 255.0f + 0.5f);
+
+		alpha2 = vgetq_lane_f32(sum2, 3);
+		if (alpha2 > 1.0f) alpha2 = 1.0f;
+		else if (alpha2 < 0.0f) alpha2 = 0.0f;
+		if (alpha2 != 0) {
+			alpha_v = vdupq_n_f32(alpha2);
+			sum2 = vdivq_f32(sum2, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(sum2, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i+4] = vgetq_lane_s32(idx, 0);
+		out[i+5] = vgetq_lane_s32(idx, 1);
+		out[i+6] = vgetq_lane_s32(idx, 2);
+		out[i+7] = (int)(alpha2 * 255.0f + 0.5f);
+	}
+
+	for (; i<len; i+=4) {
+		v0 = vld1q_f32(in[0] + i);
+		v1 = vld1q_f32(in[1] + i);
+		v2 = vld1q_f32(in[2] + i);
+		v3 = vld1q_f32(in[3] + i);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+
+		alpha = vgetq_lane_f32(sum, 3);
+		if (alpha > 1.0f) alpha = 1.0f;
+		else if (alpha < 0.0f) alpha = 0.0f;
+		if (alpha != 0) {
+			alpha_v = vdupq_n_f32(alpha);
+			sum = vdivq_f32(sum, alpha_v);
+		}
+		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
+		out[i]   = vgetq_lane_s32(idx, 0);
+		out[i+1] = vgetq_lane_s32(idx, 1);
+		out[i+2] = vgetq_lane_s32(idx, 2);
+		out[i+3] = (int)(alpha * 255.0f + 0.5f);
+	}
+}
+
+void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf)
+{
+	int i, j;
+	float32x4_t smp0, smp1, smp2, smp3;
+
+	smp0 = vdupq_n_f32(0.0f);
+	smp1 = vdupq_n_f32(0.0f);
+	smp2 = vdupq_n_f32(0.0f);
+	smp3 = vdupq_n_f32(0.0f);
+
+	for (i=0; i<width_in; i++) {
+		float alpha_new = in[3] / 255.0f;
+		float32x4_t pixel;
+
+		/* Shift tap window: oldest tap falls off */
+		smp0 = smp1;
+		smp1 = smp2;
+		smp2 = smp3;
+
+		/* New pixel: [alpha*R, alpha*G, alpha*B, alpha] using i2f_map (no gamma) */
+		pixel = vsetq_lane_f32(alpha_new * i2f_map[in[0]], vdupq_n_f32(0), 0);
+		pixel = vsetq_lane_f32(alpha_new * i2f_map[in[1]], pixel, 1);
+		pixel = vsetq_lane_f32(alpha_new * i2f_map[in[2]], pixel, 2);
+		pixel = vsetq_lane_f32(alpha_new, pixel, 3);
+		smp3 = pixel;
+
+		j = border_buf[i];
+
+		/* process pairs of outputs */
+		while (j >= 2) {
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result0, result1;
+
+			/* dot product: c[0]*smp0 + c[1]*smp1 + c[2]*smp2 + c[3]*smp3 */
+			result0 = vmulq_laneq_f32(smp0, co, 0);
+			result0 = vfmaq_laneq_f32(result0, smp1, co, 1);
+			result0 = vfmaq_laneq_f32(result0, smp2, co, 2);
+			result0 = vfmaq_laneq_f32(result0, smp3, co, 3);
+			vst1q_f32(out, result0);
+
+			co = vld1q_f32(coeff_buf + 4);
+			result1 = vmulq_laneq_f32(smp0, co, 0);
+			result1 = vfmaq_laneq_f32(result1, smp1, co, 1);
+			result1 = vfmaq_laneq_f32(result1, smp2, co, 2);
+			result1 = vfmaq_laneq_f32(result1, smp3, co, 3);
+			vst1q_f32(out + 4, result1);
+
+			out += 8;
+			coeff_buf += 8;
+			j -= 2;
+		}
+
+		/* process remaining single output */
+		if (j) {
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result;
+
+			result = vmulq_laneq_f32(smp0, co, 0);
+			result = vfmaq_laneq_f32(result, smp1, co, 1);
+			result = vfmaq_laneq_f32(result, smp2, co, 2);
+			result = vfmaq_laneq_f32(result, smp3, co, 3);
+			vst1q_f32(out, result);
+
+			out += 4;
+			coeff_buf += 4;
+		}
+
+		in += 4;
+	}
+}
+
+void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	float32x4_t coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
+	float32x4_t sum_r, sum_g, sum_b, sum_a;
+	float32x4_t sum_r2, sum_g2, sum_b2, sum_a2;
+	float32x4_t coeffs_y, sums_y, sample_y;
+
+	coeffs_y = vld1q_f32(coeffs_y_f);
+
+	sum_r = vdupq_n_f32(0.0f);
+	sum_g = vdupq_n_f32(0.0f);
+	sum_b = vdupq_n_f32(0.0f);
+	sum_a = vdupq_n_f32(0.0f);
+
+	for (i=0; i<out_width; i++) {
+		if (border_buf[i] >= 4) {
+			sum_r2 = vdupq_n_f32(0.0f);
+			sum_g2 = vdupq_n_f32(0.0f);
+			sum_b2 = vdupq_n_f32(0.0f);
+			sum_a2 = vdupq_n_f32(0.0f);
+
+			for (j=0; j+1<border_buf[i]; j+=2) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
+
+				coeffs_x_a = vmulq_f32(coeffs_x,
+					vdupq_n_f32(i2f_map[in[3]]));
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
+
+				sum_a = vaddq_f32(coeffs_x_a, sum_a);
+
+				coeffs_x2_a = vmulq_f32(coeffs_x2,
+					vdupq_n_f32(i2f_map[in[7]]));
+
+				sample_x = vdupq_n_f32(i2f_map[in[4]]);
+				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_r2);
+
+				sample_x = vdupq_n_f32(i2f_map[in[5]]);
+				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_g2);
+
+				sample_x = vdupq_n_f32(i2f_map[in[6]]);
+				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_b2);
+
+				sum_a2 = vaddq_f32(coeffs_x2_a, sum_a2);
+
+				in += 8;
+				coeffs_x_f += 8;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+
+				coeffs_x_a = vmulq_f32(coeffs_x,
+					vdupq_n_f32(i2f_map[in[3]]));
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
+
+				sum_a = vaddq_f32(coeffs_x_a, sum_a);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+
+			sum_r = vaddq_f32(sum_r, sum_r2);
+			sum_g = vaddq_f32(sum_g, sum_g2);
+			sum_b = vaddq_f32(sum_b, sum_b2);
+			sum_a = vaddq_f32(sum_a, sum_a2);
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+
+				coeffs_x_a = vmulq_f32(coeffs_x,
+					vdupq_n_f32(i2f_map[in[3]]));
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
+
+				sum_a = vaddq_f32(coeffs_x_a, sum_a);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+		}
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_r, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_g, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_b, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_a, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
+		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
+		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
+		sum_a = vextq_f32(sum_a, vdupq_n_f32(0), 1);
+	}
+}
+
 #endif /* OIL_USE_NEON */
