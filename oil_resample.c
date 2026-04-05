@@ -1008,7 +1008,7 @@ static void scale_down_ga(unsigned char *in, float *sums_y, int out_width, float
 }
 #endif
 
-#if !defined(OIL_USE_SSE2)
+#if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
 static void scale_down_rgb_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
@@ -1031,7 +1031,9 @@ static void scale_down_rgb_nogamma(unsigned char *in, float *sums_y, int out_wid
 		}
 	}
 }
+#endif
 
+#if !defined(OIL_USE_SSE2)
 static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
@@ -1291,7 +1293,7 @@ static void xscale_up_g(unsigned char *in, int width_in, float *out,
 }
 #endif
 
-#if !defined(OIL_USE_SSE2)
+#if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
 static void xscale_up_rgb_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -1310,7 +1312,9 @@ static void xscale_up_rgb_nogamma(unsigned char *in, int width_in, float *out,
 		in += 3;
 	}
 }
+#endif
 
+#if !defined(OIL_USE_SSE2)
 static void xscale_up_rgba_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -1418,6 +1422,8 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 	case OIL_CS_RGB_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_xscale_up_rgb_nogamma_sse2(in, width_in, out, coeff_buf, border_buf);
+#elif defined(OIL_USE_NEON)
+		oil_xscale_up_rgb_nogamma_neon(in, width_in, out, coeff_buf, border_buf);
 #else
 		xscale_up_rgb_nogamma(in, width_in, out, coeff_buf, border_buf);
 #endif
@@ -1715,6 +1721,8 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 	case OIL_CS_RGB_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_scale_down_rgb_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#elif defined(OIL_USE_NEON)
+		oil_scale_down_rgb_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
 		scale_down_rgb_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #endif

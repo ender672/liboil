@@ -2389,4 +2389,189 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
+void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf)
+{
+	int i, j;
+	float32x4_t smp0, smp1, smp2, smp3;
+
+	smp0 = vdupq_n_f32(0.0f);
+	smp1 = vdupq_n_f32(0.0f);
+	smp2 = vdupq_n_f32(0.0f);
+	smp3 = vdupq_n_f32(0.0f);
+
+	for (i=0; i<width_in; i++) {
+		float32x4_t pixel;
+
+		/* Shift tap window: oldest tap falls off */
+		smp0 = smp1;
+		smp1 = smp2;
+		smp2 = smp3;
+
+		/* New pixel: [R, G, B, 0] using i2f_map (no gamma) */
+		pixel = vsetq_lane_f32(i2f_map[in[0]], vdupq_n_f32(0), 0);
+		pixel = vsetq_lane_f32(i2f_map[in[1]], pixel, 1);
+		pixel = vsetq_lane_f32(i2f_map[in[2]], pixel, 2);
+		smp3 = pixel;
+
+		j = border_buf[i];
+
+		/* process pairs of outputs */
+		while (j >= 2) {
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result0, result1;
+
+			result0 = vmulq_laneq_f32(smp0, co, 0);
+			result0 = vfmaq_laneq_f32(result0, smp1, co, 1);
+			result0 = vfmaq_laneq_f32(result0, smp2, co, 2);
+			result0 = vfmaq_laneq_f32(result0, smp3, co, 3);
+
+			co = vld1q_f32(coeff_buf + 4);
+			result1 = vmulq_laneq_f32(smp0, co, 0);
+			result1 = vfmaq_laneq_f32(result1, smp1, co, 1);
+			result1 = vfmaq_laneq_f32(result1, smp2, co, 2);
+			result1 = vfmaq_laneq_f32(result1, smp3, co, 3);
+
+			/* Store interleaved: [R0, G0, B0, R1, G1, B1] */
+			out[0] = vgetq_lane_f32(result0, 0);
+			out[1] = vgetq_lane_f32(result0, 1);
+			out[2] = vgetq_lane_f32(result0, 2);
+			out[3] = vgetq_lane_f32(result1, 0);
+			out[4] = vgetq_lane_f32(result1, 1);
+			out[5] = vgetq_lane_f32(result1, 2);
+
+			out += 6;
+			coeff_buf += 8;
+			j -= 2;
+		}
+
+		/* process remaining single output */
+		if (j) {
+			float32x4_t co = vld1q_f32(coeff_buf);
+			float32x4_t result;
+
+			result = vmulq_laneq_f32(smp0, co, 0);
+			result = vfmaq_laneq_f32(result, smp1, co, 1);
+			result = vfmaq_laneq_f32(result, smp2, co, 2);
+			result = vfmaq_laneq_f32(result, smp3, co, 3);
+
+			out[0] = vgetq_lane_f32(result, 0);
+			out[1] = vgetq_lane_f32(result, 1);
+			out[2] = vgetq_lane_f32(result, 2);
+
+			out += 3;
+			coeff_buf += 4;
+		}
+
+		in += 3;
+	}
+}
+
+void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
+	float32x4_t sum_r2, sum_g2, sum_b2;
+	float32x4_t coeffs_y, sums_y, sample_y;
+
+	coeffs_y = vld1q_f32(coeffs_y_f);
+
+	sum_r = vdupq_n_f32(0.0f);
+	sum_g = vdupq_n_f32(0.0f);
+	sum_b = vdupq_n_f32(0.0f);
+
+	for (i=0; i<out_width; i++) {
+		if (border_buf[i] >= 4) {
+			sum_r2 = vdupq_n_f32(0.0f);
+			sum_g2 = vdupq_n_f32(0.0f);
+			sum_b2 = vdupq_n_f32(0.0f);
+
+			for (j=0; j+1<border_buf[i]; j+=2) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
+
+				sample_x = vdupq_n_f32(i2f_map[in[3]]);
+				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_r2);
+
+				sample_x = vdupq_n_f32(i2f_map[in[4]]);
+				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
+
+				sample_x = vdupq_n_f32(i2f_map[in[5]]);
+				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_b2);
+
+				in += 6;
+				coeffs_x_f += 8;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
+
+				in += 3;
+				coeffs_x_f += 4;
+			}
+
+			sum_r = vaddq_f32(sum_r, sum_r2);
+			sum_g = vaddq_f32(sum_g, sum_g2);
+			sum_b = vaddq_f32(sum_b, sum_b2);
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = vld1q_f32(coeffs_x_f);
+
+				sample_x = vdupq_n_f32(i2f_map[in[0]]);
+				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
+
+				sample_x = vdupq_n_f32(i2f_map[in[1]]);
+				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
+
+				sample_x = vdupq_n_f32(i2f_map[in[2]]);
+				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
+
+				in += 3;
+				coeffs_x_f += 4;
+			}
+		}
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_r, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_g, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = vld1q_f32(sums_y_out);
+		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_b, 0));
+		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
+		vst1q_f32(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
+		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
+		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
+	}
+}
+
 #endif /* OIL_USE_NEON */
