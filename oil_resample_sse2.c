@@ -1431,7 +1431,7 @@ void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 	smp_a = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		float alpha_new = in[3] / 255.0f;
+		float alpha_new = i2f_map[in[3]];
 
 		/* push_f for A */
 		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
@@ -2518,7 +2518,7 @@ void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out
 	smp_a = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		float alpha_new = in[3] / 255.0f;
+		float alpha_new = lut[in[3]];
 
 		/* push_f for A */
 		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
