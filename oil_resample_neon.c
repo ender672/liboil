@@ -41,12 +41,9 @@ static inline float32x4_t dot2(float32x4_t smp, float32x4_t c0, float32x4_t c1)
 {
 	float32x4_t p0 = vmulq_f32(smp, c0);
 	float32x4_t p1 = vmulq_f32(smp, c1);
-	float32x4_t lo = vzip1q_f32(p0, p1);
-	float32x4_t hh = vzip2q_f32(p0, p1);
-	float32x4_t sum = vaddq_f32(lo, hh);
-	float32x4_t t1 = vcombine_f32(vget_high_f32(sum), vget_high_f32(sum));
-	float32x4_t t2 = vaddq_f32(sum, t1);
-	return t2;
+	float32x4_t s1 = vpaddq_f32(p0, p1);
+	float32x4_t s2 = vpaddq_f32(s1, s1);
+	return s2;
 }
 
 /* Helper: gather lane 0 from 4 float32x4_t vectors */
