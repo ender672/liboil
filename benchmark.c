@@ -58,11 +58,16 @@ static struct bench_image load_png(char *path, enum oil_colorspace cs)
 		png_set_strip_alpha(rpng);
 		break;
 	case OIL_CS_RGBX:
+	case OIL_CS_RGBX_NOLIN:
 		png_set_strip_alpha(rpng);
 		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
 		break;
+	case OIL_CS_RGB_NOLIN:
+		png_set_strip_alpha(rpng);
+		break;
 	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
 	case OIL_CS_RGBA:
+	case OIL_CS_RGBA_NOLIN:
 	case OIL_CS_ARGB:
 	case OIL_CS_UNKNOWN:
 		break;
@@ -185,6 +190,8 @@ int main(int argc, char *argv[])
 		OIL_CS_RGBX,
 		OIL_CS_RGBA,
 		OIL_CS_CMYK,
+		OIL_CS_RGB_NOLIN,
+		OIL_CS_RGBA_NOLIN,
 	};
 
 	char *space_names[] = {
@@ -194,6 +201,8 @@ int main(int argc, char *argv[])
 		"RGBX",
 		"RGBA",
 		"CMYK",
+		"RGB_NOLIN",
+		"RGBA_NOLIN",
 	};
 
 	if (argc < 2 || argc > 3) {

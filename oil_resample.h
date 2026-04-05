@@ -55,6 +55,9 @@ enum oil_colorspace {
 
 	// RGBA without sRGB linearization - premultiplied alpha, no gamma
 	OIL_CS_RGBA_NOLIN = 0x0604,
+
+	// RGBX without sRGB linearization - 4 bytes per pixel, 4th byte ignored
+	OIL_CS_RGBX_NOLIN = 0x0704,
 };
 
 /**
