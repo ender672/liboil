@@ -646,6 +646,7 @@ static void yscale_up_rgba_nogamma(float **in, int len, float *coeffs,
 }
 #endif
 
+#if !defined(OIL_USE_SSE2)
 static void yscale_up_rgbx_nogamma(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
@@ -665,6 +666,7 @@ static void yscale_up_rgbx_nogamma(float **in, int len, float *coeffs,
 		out[i + 3] = 255;
 	}
 }
+#endif
 
 /**
  * Upscale a strip of scanlines. Branches to the correct interpolator using
@@ -740,7 +742,11 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 #endif
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_up_rgbx_nogamma_sse2(in, len, coeffs, out);
+#else
 		yscale_up_rgbx_nogamma(in, len, coeffs, out);
+#endif
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -1326,6 +1332,7 @@ static void xscale_up_rgba_nogamma(unsigned char *in, int width_in, float *out,
 }
 #endif
 
+#if !defined(OIL_USE_SSE2)
 static void xscale_up_rgbx_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -1345,6 +1352,7 @@ static void xscale_up_rgbx_nogamma(unsigned char *in, int width_in, float *out,
 		in += 4;
 	}
 }
+#endif
 
 static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 	enum oil_colorspace cs_in, float *coeff_buf, int *border_buf)
@@ -1422,7 +1430,11 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 #endif
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_xscale_up_rgbx_nogamma_sse2(in, width_in, out, coeff_buf, border_buf);
+#else
 		xscale_up_rgbx_nogamma(in, width_in, out, coeff_buf, border_buf);
+#endif
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
