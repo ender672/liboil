@@ -892,9 +892,10 @@ void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 
 		/* Clamp alpha to [0, 1] */
 		alpha = vgetq_lane_f32(sum, 3);
