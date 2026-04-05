@@ -135,6 +135,14 @@ void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, float *out
 	float *coeff_buf, int *border_buf);
 void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y,
 	int out_width, float *coeffs_x, int *border_buf, float *coeffs_y);
+void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width,
+	unsigned char *out);
+void oil_yscale_up_rgbx_nogamma_neon(float **in, int len, float *coeffs,
+	unsigned char *out);
+void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf);
+void oil_scale_down_rgbx_nogamma_neon(unsigned char *in, float *sums_y,
+	int out_width, float *coeffs_x, int *border_buf, float *coeffs_y);
 #endif
 
 #endif

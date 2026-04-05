@@ -482,6 +482,8 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 	case OIL_CS_RGBX_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_yscale_out_rgbx_nogamma_sse2(sums, width, out);
+#elif defined(OIL_USE_NEON)
+		oil_yscale_out_rgbx_nogamma_neon(sums, width, out);
 #else
 		yscale_out_rgbx_nogamma(sums, width, out);
 #endif
@@ -750,6 +752,8 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 	case OIL_CS_RGBX_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_yscale_up_rgbx_nogamma_sse2(in, len, coeffs, out);
+#elif defined(OIL_USE_NEON)
+		oil_yscale_up_rgbx_nogamma_neon(in, len, coeffs, out);
 #else
 		yscale_up_rgbx_nogamma(in, len, coeffs, out);
 #endif
@@ -1448,6 +1452,8 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 	case OIL_CS_RGBX_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_xscale_up_rgbx_nogamma_sse2(in, width_in, out, coeff_buf, border_buf);
+#elif defined(OIL_USE_NEON)
+		oil_xscale_up_rgbx_nogamma_neon(in, width_in, out, coeff_buf, border_buf);
 #else
 		xscale_up_rgbx_nogamma(in, width_in, out, coeff_buf, border_buf);
 #endif
@@ -1749,6 +1755,8 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 	case OIL_CS_RGBX_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_scale_down_rgbx_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#elif defined(OIL_USE_NEON)
+		oil_scale_down_rgbx_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
 		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #endif
