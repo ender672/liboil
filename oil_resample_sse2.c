@@ -2409,7 +2409,7 @@ void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	__m128 v0, v1, v2, v3, sum;
 	__m128 scale, half, one, zero;
 	__m128 alpha_v, clamped;
-	__m128i idx;
+	__m128i idx, packed;
 	float alpha;
 
 	c0 = _mm_set1_ps(coeffs[0]);
@@ -2440,14 +2440,20 @@ void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 			sum = _mm_mul_ps(sum, _mm_rcp_ps(alpha_v));
 		}
 
-		/* Clamp to [0, 1], scale to [0, 255], round */
+		/* Clamp to [0, 1], replace alpha with clamped alpha */
 		clamped = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(clamped, scale), half));
+		{
+			__m128 hi = _mm_shuffle_ps(clamped, alpha_v,
+				_MM_SHUFFLE(0, 0, 2, 2));
+			clamped = _mm_shuffle_ps(clamped, hi,
+				_MM_SHUFFLE(2, 0, 1, 0));
+		}
 
-		out[i]   = (unsigned char)_mm_cvtsi128_si32(idx);
-		out[i+1] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 4));
-		out[i+2] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 8));
-		out[i+3] = (int)(alpha * 255.0f + 0.5f);
+		/* Scale to [0, 255], round, pack to bytes */
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(clamped, scale), half));
+		packed = _mm_packs_epi32(idx, idx);
+		packed = _mm_packus_epi16(packed, packed);
+		*(int *)(out + i) = _mm_cvtsi128_si32(packed);
 	}
 }
 
