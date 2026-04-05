@@ -187,6 +187,13 @@ static void preprocess(long double *in, enum oil_colorspace cs)
 		in[2] = srgb_sample_to_linear_reference(in[2]);
 		in[3] = 1.0L;
 		break;
+	case OIL_CS_RGB_NOLIN:
+		break;
+	case OIL_CS_RGBA_NOLIN:
+		in[0] *= in[3];
+		in[1] *= in[3];
+		in[2] *= in[3];
+		break;
 	}
 }
 
@@ -245,6 +252,23 @@ static void postprocess(long double *in, enum oil_colorspace cs)
 		in[1] = linear_sample_to_srgb_reference(in[1]);
 		in[2] = linear_sample_to_srgb_reference(in[2]);
 		in[3] = 1.0L;
+		break;
+	case OIL_CS_RGB_NOLIN:
+		in[0] = clamp_f(in[0]);
+		in[1] = clamp_f(in[1]);
+		in[2] = clamp_f(in[2]);
+		break;
+	case OIL_CS_RGBA_NOLIN:
+		alpha = clamp_f(in[3]);
+		if (alpha != 0.0L) {
+			in[0] /= alpha;
+			in[1] /= alpha;
+			in[2] /= alpha;
+		}
+		in[0] = clamp_f(in[0]);
+		in[1] = clamp_f(in[1]);
+		in[2] = clamp_f(in[2]);
+		in[3] = alpha;
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -520,6 +544,8 @@ static void test_scale_each_cs(int dim_a, int dim_b)
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_ARGB);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_CMYK);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGB_NOLIN);
+	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBA_NOLIN);
 }
 
 static void test_scale_all_permutations(int dim_a, int dim_b)
@@ -588,12 +614,16 @@ static void test_out_discard_all(void)
 	test_out_discard(100, 50, OIL_CS_RGBA);
 	test_out_discard(100, 50, OIL_CS_CMYK);
 	test_out_discard(100, 50, OIL_CS_GA);
+	test_out_discard(100, 50, OIL_CS_RGB_NOLIN);
+	test_out_discard(100, 50, OIL_CS_RGBA_NOLIN);
 	/* upscale */
 	test_out_discard(50, 100, OIL_CS_G);
 	test_out_discard(50, 100, OIL_CS_RGB);
 	test_out_discard(50, 100, OIL_CS_RGBA);
 	test_out_discard(50, 100, OIL_CS_CMYK);
 	test_out_discard(50, 100, OIL_CS_GA);
+	test_out_discard(50, 100, OIL_CS_RGB_NOLIN);
+	test_out_discard(50, 100, OIL_CS_RGBA_NOLIN);
 }
 
 static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
@@ -652,12 +682,16 @@ static void test_out_not_ready_all(void)
 	test_out_not_ready(100, 50, OIL_CS_RGBA);
 	test_out_not_ready(100, 50, OIL_CS_CMYK);
 	test_out_not_ready(100, 50, OIL_CS_GA);
+	test_out_not_ready(100, 50, OIL_CS_RGB_NOLIN);
+	test_out_not_ready(100, 50, OIL_CS_RGBA_NOLIN);
 	/* upscale */
 	test_out_not_ready(50, 100, OIL_CS_G);
 	test_out_not_ready(50, 100, OIL_CS_RGB);
 	test_out_not_ready(50, 100, OIL_CS_RGBA);
 	test_out_not_ready(50, 100, OIL_CS_CMYK);
 	test_out_not_ready(50, 100, OIL_CS_GA);
+	test_out_not_ready(50, 100, OIL_CS_RGB_NOLIN);
+	test_out_not_ready(50, 100, OIL_CS_RGBA_NOLIN);
 }
 
 static void test_scale_all(void)

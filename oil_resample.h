@@ -49,6 +49,12 @@ enum oil_colorspace {
 
 	// no color space conversions
 	OIL_CS_CMYK    = 0x0204,
+
+	// RGB without sRGB linearization - samples treated as raw values
+	OIL_CS_RGB_NOLIN  = 0x0503,
+
+	// RGBA without sRGB linearization - premultiplied alpha, no gamma
+	OIL_CS_RGBA_NOLIN = 0x0604,
 };
 
 /**
