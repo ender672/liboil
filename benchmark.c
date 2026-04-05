@@ -192,6 +192,7 @@ int main(int argc, char *argv[])
 		OIL_CS_CMYK,
 		OIL_CS_RGB_NOLIN,
 		OIL_CS_RGBA_NOLIN,
+		OIL_CS_RGBX_NOLIN,
 	};
 
 	char *space_names[] = {
@@ -203,6 +204,7 @@ int main(int argc, char *argv[])
 		"CMYK",
 		"RGB_NOLIN",
 		"RGBA_NOLIN",
+		"RGBX_NOLIN",
 	};
 
 	if (argc < 2 || argc > 3) {
