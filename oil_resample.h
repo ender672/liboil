@@ -22,6 +22,10 @@
 #ifndef OIL_RESAMPLE_H
 #define OIL_RESAMPLE_H
 
+#define OIL_VERSION_MAJOR 0
+#define OIL_VERSION_MINOR 2
+#define OIL_VERSION_PATCH 0
+
 /**
  * Color spaces currently supported by oil.
  */
