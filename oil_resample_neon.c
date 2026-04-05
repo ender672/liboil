@@ -479,7 +479,105 @@ void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 	c3 = vdupq_n_f32(coeffs[3]);
 	scale = vdupq_n_f32(255.0f);
 
-	for (i=0; i+15<len; i+=16) {
+	for (i=0; i+31<len; i+=32) {
+		int32x4_t idx2, idx3, idx4, idx5, idx6, idx7, idx8;
+		float32x4_t sum2;
+
+		v0 = vld1q_f32(in[0] + i);
+		v1 = vld1q_f32(in[1] + i);
+		v2 = vld1q_f32(in[2] + i);
+		v3 = vld1q_f32(in[3] + i);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+		idx = vcvtnq_s32_f32(vmulq_f32(sum, scale));
+
+		v0 = vld1q_f32(in[0] + i + 4);
+		v1 = vld1q_f32(in[1] + i + 4);
+		v2 = vld1q_f32(in[2] + i + 4);
+		v3 = vld1q_f32(in[3] + i + 4);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+		idx2 = vcvtnq_s32_f32(vmulq_f32(sum2, scale));
+
+		v0 = vld1q_f32(in[0] + i + 8);
+		v1 = vld1q_f32(in[1] + i + 8);
+		v2 = vld1q_f32(in[2] + i + 8);
+		v3 = vld1q_f32(in[3] + i + 8);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+		idx3 = vcvtnq_s32_f32(vmulq_f32(sum, scale));
+
+		v0 = vld1q_f32(in[0] + i + 12);
+		v1 = vld1q_f32(in[1] + i + 12);
+		v2 = vld1q_f32(in[2] + i + 12);
+		v3 = vld1q_f32(in[3] + i + 12);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+		idx4 = vcvtnq_s32_f32(vmulq_f32(sum2, scale));
+
+		v0 = vld1q_f32(in[0] + i + 16);
+		v1 = vld1q_f32(in[1] + i + 16);
+		v2 = vld1q_f32(in[2] + i + 16);
+		v3 = vld1q_f32(in[3] + i + 16);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+		idx5 = vcvtnq_s32_f32(vmulq_f32(sum, scale));
+
+		v0 = vld1q_f32(in[0] + i + 20);
+		v1 = vld1q_f32(in[1] + i + 20);
+		v2 = vld1q_f32(in[2] + i + 20);
+		v3 = vld1q_f32(in[3] + i + 20);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+		idx6 = vcvtnq_s32_f32(vmulq_f32(sum2, scale));
+
+		v0 = vld1q_f32(in[0] + i + 24);
+		v1 = vld1q_f32(in[1] + i + 24);
+		v2 = vld1q_f32(in[2] + i + 24);
+		v3 = vld1q_f32(in[3] + i + 24);
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
+		idx7 = vcvtnq_s32_f32(vmulq_f32(sum, scale));
+
+		v0 = vld1q_f32(in[0] + i + 28);
+		v1 = vld1q_f32(in[1] + i + 28);
+		v2 = vld1q_f32(in[2] + i + 28);
+		v3 = vld1q_f32(in[3] + i + 28);
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
+		idx8 = vcvtnq_s32_f32(vmulq_f32(sum2, scale));
+
+		/* Pack 8x4 int32 -> 4x8 int16 -> 2x16 uint8 */
+		{
+			int16x8_t n16a = vcombine_s16(vqmovn_s32(idx), vqmovn_s32(idx2));
+			int16x8_t n16b = vcombine_s16(vqmovn_s32(idx3), vqmovn_s32(idx4));
+			uint8x16_t n8a = vcombine_u8(vqmovun_s16(n16a), vqmovun_s16(n16b));
+			vst1q_u8(out + i, n8a);
+
+			int16x8_t n16c = vcombine_s16(vqmovn_s32(idx5), vqmovn_s32(idx6));
+			int16x8_t n16d = vcombine_s16(vqmovn_s32(idx7), vqmovn_s32(idx8));
+			uint8x16_t n8b = vcombine_u8(vqmovun_s16(n16c), vqmovun_s16(n16d));
+			vst1q_u8(out + i + 16, n8b);
+		}
+	}
+
+	for (; i+15<len; i+=16) {
 		int32x4_t idx2, idx3, idx4;
 		float32x4_t sum2;
 
