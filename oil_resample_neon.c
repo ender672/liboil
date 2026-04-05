@@ -171,18 +171,72 @@ void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
 void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
 {
 	int i;
-	float32x4_t v0, v1;
+	float32x4_t f0, f1, f2, f3;
+	float32x4_t vals, alpha_spread, safe_alpha, divided, gray_clamped, result;
+	float32x4_t scale_v, half, zero, one;
+	uint32x4_t blend_mask, nz_mask;
+	int32x4_t idx;
 	float gray, alpha;
 
-	for (i=0; i<width; i++) {
-		v0 = vld1q_f32(sums);
-		v1 = vld1q_f32(sums + 4);
+	scale_v = vdupq_n_f32(255.0f);
+	half = vdupq_n_f32(0.5f);
+	zero = vdupq_n_f32(0.0f);
+	one = vdupq_n_f32(1.0f);
+	/* mask: 0 for gray positions (0,2), all-ones for alpha positions (1,3) */
+	{
+		uint32_t mask_vals[4] = {0, 0xFFFFFFFF, 0, 0xFFFFFFFF};
+		blend_mask = vld1q_u32(mask_vals);
+	}
 
-		alpha = vgetq_lane_f32(v1, 0);
+	for (i=0; i+1<width; i+=2) {
+		f0 = vld1q_f32(sums);
+		f1 = vld1q_f32(sums + 4);
+		f2 = vld1q_f32(sums + 8);
+		f3 = vld1q_f32(sums + 12);
+
+		/* vals = [gray0, alpha0, gray1, alpha1] */
+		vals = gather_lane0(f0, f1, f2, f3);
+
+		/* spread alpha: [alpha0, alpha0, alpha1, alpha1] */
+		{
+			float a0 = vgetq_lane_f32(vals, 1);
+			float a1 = vgetq_lane_f32(vals, 3);
+			float tmp[4] = {a0, a0, a1, a1};
+			alpha_spread = vld1q_f32(tmp);
+		}
+		alpha_spread = vminq_f32(vmaxq_f32(alpha_spread, zero), one);
+		nz_mask = vmvnq_u32(vceqq_f32(alpha_spread, zero));
+		safe_alpha = vbslq_f32(nz_mask, alpha_spread, one);
+		divided = vdivq_f32(vals, safe_alpha);
+		gray_clamped = vminq_f32(vmaxq_f32(divided, zero), one);
+		result = vbslq_f32(blend_mask, alpha_spread, gray_clamped);
+		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(result, scale_v), half));
+
+		/* Pack 4 ints -> 4 bytes */
+		{
+			int16x4_t n16 = vqmovn_s32(idx);
+			uint8x8_t n8 = vqmovun_s16(vcombine_s16(n16, n16));
+			vst1_lane_u32((uint32_t *)out, vreinterpret_u32_u8(n8), 0);
+		}
+
+		vst1q_f32(sums,      shift_right_1(f0));
+		vst1q_f32(sums + 4,  shift_right_1(f1));
+		vst1q_f32(sums + 8,  shift_right_1(f2));
+		vst1q_f32(sums + 12, shift_right_1(f3));
+
+		sums += 16;
+		out += 4;
+	}
+
+	for (; i<width; i++) {
+		f0 = vld1q_f32(sums);
+		f1 = vld1q_f32(sums + 4);
+
+		alpha = vgetq_lane_f32(f1, 0);
 		if (alpha > 1.0f) alpha = 1.0f;
 		else if (alpha < 0.0f) alpha = 0.0f;
 
-		gray = vgetq_lane_f32(v0, 0);
+		gray = vgetq_lane_f32(f0, 0);
 		if (alpha != 0) {
 			gray /= alpha;
 		}
@@ -192,8 +246,8 @@ void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
 		out[0] = (int)(gray * 255.0f + 0.5f);
 		out[1] = (int)(alpha * 255.0f + 0.5f);
 
-		vst1q_f32(sums,     shift_right_1(v0));
-		vst1q_f32(sums + 4, shift_right_1(v1));
+		vst1q_f32(sums,     shift_right_1(f0));
+		vst1q_f32(sums + 4, shift_right_1(f1));
 
 		sums += 8;
 		out += 2;
