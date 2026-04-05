@@ -365,7 +365,7 @@ static void yscale_out_rgbx(float *sums, int width, unsigned char *out)
 }
 #endif
 
-static void yscale_out_rgba_nolin(float *sums, int width, unsigned char *out)
+static void yscale_out_rgba_nogamma(float *sums, int width, unsigned char *out)
 {
 	int i, j;
 	float alpha;
@@ -388,7 +388,7 @@ static void yscale_out_rgba_nolin(float *sums, int width, unsigned char *out)
 	}
 }
 
-static void yscale_out_rgbx_nolin(float *sums, int width, unsigned char *out)
+static void yscale_out_rgbx_nogamma(float *sums, int width, unsigned char *out)
 {
 	int i, j;
 
@@ -449,14 +449,14 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_rgbx(sums, width, out);
 #endif
 		break;
-	case OIL_CS_RGB_NOLIN:
+	case OIL_CS_RGB_NOGAMMA:
 		yscale_out_nonlinear(sums, sl_len, out);
 		break;
-	case OIL_CS_RGBA_NOLIN:
-		yscale_out_rgba_nolin(sums, width, out);
+	case OIL_CS_RGBA_NOGAMMA:
+		yscale_out_rgba_nogamma(sums, width, out);
 		break;
-	case OIL_CS_RGBX_NOLIN:
-		yscale_out_rgbx_nolin(sums, width, out);
+	case OIL_CS_RGBX_NOGAMMA:
+		yscale_out_rgbx_nogamma(sums, width, out);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -595,7 +595,7 @@ static void yscale_up_rgbx(float **in, int len, float *coeffs,
 }
 #endif
 
-static void yscale_up_rgba_nolin(float **in, int len, float *coeffs,
+static void yscale_up_rgba_nogamma(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i, j;
@@ -620,7 +620,7 @@ static void yscale_up_rgba_nolin(float **in, int len, float *coeffs,
 	}
 }
 
-static void yscale_up_rgbx_nolin(float **in, int len, float *coeffs,
+static void yscale_up_rgbx_nogamma(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i, j;
@@ -687,18 +687,18 @@ static void yscale_up(float **in, int len, float *coeffs, unsigned char *out,
 		yscale_up_rgbx(in, len, coeffs, out);
 #endif
 		break;
-	case OIL_CS_RGB_NOLIN:
+	case OIL_CS_RGB_NOGAMMA:
 #if defined(OIL_USE_SSE2)
 		oil_yscale_up_g_cmyk_sse2(in, len, coeffs, out);
 #else
 		yscale_up_g_cmyk(in, len, coeffs, out);
 #endif
 		break;
-	case OIL_CS_RGBA_NOLIN:
-		yscale_up_rgba_nolin(in, len, coeffs, out);
+	case OIL_CS_RGBA_NOGAMMA:
+		yscale_up_rgba_nogamma(in, len, coeffs, out);
 		break;
-	case OIL_CS_RGBX_NOLIN:
-		yscale_up_rgbx_nolin(in, len, coeffs, out);
+	case OIL_CS_RGBX_NOGAMMA:
+		yscale_up_rgbx_nogamma(in, len, coeffs, out);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -960,7 +960,7 @@ static void scale_down_ga(unsigned char *in, float *sums_y, int out_width, float
 }
 #endif
 
-static void scale_down_rgb_nolin(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+static void scale_down_rgb_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
@@ -983,7 +983,7 @@ static void scale_down_rgb_nolin(unsigned char *in, float *sums_y, int out_width
 	}
 }
 
-static void scale_down_rgba_nolin(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
@@ -1008,7 +1008,7 @@ static void scale_down_rgba_nolin(unsigned char *in, float *sums_y, int out_widt
 	}
 }
 
-static void scale_down_rgbx_nolin(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y)
 {
 	int i, j, k;
@@ -1241,7 +1241,7 @@ static void xscale_up_g(unsigned char *in, int width_in, float *out,
 }
 #endif
 
-static void xscale_up_rgb_nolin(unsigned char *in, int width_in, float *out,
+static void xscale_up_rgb_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1260,7 +1260,7 @@ static void xscale_up_rgb_nolin(unsigned char *in, int width_in, float *out,
 	}
 }
 
-static void xscale_up_rgba_nolin(unsigned char *in, int width_in, float *out,
+static void xscale_up_rgba_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1280,7 +1280,7 @@ static void xscale_up_rgba_nolin(unsigned char *in, int width_in, float *out,
 	}
 }
 
-static void xscale_up_rgbx_nolin(unsigned char *in, int width_in, float *out,
+static void xscale_up_rgbx_nogamma(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1349,14 +1349,14 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 		xscale_up_rgbx(in, width_in, out, coeff_buf, border_buf);
 #endif
 		break;
-	case OIL_CS_RGB_NOLIN:
-		xscale_up_rgb_nolin(in, width_in, out, coeff_buf, border_buf);
+	case OIL_CS_RGB_NOGAMMA:
+		xscale_up_rgb_nogamma(in, width_in, out, coeff_buf, border_buf);
 		break;
-	case OIL_CS_RGBA_NOLIN:
-		xscale_up_rgba_nolin(in, width_in, out, coeff_buf, border_buf);
+	case OIL_CS_RGBA_NOGAMMA:
+		xscale_up_rgba_nogamma(in, width_in, out, coeff_buf, border_buf);
 		break;
-	case OIL_CS_RGBX_NOLIN:
-		xscale_up_rgbx_nolin(in, width_in, out, coeff_buf, border_buf);
+	case OIL_CS_RGBX_NOGAMMA:
+		xscale_up_rgbx_nogamma(in, width_in, out, coeff_buf, border_buf);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -1622,14 +1622,14 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		scale_down_rgbx(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #endif
 		break;
-	case OIL_CS_RGB_NOLIN:
-		scale_down_rgb_nolin(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+	case OIL_CS_RGB_NOGAMMA:
+		scale_down_rgb_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
-	case OIL_CS_RGBA_NOLIN:
-		scale_down_rgba_nolin(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+	case OIL_CS_RGBA_NOGAMMA:
+		scale_down_rgba_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
-	case OIL_CS_RGBX_NOLIN:
-		scale_down_rgbx_nolin(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+	case OIL_CS_RGBX_NOGAMMA:
+		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
