@@ -490,41 +490,45 @@ void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 		sum = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum, scale), half));
+		idx = vcvtq_s32_f32(vfmaq_f32(half, sum, scale));
 
 		v0 = vld1q_f32(in[0] + i + 4);
 		v1 = vld1q_f32(in[1] + i + 4);
 		v2 = vld1q_f32(in[2] + i + 4);
 		v3 = vld1q_f32(in[3] + i + 4);
-		sum2 = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
 		sum2 = vminq_f32(vmaxq_f32(sum2, zero), one);
-		idx2 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum2, scale), half));
+		idx2 = vcvtq_s32_f32(vfmaq_f32(half, sum2, scale));
 
 		v0 = vld1q_f32(in[0] + i + 8);
 		v1 = vld1q_f32(in[1] + i + 8);
 		v2 = vld1q_f32(in[2] + i + 8);
 		v3 = vld1q_f32(in[3] + i + 8);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 		sum = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx3 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum, scale), half));
+		idx3 = vcvtq_s32_f32(vfmaq_f32(half, sum, scale));
 
 		v0 = vld1q_f32(in[0] + i + 12);
 		v1 = vld1q_f32(in[1] + i + 12);
 		v2 = vld1q_f32(in[2] + i + 12);
 		v3 = vld1q_f32(in[3] + i + 12);
-		sum2 = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
 		sum2 = vminq_f32(vmaxq_f32(sum2, zero), one);
-		idx4 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum2, scale), half));
+		idx4 = vcvtq_s32_f32(vfmaq_f32(half, sum2, scale));
 
 		/* Pack 4x4 int32 -> 2x8 int16 -> 16 uint8 */
 		{
@@ -543,21 +547,23 @@ void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 		sum = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum, scale), half));
+		idx = vcvtq_s32_f32(vfmaq_f32(half, sum, scale));
 
 		v0 = vld1q_f32(in[0] + i + 4);
 		v1 = vld1q_f32(in[1] + i + 4);
 		v2 = vld1q_f32(in[2] + i + 4);
 		v3 = vld1q_f32(in[3] + i + 4);
-		sum2 = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum2 = vmulq_f32(c0, v0);
+		sum2 = vfmaq_f32(sum2, c1, v1);
+		sum2 = vfmaq_f32(sum2, c2, v2);
+		sum2 = vfmaq_f32(sum2, c3, v3);
 		sum2 = vminq_f32(vmaxq_f32(sum2, zero), one);
-		idx2 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum2, scale), half));
+		idx2 = vcvtq_s32_f32(vfmaq_f32(half, sum2, scale));
 
 		{
 			int16x8_t n16 = vcombine_s16(vqmovn_s32(idx), vqmovn_s32(idx2));
@@ -571,11 +577,12 @@ void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 		v1 = vld1q_f32(in[1] + i);
 		v2 = vld1q_f32(in[2] + i);
 		v3 = vld1q_f32(in[3] + i);
-		sum = vaddq_f32(
-			vaddq_f32(vmulq_f32(c0, v0), vmulq_f32(c1, v1)),
-			vaddq_f32(vmulq_f32(c2, v2), vmulq_f32(c3, v3)));
+		sum = vmulq_f32(c0, v0);
+		sum = vfmaq_f32(sum, c1, v1);
+		sum = vfmaq_f32(sum, c2, v2);
+		sum = vfmaq_f32(sum, c3, v3);
 		sum = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(sum, scale), half));
+		idx = vcvtq_s32_f32(vfmaq_f32(half, sum, scale));
 		{
 			int16x4_t n16 = vqmovn_s32(idx);
 			uint8x8_t n8 = vqmovun_s16(vcombine_s16(n16, n16));
