@@ -58,6 +58,10 @@ void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf);
 void oil_scale_down_rgb_nogamma_sse2(unsigned char *in, float *sums_y,
 	int out_width, float *coeffs_x, int *border_buf, float *coeffs_y);
+void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y,
+	int out_width, float *coeffs_x, int *border_buf, float *coeffs_y);
+void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
+	unsigned char *out);
 #endif
 
 #endif

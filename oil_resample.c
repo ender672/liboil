@@ -456,7 +456,11 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_rgba_nogamma(sums, width, out);
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_yscale_out_rgbx_nogamma_sse2(sums, width, out);
+#else
 		yscale_out_rgbx_nogamma(sums, width, out);
+#endif
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
@@ -1637,7 +1641,11 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		scale_down_rgba_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_scale_down_rgbx_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#else
 		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#endif
 		break;
 	case OIL_CS_UNKNOWN:
 		break;

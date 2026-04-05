@@ -2081,6 +2081,156 @@ void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
+void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width, unsigned char *out)
+{
+	int i;
+	__m128 vals, ab, cd, f0, f1, f2;
+	__m128i idx, v0, v1, v2;
+	__m128 scale, half, zero;
+
+	scale = _mm_set1_ps(255.0f);
+	half = _mm_set1_ps(0.5f);
+	zero = _mm_setzero_ps();
+
+	for (i=0; i<width; i++) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f2, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		/* clamp to [0, 1], scale to [0, 255], round */
+		vals = _mm_max_ps(vals, zero);
+		vals = _mm_min_ps(vals, _mm_set1_ps(1.0f));
+		vals = _mm_add_ps(_mm_mul_ps(vals, scale), half);
+		idx = _mm_cvttps_epi32(vals);
+
+		out[0] = (unsigned char)_mm_cvtsi128_si32(idx);
+		out[1] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 4));
+		out[2] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 8));
+		out[3] = 255;
+
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+
+		sums += 12;
+		out += 4;
+	}
+}
+
+void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
+	__m128 sum_r2, sum_g2, sum_b2;
+	__m128 coeffs_y, sums_y, sample_y;
+
+	coeffs_y = _mm_load_ps(coeffs_y_f);
+
+	sum_r = _mm_setzero_ps();
+	sum_g = _mm_setzero_ps();
+	sum_b = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		if (border_buf[i] >= 2) {
+			sum_r2 = _mm_setzero_ps();
+			sum_g2 = _mm_setzero_ps();
+			sum_b2 = _mm_setzero_ps();
+
+			for (j=0; j+1<border_buf[i]; j+=2) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
+
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				sample_x = _mm_set1_ps(i2f_map[in[4]]);
+				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_r2);
+
+				sample_x = _mm_set1_ps(i2f_map[in[5]]);
+				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
+
+				sample_x = _mm_set1_ps(i2f_map[in[6]]);
+				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_b2);
+
+				in += 8;
+				coeffs_x_f += 8;
+			}
+
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+
+			sum_r = _mm_add_ps(sum_r, sum_r2);
+			sum_g = _mm_add_ps(sum_g, sum_g2);
+			sum_b = _mm_add_ps(sum_b, sum_b2);
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				sample_x = _mm_set1_ps(i2f_map[in[0]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(i2f_map[in[1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(i2f_map[in[2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+		}
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
+		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
+		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+	}
+}
+
 void oil_scale_down_rgb_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
