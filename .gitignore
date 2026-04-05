@@ -8,6 +8,7 @@ sdltest
 *.png
 
 local.mk
+DO_NOT_COMMIT*
 .vscode/
 
 # OSX
