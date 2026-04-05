@@ -1501,18 +1501,12 @@ void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 			__m128 t2_a = _mm_add_ps(sum, t1);
 
 			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
-			out[0] = _mm_cvtss_f32(t2_r);
-			out[1] = _mm_cvtss_f32(t2_g);
-			out[2] = _mm_cvtss_f32(t2_b);
-			out[3] = _mm_cvtss_f32(t2_a);
-			out[4] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_r, t2_r, _MM_SHUFFLE(1,1,1,1)));
-			out[5] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_g, t2_g, _MM_SHUFFLE(1,1,1,1)));
-			out[6] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_b, t2_b, _MM_SHUFFLE(1,1,1,1)));
-			out[7] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_a, t2_a, _MM_SHUFFLE(1,1,1,1)));
+			{
+				__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
+				__m128 ba = _mm_unpacklo_ps(t2_b, t2_a);
+				_mm_storeu_ps(out, _mm_movelh_ps(rg, ba));
+				_mm_storeu_ps(out + 4, _mm_movehl_ps(ba, rg));
+			}
 
 			out += 8;
 			coeff_buf += 8;
@@ -2594,18 +2588,12 @@ void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out
 			__m128 t2_a = _mm_add_ps(sum, t1);
 
 			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
-			out[0] = _mm_cvtss_f32(t2_r);
-			out[1] = _mm_cvtss_f32(t2_g);
-			out[2] = _mm_cvtss_f32(t2_b);
-			out[3] = _mm_cvtss_f32(t2_a);
-			out[4] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_r, t2_r, _MM_SHUFFLE(1,1,1,1)));
-			out[5] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_g, t2_g, _MM_SHUFFLE(1,1,1,1)));
-			out[6] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_b, t2_b, _MM_SHUFFLE(1,1,1,1)));
-			out[7] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_a, t2_a, _MM_SHUFFLE(1,1,1,1)));
+			{
+				__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
+				__m128 ba = _mm_unpacklo_ps(t2_b, t2_a);
+				_mm_storeu_ps(out, _mm_movelh_ps(rg, ba));
+				_mm_storeu_ps(out + 4, _mm_movehl_ps(ba, rg));
+			}
 
 			out += 8;
 			coeff_buf += 8;
