@@ -2345,13 +2345,13 @@ void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width, unsigned char *out
 	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
 
-	for (i=0; i<width; i++) {
+	for (i=0; i+1<width; i+=2) {
+		/* Pixel 1: load 4 accumulators */
 		v0 = _mm_load_si128((__m128i *)sums);
 		v1 = _mm_load_si128((__m128i *)(sums + 4));
 		v2 = _mm_load_si128((__m128i *)(sums + 8));
 		v3 = _mm_load_si128((__m128i *)(sums + 12));
 
-		/* Gather first element of each accumulator: {R, G, B, A} */
 		f0 = _mm_castsi128_ps(v0);
 		f1 = _mm_castsi128_ps(v1);
 		f2 = _mm_castsi128_ps(v2);
@@ -2360,17 +2360,12 @@ void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width, unsigned char *out
 		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
 		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
 
-		/* Clamp alpha to [0, 1] */
 		alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
 		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
 		alpha = _mm_cvtss_f32(alpha_v);
-
-		/* Divide RGB by alpha (skip if alpha == 0) */
 		if (alpha != 0) {
 			vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
 		}
-
-		/* Clamp RGB to [0, 1], replace alpha with clamped alpha */
 		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 		{
 			__m128 hi = _mm_shuffle_ps(vals, alpha_v,
@@ -2378,8 +2373,93 @@ void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width, unsigned char *out
 			vals = _mm_shuffle_ps(vals, hi,
 				_MM_SHUFFLE(2, 0, 1, 0));
 		}
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
 
-		/* Scale to [0, 255], round, pack to bytes */
+		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
+		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
+		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+
+		/* Pixel 2: load 4 accumulators */
+		{
+			__m128i w0, w1, w2, w3, idx2;
+			__m128 g0, g1, g2, g3, ab2, cd2, vals2, alpha_v2;
+
+			w0 = _mm_load_si128((__m128i *)(sums + 16));
+			w1 = _mm_load_si128((__m128i *)(sums + 20));
+			w2 = _mm_load_si128((__m128i *)(sums + 24));
+			w3 = _mm_load_si128((__m128i *)(sums + 28));
+
+			g0 = _mm_castsi128_ps(w0);
+			g1 = _mm_castsi128_ps(w1);
+			g2 = _mm_castsi128_ps(w2);
+			g3 = _mm_castsi128_ps(w3);
+			ab2 = _mm_shuffle_ps(g0, g1, _MM_SHUFFLE(0, 0, 0, 0));
+			cd2 = _mm_shuffle_ps(g2, g3, _MM_SHUFFLE(0, 0, 0, 0));
+			vals2 = _mm_shuffle_ps(ab2, cd2, _MM_SHUFFLE(2, 0, 2, 0));
+
+			alpha_v2 = _mm_shuffle_ps(vals2, vals2,
+				_MM_SHUFFLE(3, 3, 3, 3));
+			alpha_v2 = _mm_min_ps(_mm_max_ps(alpha_v2, zero), one);
+			alpha = _mm_cvtss_f32(alpha_v2);
+			if (alpha != 0) {
+				vals2 = _mm_mul_ps(vals2, _mm_rcp_ps(alpha_v2));
+			}
+			vals2 = _mm_min_ps(_mm_max_ps(vals2, zero), one);
+			{
+				__m128 hi2 = _mm_shuffle_ps(vals2, alpha_v2,
+					_MM_SHUFFLE(0, 0, 2, 2));
+				vals2 = _mm_shuffle_ps(vals2, hi2,
+					_MM_SHUFFLE(2, 0, 1, 0));
+			}
+			idx2 = _mm_cvttps_epi32(_mm_add_ps(
+				_mm_mul_ps(vals2, scale), half));
+
+			packed = _mm_packs_epi32(idx, idx2);
+			packed = _mm_packus_epi16(packed, packed);
+			_mm_storel_epi64((__m128i *)out, packed);
+
+			_mm_store_si128((__m128i *)(sums + 16),
+				_mm_srli_si128(w0, 4));
+			_mm_store_si128((__m128i *)(sums + 20),
+				_mm_srli_si128(w1, 4));
+			_mm_store_si128((__m128i *)(sums + 24),
+				_mm_srli_si128(w2, 4));
+			_mm_store_si128((__m128i *)(sums + 28),
+				_mm_srli_si128(w3, 4));
+		}
+
+		sums += 32;
+		out += 8;
+	}
+
+	for (; i<width; i++) {
+		v0 = _mm_load_si128((__m128i *)sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		f0 = _mm_castsi128_ps(v0);
+		f1 = _mm_castsi128_ps(v1);
+		f2 = _mm_castsi128_ps(v2);
+		f3 = _mm_castsi128_ps(v3);
+		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+		alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
+		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+		alpha = _mm_cvtss_f32(alpha_v);
+		if (alpha != 0) {
+			vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
+		}
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
+		{
+			__m128 hi = _mm_shuffle_ps(vals, alpha_v,
+				_MM_SHUFFLE(0, 0, 2, 2));
+			vals = _mm_shuffle_ps(vals, hi,
+				_MM_SHUFFLE(2, 0, 1, 0));
+		}
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
 		packed = _mm_packs_epi32(idx, idx);
 		packed = _mm_packus_epi16(packed, packed);
