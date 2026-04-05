@@ -1350,7 +1350,11 @@ static void oil_xscale_up(unsigned char *in, int width_in, float *out,
 #endif
 		break;
 	case OIL_CS_RGB_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_xscale_up_rgb_nogamma_sse2(in, width_in, out, coeff_buf, border_buf);
+#else
 		xscale_up_rgb_nogamma(in, width_in, out, coeff_buf, border_buf);
+#endif
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 		xscale_up_rgba_nogamma(in, width_in, out, coeff_buf, border_buf);
@@ -1623,7 +1627,11 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #endif
 		break;
 	case OIL_CS_RGB_NOGAMMA:
+#if defined(OIL_USE_SSE2)
+		oil_scale_down_rgb_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#else
 		scale_down_rgb_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+#endif
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 		scale_down_rgba_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
