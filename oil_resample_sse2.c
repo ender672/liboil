@@ -2037,14 +2037,11 @@ void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 			t1 = _mm_movehl_ps(sum, sum);
 			__m128 t2_b = _mm_add_ps(sum, t1);
 
-			out[0] = _mm_cvtss_f32(t2_r);
-			out[1] = _mm_cvtss_f32(t2_g);
-			out[2] = _mm_cvtss_f32(t2_b);
-			out[3] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_r, t2_r, _MM_SHUFFLE(1,1,1,1)));
-			out[4] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_g, t2_g, _MM_SHUFFLE(1,1,1,1)));
-			out[5] = _mm_cvtss_f32(
+			__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
+			_mm_storel_pi((__m64 *)out, rg);
+			_mm_store_ss(out + 2, t2_b);
+			_mm_storeh_pi((__m64 *)(out + 3), rg);
+			_mm_store_ss(out + 5,
 				_mm_shuffle_ps(t2_b, t2_b, _MM_SHUFFLE(1,1,1,1)));
 
 			out += 6;
