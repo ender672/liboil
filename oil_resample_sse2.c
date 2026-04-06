@@ -2078,42 +2078,88 @@ void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width, unsigned char *out)
 {
 	int i;
-	__m128 vals, ab, cd, f0, f1, f2;
-	__m128i idx, v0, v1, v2;
-	__m128 scale, half, zero;
+	__m128 scale, half, one, zero;
+	__m128 vals;
+	__m128i idx, packed;
+	__m128i z, mask, x_val;
 
 	scale = _mm_set1_ps(255.0f);
 	half = _mm_set1_ps(0.5f);
+	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
+	z = _mm_setzero_si128();
+	mask = _mm_set_epi32(0, -1, -1, -1);
+	x_val = _mm_set_epi32(255, 0, 0, 0);
 
-	for (i=0; i<width; i++) {
-		v0 = _mm_load_si128((__m128i *)sums);
+	for (i=0; i+1<width; i+=2) {
+		/* Pixel 1: interleaved layout - tap 0 is [R0 G0 B0 X0] */
+		__m128i v1, v2, v3;
+
+		vals = _mm_load_ps(sums);
 		v1 = _mm_load_si128((__m128i *)(sums + 4));
 		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
 
-		f0 = _mm_castsi128_ps(v0);
-		f1 = _mm_castsi128_ps(v1);
-		f2 = _mm_castsi128_ps(v2);
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f2, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
+		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
 
-		/* clamp to [0, 1], scale to [0, 255], round */
-		vals = _mm_max_ps(vals, zero);
-		vals = _mm_min_ps(vals, _mm_set1_ps(1.0f));
-		vals = _mm_add_ps(_mm_mul_ps(vals, scale), half);
-		idx = _mm_cvttps_epi32(vals);
+		/* Shift: move taps 1-3 down, zero tap 3 */
+		_mm_store_si128((__m128i *)sums, v1);
+		_mm_store_si128((__m128i *)(sums + 4), v2);
+		_mm_store_si128((__m128i *)(sums + 8), v3);
+		_mm_store_si128((__m128i *)(sums + 12), z);
 
-		out[0] = (unsigned char)_mm_cvtsi128_si32(idx);
-		out[1] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 4));
-		out[2] = (unsigned char)_mm_cvtsi128_si32(_mm_srli_si128(idx, 8));
-		out[3] = 255;
+		/* Pixel 2 */
+		{
+			__m128i w1, w2, w3, idx2;
+			__m128 vals2;
 
-		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
-		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
-		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
+			vals2 = _mm_load_ps(sums + 16);
+			w1 = _mm_load_si128((__m128i *)(sums + 20));
+			w2 = _mm_load_si128((__m128i *)(sums + 24));
+			w3 = _mm_load_si128((__m128i *)(sums + 28));
 
-		sums += 12;
+			vals2 = _mm_min_ps(_mm_max_ps(vals2, zero), one);
+			idx2 = _mm_cvttps_epi32(_mm_add_ps(
+				_mm_mul_ps(vals2, scale), half));
+			idx2 = _mm_or_si128(_mm_and_si128(idx2, mask), x_val);
+
+			packed = _mm_packs_epi32(idx, idx2);
+			packed = _mm_packus_epi16(packed, packed);
+			_mm_storel_epi64((__m128i *)out, packed);
+
+			_mm_store_si128((__m128i *)(sums + 16), w1);
+			_mm_store_si128((__m128i *)(sums + 20), w2);
+			_mm_store_si128((__m128i *)(sums + 24), w3);
+			_mm_store_si128((__m128i *)(sums + 28), z);
+		}
+
+		sums += 32;
+		out += 8;
+	}
+
+	for (; i<width; i++) {
+		__m128i v1, v2, v3;
+
+		vals = _mm_load_ps(sums);
+		v1 = _mm_load_si128((__m128i *)(sums + 4));
+		v2 = _mm_load_si128((__m128i *)(sums + 8));
+		v3 = _mm_load_si128((__m128i *)(sums + 12));
+
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
+		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
+		packed = _mm_packs_epi32(idx, idx);
+		packed = _mm_packus_epi16(packed, packed);
+		*(int *)out = _mm_cvtsi128_si32(packed);
+
+		_mm_store_si128((__m128i *)sums, v1);
+		_mm_store_si128((__m128i *)(sums + 4), v2);
+		_mm_store_si128((__m128i *)(sums + 8), v3);
+		_mm_store_si128((__m128i *)(sums + 12), z);
+
+		sums += 16;
 		out += 4;
 	}
 }
@@ -2124,9 +2170,12 @@ void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int i, j;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
 	__m128 sum_r2, sum_g2, sum_b2;
-	__m128 coeffs_y, sums_y, sample_y;
+	__m128 cy0, cy1, cy2, cy3;
 
-	coeffs_y = _mm_load_ps(coeffs_y_f);
+	cy0 = _mm_set1_ps(coeffs_y_f[0]);
+	cy1 = _mm_set1_ps(coeffs_y_f[1]);
+	cy2 = _mm_set1_ps(coeffs_y_f[2]);
+	cy3 = _mm_set1_ps(coeffs_y_f[3]);
 
 	sum_r = _mm_setzero_ps();
 	sum_g = _mm_setzero_ps();
@@ -2201,23 +2250,34 @@ void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+		/* Vertical accumulation using interleaved sums_y layout:
+		 * [R0 G0 B0 X0 | R1 G1 B1 X1 | R2 G2 B2 X2 | R3 G3 B3 X3]
+		 */
+		{
+			__m128 rg, bx, rgbx, sy;
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+			rg = _mm_unpacklo_ps(sum_r, sum_g);
+			bx = _mm_unpacklo_ps(sum_b, sum_b);
+			rgbx = _mm_movelh_ps(rg, bx);
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+			sy = _mm_load_ps(sums_y_out);
+			sy = _mm_add_ps(_mm_mul_ps(cy0, rgbx), sy);
+			_mm_store_ps(sums_y_out, sy);
+
+			sy = _mm_load_ps(sums_y_out + 4);
+			sy = _mm_add_ps(_mm_mul_ps(cy1, rgbx), sy);
+			_mm_store_ps(sums_y_out + 4, sy);
+
+			sy = _mm_load_ps(sums_y_out + 8);
+			sy = _mm_add_ps(_mm_mul_ps(cy2, rgbx), sy);
+			_mm_store_ps(sums_y_out + 8, sy);
+
+			sy = _mm_load_ps(sums_y_out + 12);
+			sy = _mm_add_ps(_mm_mul_ps(cy3, rgbx), sy);
+			_mm_store_ps(sums_y_out + 12, sy);
+
+			sums_y_out += 16;
+		}
 
 		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
 		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
