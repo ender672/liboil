@@ -448,7 +448,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		break;
 	case OIL_CS_RGBA:
 #if defined(OIL_USE_SSE2)
-		oil_yscale_out_rgba_sse2(sums, width, out);
+		oil_yscale_out_rgba_sse2(sums, width, out, tap);
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgba_neon(sums, width, out);
 #else
@@ -1707,7 +1707,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_RGBA:
 #if defined(OIL_USE_SSE2)
-		oil_scale_down_rgba_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_rgba_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgba_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else

@@ -1302,27 +1302,26 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
+void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out,
+	int tap)
 {
-	int i;
+	int i, tap_off;
 	__m128 scale, one, zero;
 	__m128 vals, alpha_v;
-	__m128i idx, v1, v2, v3, z;
+	__m128i idx, z;
 	float alpha;
 	unsigned char *lut;
 
 	lut = l2s_map;
+	tap_off = tap * 4;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
 	z = _mm_setzero_si128();
 
 	for (i=0; i<width; i++) {
-		/* Interleaved layout: tap 0 is [R0 G0 B0 A0] */
-		vals = _mm_load_ps(sums);
-		v1 = _mm_load_si128((__m128i *)(sums + 4));
-		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
+		/* Read only the current tap */
+		vals = _mm_load_ps(sums + tap_off);
 
 		/* Clamp alpha to [0, 1] */
 		alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
@@ -1343,11 +1342,8 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out)
 		out[2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
 		out[3] = (int)(alpha * 255.0f + 0.5f);
 
-		/* Shift: move taps 1-3 down, zero tap 3 */
-		_mm_store_si128((__m128i *)sums, v1);
-		_mm_store_si128((__m128i *)(sums + 4), v2);
-		_mm_store_si128((__m128i *)(sums + 8), v3);
-		_mm_store_si128((__m128i *)(sums + 12), z);
+		/* Zero consumed tap */
+		_mm_store_si128((__m128i *)(sums + tap_off), z);
 
 		sums += 16;
 		out += 4;
@@ -1542,9 +1538,11 @@ void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 }
 
 void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	int tap)
 {
 	int i, j;
+	int off0, off1, off2, off3;
 	__m128 coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
 	__m128 sum_r, sum_g, sum_b, sum_a;
 	__m128 sum_r2, sum_g2, sum_b2, sum_a2;
@@ -1552,6 +1550,10 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	float *sl;
 
 	sl = s2l_map;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 	cy0 = _mm_set1_ps(coeffs_y_f[0]);
 	cy1 = _mm_set1_ps(coeffs_y_f[1]);
 	cy2 = _mm_set1_ps(coeffs_y_f[2]);
@@ -1570,31 +1572,35 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 			sum_a2 = _mm_setzero_ps();
 
 			for (j=0; j+1<border_buf[i]; j+=2) {
+				unsigned int px0, px1;
+				memcpy(&px0, in, 4);
+				memcpy(&px1, in + 4, 4);
+
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
 
-				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[3]]));
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[px0 >> 24]));
 
-				sample_x = _mm_set1_ps(sl[in[0]]);
+				sample_x = _mm_set1_ps(sl[px0 & 0xFF]);
 				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(sl[in[1]]);
+				sample_x = _mm_set1_ps(sl[(px0 >> 8) & 0xFF]);
 				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = _mm_set1_ps(sl[in[2]]);
+				sample_x = _mm_set1_ps(sl[(px0 >> 16) & 0xFF]);
 				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
 				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
 
-				coeffs_x2_a = _mm_mul_ps(coeffs_x2, _mm_set1_ps(i2f_map[in[7]]));
+				coeffs_x2_a = _mm_mul_ps(coeffs_x2, _mm_set1_ps(i2f_map[px1 >> 24]));
 
-				sample_x = _mm_set1_ps(sl[in[4]]);
+				sample_x = _mm_set1_ps(sl[px1 & 0xFF]);
 				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_r2);
 
-				sample_x = _mm_set1_ps(sl[in[5]]);
+				sample_x = _mm_set1_ps(sl[(px1 >> 8) & 0xFF]);
 				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_g2);
 
-				sample_x = _mm_set1_ps(sl[in[6]]);
+				sample_x = _mm_set1_ps(sl[(px1 >> 16) & 0xFF]);
 				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2_a, sample_x), sum_b2);
 
 				sum_a2 = _mm_add_ps(coeffs_x2_a, sum_a2);
@@ -1649,9 +1655,7 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using interleaved sums_y layout:
-		 * [R0 G0 B0 A0 | R1 G1 B1 A1 | R2 G2 B2 A2 | R3 G3 B3 A3]
-		 */
+		/* Vertical accumulation using ring buffer offsets */
 		{
 			__m128 rg, ba, rgba, sy;
 
@@ -1659,21 +1663,21 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 			ba = _mm_unpacklo_ps(sum_b, sum_a);
 			rgba = _mm_movelh_ps(rg, ba);
 
-			sy = _mm_load_ps(sums_y_out);
+			sy = _mm_load_ps(sums_y_out + off0);
 			sy = _mm_add_ps(_mm_mul_ps(cy0, rgba), sy);
-			_mm_store_ps(sums_y_out, sy);
+			_mm_store_ps(sums_y_out + off0, sy);
 
-			sy = _mm_load_ps(sums_y_out + 4);
+			sy = _mm_load_ps(sums_y_out + off1);
 			sy = _mm_add_ps(_mm_mul_ps(cy1, rgba), sy);
-			_mm_store_ps(sums_y_out + 4, sy);
+			_mm_store_ps(sums_y_out + off1, sy);
 
-			sy = _mm_load_ps(sums_y_out + 8);
+			sy = _mm_load_ps(sums_y_out + off2);
 			sy = _mm_add_ps(_mm_mul_ps(cy2, rgba), sy);
-			_mm_store_ps(sums_y_out + 8, sy);
+			_mm_store_ps(sums_y_out + off2, sy);
 
-			sy = _mm_load_ps(sums_y_out + 12);
+			sy = _mm_load_ps(sums_y_out + off3);
 			sy = _mm_add_ps(_mm_mul_ps(cy3, rgba), sy);
-			_mm_store_ps(sums_y_out + 12, sy);
+			_mm_store_ps(sums_y_out + off3, sy);
 
 			sums_y_out += 16;
 		}
