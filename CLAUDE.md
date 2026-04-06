@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-liboil is a C library for fast, accurate image resizing using Catmull-Rom (bicubic) interpolation. It processes images scanline-by-scanline via a ring buffer to minimize memory usage, with proper sRGB gamma correction and premultiplied alpha handling.
+liboil is a C library for fast, accurate image resizing using Catmull-Rom (bicubic) interpolation with proper sRGB gamma correction and premultiplied alpha handling. It processes images scanline-by-scanline to minimize memory usage.
 
 ## Build Commands
 
