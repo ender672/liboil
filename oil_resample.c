@@ -968,7 +968,7 @@ static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float 
 static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y, int tap)
 {
-	int i, j, k;
+	int i, j;
 	int off0, off1, off2, off3;
 	float sample, sum[4][4] = {{ 0.0f }};
 
@@ -979,9 +979,12 @@ static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, flo
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
-			for (k=0; k<4; k++) {
-				add_sample_to_sum_f(i2f_map[in[k]], coeffs_x, sum[k]);
-			}
+			unsigned int px;
+			memcpy(&px, in, 4);
+			add_sample_to_sum_f(i2f_map[px & 0xFF], coeffs_x, sum[0]);
+			add_sample_to_sum_f(i2f_map[(px >> 8) & 0xFF], coeffs_x, sum[1]);
+			add_sample_to_sum_f(i2f_map[(px >> 16) & 0xFF], coeffs_x, sum[2]);
+			add_sample_to_sum_f(i2f_map[px >> 24], coeffs_x, sum[3]);
 			in += 4;
 			coeffs_x += 4;
 		}
