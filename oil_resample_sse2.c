@@ -28,24 +28,6 @@ void oil_shift_left_f_sse2(float *f)
 	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
 
-void oil_shift_left_interleaved_sse2(float *sums, int width)
-{
-	int i;
-	__m128i v1, v2, v3, z;
-
-	z = _mm_setzero_si128();
-	for (i=0; i<width; i++) {
-		v1 = _mm_load_si128((__m128i *)(sums + 4));
-		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
-		_mm_store_si128((__m128i *)sums, v1);
-		_mm_store_si128((__m128i *)(sums + 4), v2);
-		_mm_store_si128((__m128i *)(sums + 8), v3);
-		_mm_store_si128((__m128i *)(sums + 12), z);
-		sums += 16;
-	}
-}
-
 void oil_yscale_out_nonlinear_sse2(float *sums, int len, unsigned char *out)
 {
 	int i;

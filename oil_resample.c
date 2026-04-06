@@ -1846,25 +1846,17 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 
 int oil_scale_out_discard(struct oil_scale *os)
 {
-	int i, sl_len;
-
 	if (oil_scale_slots(os) != 0) {
 		return -1;
 	}
 
 	if (os->out_height <= os->in_height) {
-#if defined(OIL_USE_SSE2)
-		if (os->cs == OIL_CS_RGBA_NOGAMMA) {
-			oil_shift_left_interleaved_sse2(os->sums_y,
-				os->out_width);
-		} else
-#endif
-		{
-			sl_len = os->out_width * OIL_CMP(os->cs);
-			for (i=0; i<sl_len; i++) {
-				shift_left_f(os->sums_y + i * 4);
-			}
-		}
+		/* Use yscale_out to shift the sums_y accumulators, discarding
+		 * the output pixels. This avoids needing layout-specific shift
+		 * logic for each colorspace's sums_y memory layout. */
+		int sl_len = os->out_width * OIL_CMP(os->cs);
+		unsigned char tmp[sl_len];
+		yscale_out(os->sums_y, os->out_width, tmp, os->cs);
 	} else {
 		os->borders_y[os->in_pos - 1] -= 1;
 	}
