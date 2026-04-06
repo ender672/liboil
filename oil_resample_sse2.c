@@ -2766,14 +2766,28 @@ void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int tap)
 {
 	int i, j;
-	int off0, off1, off2, off3;
 	__m128 coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
 	__m128 sum_r, sum_g, sum_b, sum_a;
 	__m128 sum_r2, sum_g2, sum_b2, sum_a2;
-	__m128 cy0, cy1, cy2, cy3;
 	float *lut;
-
-	lut = i2f_map;
+#if defined(__AVX__) && defined(__FMA__)
+	__m256 cy256_lo, cy256_hi;
+	{
+		float cy_phys[4];
+		cy_phys[tap & 3] = coeffs_y_f[0];
+		cy_phys[(tap + 1) & 3] = coeffs_y_f[1];
+		cy_phys[(tap + 2) & 3] = coeffs_y_f[2];
+		cy_phys[(tap + 3) & 3] = coeffs_y_f[3];
+		cy256_lo = _mm256_set_m128(
+			_mm_set1_ps(cy_phys[1]),
+			_mm_set1_ps(cy_phys[0]));
+		cy256_hi = _mm256_set_m128(
+			_mm_set1_ps(cy_phys[3]),
+			_mm_set1_ps(cy_phys[2]));
+	}
+#else
+	int off0, off1, off2, off3;
+	__m128 cy0, cy1, cy2, cy3;
 	off0 = tap * 4;
 	off1 = ((tap + 1) & 3) * 4;
 	off2 = ((tap + 2) & 3) * 4;
@@ -2782,6 +2796,9 @@ void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	cy1 = _mm_set1_ps(coeffs_y_f[1]);
 	cy2 = _mm_set1_ps(coeffs_y_f[2]);
 	cy3 = _mm_set1_ps(coeffs_y_f[3]);
+#endif
+
+	lut = i2f_map;
 
 	sum_r = _mm_setzero_ps();
 	sum_g = _mm_setzero_ps();
@@ -2884,28 +2901,43 @@ void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
 
 		/* Vertical accumulation using ring buffer offsets */
 		{
-			__m128 rg, ba, rgba, sy;
+			__m128 rg, ba, rgba;
 
 			rg = _mm_unpacklo_ps(sum_r, sum_g);
 			ba = _mm_unpacklo_ps(sum_b, sum_a);
 			rgba = _mm_movelh_ps(rg, ba);
 
-			sy = _mm_load_ps(sums_y_out + off0);
-			sy = _mm_add_ps(_mm_mul_ps(cy0, rgba), sy);
-			_mm_store_ps(sums_y_out + off0, sy);
+#if defined(__AVX__) && defined(__FMA__)
+			{
+				__m256 rgba256, sy_lo, sy_hi;
+				rgba256 = _mm256_set_m128(rgba, rgba);
+				sy_lo = _mm256_loadu_ps(sums_y_out);
+				sy_hi = _mm256_loadu_ps(sums_y_out + 8);
+				sy_lo = _mm256_fmadd_ps(cy256_lo, rgba256, sy_lo);
+				sy_hi = _mm256_fmadd_ps(cy256_hi, rgba256, sy_hi);
+				_mm256_storeu_ps(sums_y_out, sy_lo);
+				_mm256_storeu_ps(sums_y_out + 8, sy_hi);
+			}
+#else
+			{
+				__m128 sy;
+				sy = _mm_load_ps(sums_y_out + off0);
+				sy = _mm_add_ps(_mm_mul_ps(cy0, rgba), sy);
+				_mm_store_ps(sums_y_out + off0, sy);
 
-			sy = _mm_load_ps(sums_y_out + off1);
-			sy = _mm_add_ps(_mm_mul_ps(cy1, rgba), sy);
-			_mm_store_ps(sums_y_out + off1, sy);
+				sy = _mm_load_ps(sums_y_out + off1);
+				sy = _mm_add_ps(_mm_mul_ps(cy1, rgba), sy);
+				_mm_store_ps(sums_y_out + off1, sy);
 
-			sy = _mm_load_ps(sums_y_out + off2);
-			sy = _mm_add_ps(_mm_mul_ps(cy2, rgba), sy);
-			_mm_store_ps(sums_y_out + off2, sy);
+				sy = _mm_load_ps(sums_y_out + off2);
+				sy = _mm_add_ps(_mm_mul_ps(cy2, rgba), sy);
+				_mm_store_ps(sums_y_out + off2, sy);
 
-			sy = _mm_load_ps(sums_y_out + off3);
-			sy = _mm_add_ps(_mm_mul_ps(cy3, rgba), sy);
-			_mm_store_ps(sums_y_out + off3, sy);
-
+				sy = _mm_load_ps(sums_y_out + off3);
+				sy = _mm_add_ps(_mm_mul_ps(cy3, rgba), sy);
+				_mm_store_ps(sums_y_out + off3, sy);
+			}
+#endif
 			sums_y_out += 16;
 		}
 
