@@ -284,6 +284,21 @@ static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 }
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
+static void yscale_out_nonlinear_rb(float *sums, int sl_len, unsigned char *out,
+	int tap)
+{
+	int i, tap_off;
+
+	tap_off = tap;
+	for (i=0; i<sl_len; i++) {
+		out[i] = clamp8(sums[tap_off]);
+		sums[tap_off] = 0.0f;
+		sums += 4;
+	}
+}
+#endif
+
+#if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
 static void yscale_out_ga(float *sums, int width, unsigned char *out)
 {
 	int i;
@@ -305,24 +320,24 @@ static void yscale_out_ga(float *sums, int width, unsigned char *out)
 #endif
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
-static void yscale_out_rgba(float *sums, int width, unsigned char *out)
+static void yscale_out_rgba(float *sums, int width, unsigned char *out, int tap)
 {
-	int i, j;
-	float alpha;
+	int i, j, tap_off;
+	float alpha, val;
 
+	tap_off = tap;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12]);
-		if (alpha != 0) {
-			for (j=0; j<3; j++) {
-				sums[j * 4] /= alpha;
-			}
-		}
+		alpha = clampf(sums[12 + tap_off]);
 		for (j=0; j<3; j++) {
-			out[j] = linear_sample_to_srgb(clampf(sums[j * 4]));
-			shift_left_f(sums + j * 4);
+			val = sums[j * 4 + tap_off];
+			if (alpha != 0) {
+				val /= alpha;
+			}
+			out[j] = linear_sample_to_srgb(clampf(val));
+			sums[j * 4 + tap_off] = 0.0f;
 		}
 		out[3] = round(alpha * 255.0f);
-		shift_left_f(sums + 12);
+		sums[12 + tap_off] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -330,41 +345,42 @@ static void yscale_out_rgba(float *sums, int width, unsigned char *out)
 
 #endif
 
-static void yscale_out_argb(float *sums, int width, unsigned char *out)
+static void yscale_out_argb(float *sums, int width, unsigned char *out, int tap)
 {
-	int i, j;
-	float alpha;
+	int i, j, tap_off;
+	float alpha, val;
 
+	tap_off = tap;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12]);
-		if (alpha != 0) {
-			for (j=0; j<3; j++) {
-				sums[j * 4] /= alpha;
-			}
-		}
+		alpha = clampf(sums[12 + tap_off]);
 		out[0] = round(alpha * 255.0f);
 		for (j=0; j<3; j++) {
-			out[j + 1] = linear_sample_to_srgb(clampf(sums[j * 4]));
-			shift_left_f(sums + j * 4);
+			val = sums[j * 4 + tap_off];
+			if (alpha != 0) {
+				val /= alpha;
+			}
+			out[j + 1] = linear_sample_to_srgb(clampf(val));
+			sums[j * 4 + tap_off] = 0.0f;
 		}
-		shift_left_f(sums + 12);
+		sums[12 + tap_off] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
 }
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
-static void yscale_out_rgbx(float *sums, int width, unsigned char *out)
+static void yscale_out_rgbx(float *sums, int width, unsigned char *out, int tap)
 {
-	int i, j;
+	int i, j, tap_off;
 
+	tap_off = tap;
 	for (i=0; i<width; i++) {
 		for (j=0; j<3; j++) {
-			out[j] = linear_sample_to_srgb(clampf(sums[j * 4]));
-			shift_left_f(sums + j * 4);
+			out[j] = linear_sample_to_srgb(clampf(sums[j * 4 + tap_off]));
+			sums[j * 4 + tap_off] = 0.0f;
 		}
 		out[3] = 255;
-		shift_left_f(sums + 12);
+		sums[12 + tap_off] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -372,24 +388,25 @@ static void yscale_out_rgbx(float *sums, int width, unsigned char *out)
 #endif
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
-static void yscale_out_rgba_nogamma(float *sums, int width, unsigned char *out)
+static void yscale_out_rgba_nogamma(float *sums, int width, unsigned char *out,
+	int tap)
 {
-	int i, j;
-	float alpha;
+	int i, j, tap_off;
+	float alpha, val;
 
+	tap_off = tap;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12]);
-		if (alpha != 0) {
-			for (j=0; j<3; j++) {
-				sums[j * 4] /= alpha;
-			}
-		}
+		alpha = clampf(sums[12 + tap_off]);
 		for (j=0; j<3; j++) {
-			out[j] = f2i(clampf(sums[j * 4]) * 255.0f);
-			shift_left_f(sums + j * 4);
+			val = sums[j * 4 + tap_off];
+			if (alpha != 0) {
+				val /= alpha;
+			}
+			out[j] = f2i(clampf(val) * 255.0f);
+			sums[j * 4 + tap_off] = 0.0f;
 		}
 		out[3] = round(alpha * 255.0f);
-		shift_left_f(sums + 12);
+		sums[12 + tap_off] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -397,17 +414,19 @@ static void yscale_out_rgba_nogamma(float *sums, int width, unsigned char *out)
 #endif
 
 #if !defined(OIL_USE_SSE2)
-static void yscale_out_rgbx_nogamma(float *sums, int width, unsigned char *out)
+static void yscale_out_rgbx_nogamma(float *sums, int width, unsigned char *out,
+	int tap)
 {
-	int i, j;
+	int i, j, tap_off;
 
+	tap_off = tap;
 	for (i=0; i<width; i++) {
 		for (j=0; j<3; j++) {
-			out[j] = f2i(clampf(sums[j * 4]) * 255.0f);
-			shift_left_f(sums + j * 4);
+			out[j] = f2i(clampf(sums[j * 4 + tap_off]) * 255.0f);
+			sums[j * 4 + tap_off] = 0.0f;
 		}
 		out[3] = 255;
-		shift_left_f(sums + 12);
+		sums[12 + tap_off] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -431,7 +450,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_cmyk_neon(sums, sl_len, out);
 #else
-		yscale_out_nonlinear(sums, sl_len, out);
+		yscale_out_nonlinear_rb(sums, sl_len, out, tap);
 #endif
 		break;
 	case OIL_CS_GA:
@@ -452,11 +471,11 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgba_neon(sums, width, out);
 #else
-		yscale_out_rgba(sums, width, out);
+		yscale_out_rgba(sums, width, out, tap);
 #endif
 		break;
 	case OIL_CS_ARGB:
-		yscale_out_argb(sums, width, out);
+		yscale_out_argb(sums, width, out, tap);
 		break;
 	case OIL_CS_RGBX:
 #if defined(OIL_USE_SSE2)
@@ -464,7 +483,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgbx_neon(sums, width, out);
 #else
-		yscale_out_rgbx(sums, width, out);
+		yscale_out_rgbx(sums, width, out, tap);
 #endif
 		break;
 	case OIL_CS_RGB_NOGAMMA:
@@ -476,7 +495,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgba_nogamma_neon(sums, width, out);
 #else
-		yscale_out_rgba_nogamma(sums, width, out);
+		yscale_out_rgba_nogamma(sums, width, out, tap);
 #endif
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
@@ -485,7 +504,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgbx_nogamma_neon(sums, width, out);
 #else
-		yscale_out_rgbx_nogamma(sums, width, out);
+		yscale_out_rgbx_nogamma(sums, width, out, tap);
 #endif
 		break;
 	case OIL_CS_UNKNOWN:
@@ -947,10 +966,16 @@ static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float 
 }
 
 static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -962,7 +987,11 @@ static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, flo
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -970,10 +999,16 @@ static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, flo
 }
 
 static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float alpha, sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float alpha, sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -987,7 +1022,11 @@ static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, flo
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -1045,10 +1084,16 @@ static void scale_down_rgb_nogamma(unsigned char *in, float *sums_y, int out_wid
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
 static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float alpha, sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float alpha, sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1062,7 +1107,11 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -1072,10 +1121,16 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 
 #if !defined(OIL_USE_SSE2)
 static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1088,7 +1143,11 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -1097,10 +1156,16 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 #endif
 
 static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float alpha, sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float alpha, sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1114,7 +1179,11 @@ static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, flo
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -1123,10 +1192,16 @@ static void scale_down_argb(unsigned char *in, float *sums_y, int out_width, flo
 
 #if !defined(OIL_USE_SSE2) && !defined(OIL_USE_NEON)
 static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	float sum[4][4] = {{ 0.0f }};
+	int off0, off1, off2, off3;
+	float sample, sum[4][4] = {{ 0.0f }};
+
+	off0 = tap;
+	off1 = (tap + 1) & 3;
+	off2 = (tap + 2) & 3;
+	off3 = (tap + 3) & 3;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1139,7 +1214,11 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 		}
 
 		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
+			sample = sum[j][0];
+			sums_y[off0] += sample * coeffs_y[0];
+			sums_y[off1] += sample * coeffs_y[1];
+			sums_y[off2] += sample * coeffs_y[2];
+			sums_y[off3] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -1702,7 +1781,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_cmyk_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
-		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #endif
 		break;
 	case OIL_CS_RGBA:
@@ -1711,7 +1790,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgba_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
-		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #endif
 		break;
 	case OIL_CS_GA:
@@ -1724,7 +1803,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #endif
 		break;
 	case OIL_CS_ARGB:
-		scale_down_argb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_argb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBX:
 #if defined(OIL_USE_SSE2)
@@ -1732,7 +1811,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgbx_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
-		scale_down_rgbx(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_rgbx(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #endif
 		break;
 	case OIL_CS_RGB_NOGAMMA:
@@ -1750,7 +1829,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgba_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
-		scale_down_rgba_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_rgba_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #endif
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
@@ -1759,7 +1838,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgbx_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
-		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #endif
 		break;
 	case OIL_CS_UNKNOWN:
