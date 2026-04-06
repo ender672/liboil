@@ -89,6 +89,7 @@ struct oil_scale {
 	float *rb; // ring buffer holding scanlines.
 	float *tmp_coeffs; // temporary buffer for calculating coeffs.
 	void *buf; // single backing allocation for all buffers above.
+	int sums_y_tap; // ring buffer offset for sums_y (0-3).
 };
 
 /**

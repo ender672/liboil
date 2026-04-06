@@ -415,7 +415,7 @@ static void yscale_out_rgbx_nogamma(float *sums, int width, unsigned char *out)
 #endif
 
 static void yscale_out(float *sums, int width, unsigned char *out,
-	enum oil_colorspace cs)
+	enum oil_colorspace cs, int tap)
 {
 	int sl_len;
 
@@ -472,7 +472,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 #if defined(OIL_USE_SSE2)
-		oil_yscale_out_rgba_nogamma_sse2(sums, width, out);
+		oil_yscale_out_rgba_nogamma_sse2(sums, width, out, tap);
 #elif defined(OIL_USE_NEON)
 		oil_yscale_out_rgba_nogamma_neon(sums, width, out);
 #else
@@ -1633,6 +1633,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 void oil_scale_restart(struct oil_scale *os)
 {
 	os->in_pos = os->out_pos = 0;
+	os->sums_y_tap = 0;
 }
 
 void oil_scale_free(struct oil_scale *os)
@@ -1745,7 +1746,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 #if defined(OIL_USE_SSE2)
-		oil_scale_down_rgba_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_rgba_nogamma_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 #elif defined(OIL_USE_NEON)
 		oil_scale_down_rgba_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 #else
@@ -1829,7 +1830,8 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 	}
 
 	if (os->out_height <= os->in_height) {
-		yscale_out(os->sums_y, os->out_width, out, os->cs);
+		yscale_out(os->sums_y, os->out_width, out, os->cs, os->sums_y_tap);
+		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
 	} else {
 		sl_len = OIL_CMP(os->cs) * os->out_width;
 		for (i=0; i<4; i++) {
@@ -1856,7 +1858,8 @@ int oil_scale_out_discard(struct oil_scale *os)
 		 * logic for each colorspace's sums_y memory layout. */
 		int sl_len = os->out_width * OIL_CMP(os->cs);
 		unsigned char tmp[sl_len];
-		yscale_out(os->sums_y, os->out_width, tmp, os->cs);
+		yscale_out(os->sums_y, os->out_width, tmp, os->cs, os->sums_y_tap);
+		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
 	} else {
 		os->borders_y[os->in_pos - 1] -= 1;
 	}
