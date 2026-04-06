@@ -1853,9 +1853,17 @@ int oil_scale_out_discard(struct oil_scale *os)
 	}
 
 	if (os->out_height <= os->in_height) {
-		sl_len = os->out_width * OIL_CMP(os->cs);
-		for (i=0; i<sl_len; i++) {
-			shift_left_f(os->sums_y + i * 4);
+#if defined(OIL_USE_SSE2)
+		if (os->cs == OIL_CS_RGBA_NOGAMMA) {
+			oil_shift_left_interleaved_sse2(os->sums_y,
+				os->out_width);
+		} else
+#endif
+		{
+			sl_len = os->out_width * OIL_CMP(os->cs);
+			for (i=0; i<sl_len; i++) {
+				shift_left_f(os->sums_y + i * 4);
+			}
 		}
 	} else {
 		os->borders_y[os->in_pos - 1] -= 1;
