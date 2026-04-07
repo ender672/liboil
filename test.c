@@ -774,7 +774,7 @@ int main(void)
 	impls[num_impls].name = "neon";
 	impls[num_impls].in = oil_scale_in_neon;
 	impls[num_impls].out = oil_scale_out_neon;
-	impls[num_impls].out_discard = oil_scale_out_discard_neon;
+	impls[num_impls].out_discard = oil_scale_out_discard;
 	num_impls++;
 #endif
 
