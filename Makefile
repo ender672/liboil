@@ -15,7 +15,7 @@ endif
 all: test imgscale benchmark
 oil_resample_sse2.o: oil_resample_sse2.c oil_resample_internal.h
 	$(CC) $(CFLAGS) -msse2 -c -o $@ $<
-oil_resample_neon.o: oil_resample_neon.c oil_resample_internal.h
+oil_resample_neon.o: oil_resample_neon.c oil_resample.h oil_resample_internal.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 test: test.c $(OIL_OBJS)
 	$(CC) $(CFLAGS) $(OIL_OBJS) test.c -o $@ -lm

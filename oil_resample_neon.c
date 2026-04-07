@@ -19,6 +19,7 @@
  * THE SOFTWARE.
  */
 
+#include "oil_resample.h"
 #include "oil_resample_internal.h"
 
 #ifdef OIL_USE_NEON
@@ -3425,6 +3426,247 @@ void oil_scale_down_rgbx_nogamma_neon(unsigned char *in, float *sums_y_out,
 		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
 		sum_x = vextq_f32(sum_x, vdupq_n_f32(0), 1);
 	}
+}
+
+/* NEON dispatch functions */
+
+static float *get_rb_line(struct oil_scale *os, int line)
+{
+	int sl_len;
+	sl_len = OIL_CMP(os->cs) * os->out_width;
+	return os->rb + line * sl_len;
+}
+
+static void yscale_out_neon(float *sums, int width, unsigned char *out,
+	enum oil_colorspace cs, int tap)
+{
+	int sl_len;
+
+	sl_len = width * OIL_CMP(cs);
+
+	switch(cs) {
+	case OIL_CS_G:
+		oil_yscale_out_nonlinear_neon(sums, sl_len, out);
+		break;
+	case OIL_CS_CMYK:
+		oil_yscale_out_cmyk_neon(sums, sl_len, out);
+		break;
+	case OIL_CS_GA:
+		oil_yscale_out_ga_neon(sums, width, out);
+		break;
+	case OIL_CS_RGB:
+		oil_yscale_out_linear_neon(sums, sl_len, out);
+		break;
+	case OIL_CS_RGBA:
+		oil_yscale_out_rgba_neon(sums, width, out);
+		break;
+	case OIL_CS_ARGB:
+		oil_yscale_out_argb(sums, width, out, tap);
+		break;
+	case OIL_CS_RGBX:
+		oil_yscale_out_rgbx_neon(sums, width, out);
+		break;
+	case OIL_CS_RGB_NOGAMMA:
+		oil_yscale_out_nonlinear_neon(sums, sl_len, out);
+		break;
+	case OIL_CS_RGBA_NOGAMMA:
+		oil_yscale_out_rgba_nogamma_neon(sums, width, out);
+		break;
+	case OIL_CS_RGBX_NOGAMMA:
+		oil_yscale_out_rgbx_nogamma_neon(sums, width, out);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
+	}
+}
+
+static void yscale_up_neon(float **in, int len, float *coeffs,
+	unsigned char *out, enum oil_colorspace cs)
+{
+	switch(cs) {
+	case OIL_CS_G:
+	case OIL_CS_CMYK:
+		oil_yscale_up_g_cmyk_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_GA:
+		oil_yscale_up_ga_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGB:
+		oil_yscale_up_rgb_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGBA:
+		oil_yscale_up_rgba_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_ARGB:
+		oil_yscale_up_argb(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGBX:
+		oil_yscale_up_rgbx_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGB_NOGAMMA:
+		oil_yscale_up_g_cmyk_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGBA_NOGAMMA:
+		oil_yscale_up_rgba_nogamma_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_RGBX_NOGAMMA:
+		oil_yscale_up_rgbx_nogamma_neon(in, len, coeffs, out);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
+	}
+}
+
+static void xscale_up_neon(unsigned char *in, int width_in, float *out,
+	enum oil_colorspace cs_in, float *coeff_buf, int *border_buf)
+{
+	switch(cs_in) {
+	case OIL_CS_RGB:
+		oil_xscale_up_rgb_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_G:
+		oil_xscale_up_g_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_CMYK:
+		oil_xscale_up_cmyk_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_RGBA:
+		oil_xscale_up_rgba_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_GA:
+		oil_xscale_up_ga_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_ARGB:
+		oil_xscale_up_argb(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_RGBX:
+		oil_xscale_up_rgbx_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_RGB_NOGAMMA:
+		oil_xscale_up_rgb_nogamma_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_RGBA_NOGAMMA:
+		oil_xscale_up_rgba_nogamma_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_RGBX_NOGAMMA:
+		oil_xscale_up_rgbx_nogamma_neon(in, width_in, out, coeff_buf, border_buf);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
+	}
+}
+
+static void down_scale_in_neon(struct oil_scale *os, unsigned char *in)
+{
+	float *coeffs_y;
+
+	coeffs_y = os->coeffs_y + os->in_pos * 4;
+
+	switch(os->cs) {
+	case OIL_CS_RGB:
+		oil_scale_down_rgb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_G:
+		oil_scale_down_g_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_CMYK:
+		oil_scale_down_cmyk_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_RGBA:
+		oil_scale_down_rgba_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_GA:
+		oil_scale_down_ga_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_ARGB:
+		oil_scale_down_argb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
+		break;
+	case OIL_CS_RGBX:
+		oil_scale_down_rgbx_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_RGB_NOGAMMA:
+		oil_scale_down_rgb_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_RGBA_NOGAMMA:
+		oil_scale_down_rgba_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_RGBX_NOGAMMA:
+		oil_scale_down_rgbx_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		break;
+	case OIL_CS_UNKNOWN:
+		break;
+	}
+
+	os->borders_y[os->out_pos] -= 1;
+	os->in_pos++;
+}
+
+static void up_scale_in_neon(struct oil_scale *os, unsigned char *in)
+{
+	float *tmp;
+
+	tmp = get_rb_line(os, os->in_pos % 4);
+	xscale_up_neon(in, os->in_width, tmp, os->cs, os->coeffs_x, os->borders_x);
+
+	os->in_pos++;
+}
+
+int oil_scale_in_neon(struct oil_scale *os, unsigned char *in)
+{
+	if (oil_scale_slots(os) == 0) {
+		return -1;
+	}
+	if (os->out_width > os->in_width) {
+		up_scale_in_neon(os, in);
+	} else {
+		down_scale_in_neon(os, in);
+	}
+	return 0;
+}
+
+int oil_scale_out_neon(struct oil_scale *os, unsigned char *out)
+{
+	int i, sl_len;
+	float *in[4];
+
+	if (oil_scale_slots(os) != 0) {
+		return -1;
+	}
+
+	if (os->out_height <= os->in_height) {
+		yscale_out_neon(os->sums_y, os->out_width, out, os->cs, os->sums_y_tap);
+		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
+	} else {
+		sl_len = OIL_CMP(os->cs) * os->out_width;
+		for (i=0; i<4; i++) {
+			in[i] = get_rb_line(os, (os->in_pos + i) % 4);
+		}
+		yscale_up_neon(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
+			os->cs);
+		os->borders_y[os->in_pos - 1] -= 1;
+	}
+
+	os->out_pos++;
+	return 0;
+}
+
+int oil_scale_out_discard_neon(struct oil_scale *os)
+{
+	if (oil_scale_slots(os) != 0) {
+		return -1;
+	}
+
+	if (os->out_height <= os->in_height) {
+		int sl_len = os->out_width * OIL_CMP(os->cs);
+		unsigned char tmp[sl_len];
+		yscale_out_neon(os->sums_y, os->out_width, tmp, os->cs, os->sums_y_tap);
+		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
+	} else {
+		os->borders_y[os->in_pos - 1] -= 1;
+	}
+
+	os->out_pos++;
+	return 0;
 }
 
 #endif /* OIL_USE_NEON */
