@@ -15,15 +15,6 @@ extern float i2f_map[256];
 extern unsigned char *l2s_map;
 extern int l2s_len;
 
-/* Scalar ARGB functions (oil_resample.c) - no SIMD variants */
-void oil_yscale_out_argb(float *sums, int width, unsigned char *out, int tap);
-void oil_yscale_up_argb(float **in, int len, float *coeffs,
-	unsigned char *out);
-void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width,
-	float *coeffs_x, int *border_buf, float *coeffs_y, int tap);
-void oil_xscale_up_argb(unsigned char *in, int width_in, float *out,
-	float *coeff_buf, int *border_buf);
-
 /* SSE2-optimized functions (oil_resample_sse2.c) */
 #if defined(OIL_USE_SSE2)
 void oil_shift_left_f_sse2(float *f);
@@ -144,6 +135,14 @@ void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
 void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y, int out_width,
 	float *coeffs_x, int *border_buf, float *coeffs_y);
 void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out);
+void oil_yscale_out_argb_neon(float *sums, int width, unsigned char *out,
+	int tap);
+void oil_yscale_up_argb_neon(float **in, int len, float *coeffs,
+	unsigned char *out);
+void oil_xscale_up_argb_neon(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf);
+void oil_scale_down_argb_neon(unsigned char *in, float *sums_y, int out_width,
+	float *coeffs_x, int *border_buf, float *coeffs_y, int tap);
 void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf);
 void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y,

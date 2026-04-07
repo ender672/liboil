@@ -319,7 +319,7 @@ static void yscale_out_rgba(float *sums, int width, unsigned char *out, int tap)
 }
 
 
-void oil_yscale_out_argb(float *sums, int width, unsigned char *out, int tap)
+static void oil_yscale_out_argb(float *sums, int width, unsigned char *out, int tap)
 {
 	int i, j, tap_off;
 	float alpha, val;
@@ -521,7 +521,7 @@ static void yscale_up_rgba(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_argb(float **in, int len, float *coeffs,
+static void oil_yscale_up_argb(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i, j;
@@ -1020,7 +1020,7 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 	}
 }
 
-void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
+static void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
@@ -1180,7 +1180,7 @@ static void xscale_up_ga(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_argb(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_argb(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
