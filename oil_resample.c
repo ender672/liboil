@@ -1864,24 +1864,6 @@ static void up_scale_in(struct oil_scale *os, unsigned char *in)
 	os->in_pos++;
 }
 
-void _oil_scale_in(struct oil_scale *os, unsigned char *in)
-{
-	float *coeffs_y;
-
-	coeffs_y = os->coeffs_y + os->in_pos * 4;
-
-#if defined(OIL_USE_SSE2)
-	oil_scale_down_rgb_sse2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
-#elif defined(OIL_USE_NEON)
-	oil_scale_down_rgb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
-#else
-	scale_down_rgb(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
-#endif
-
-	os->borders_y[os->out_pos] -= 1;
-	os->in_pos++;
-}
-
 int oil_scale_in(struct oil_scale *os, unsigned char *in)
 {
 	if (oil_scale_slots(os) == 0) {
@@ -1893,15 +1875,6 @@ int oil_scale_in(struct oil_scale *os, unsigned char *in)
 		down_scale_in(os, in);
 	}
 	return 0;
-}
-
-void _oil_scale_out(struct oil_scale *os, unsigned char *out)
-{
-	int sl_len;
-
-	sl_len = os->out_width * OIL_CMP(os->cs);
-	yscale_out_linear(os->sums_y, sl_len, out);
-	os->out_pos++;
 }
 
 int oil_scale_out(struct oil_scale *os, unsigned char *out)
