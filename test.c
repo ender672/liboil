@@ -3,7 +3,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include "oil_resample.h"
-#include "oil_resample_internal.h"
 
 typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
 typedef int (*scale_out_fn)(struct oil_scale *, unsigned char *);
@@ -764,13 +763,13 @@ int main(void)
 	impls[num_impls].out_discard = oil_scale_out_discard;
 	num_impls++;
 
-#if defined(OIL_USE_SSE2)
+#if defined(__x86_64__)
 	impls[num_impls].name = "sse2";
 	impls[num_impls].in = oil_scale_in_sse2;
 	impls[num_impls].out = oil_scale_out_sse2;
 	impls[num_impls].out_discard = oil_scale_out_discard;
 	num_impls++;
-#elif defined(OIL_USE_NEON)
+#elif defined(__aarch64__)
 	impls[num_impls].name = "neon";
 	impls[num_impls].in = oil_scale_in_neon;
 	impls[num_impls].out = oil_scale_out_neon;

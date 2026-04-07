@@ -6,7 +6,6 @@
 #include <limits.h>
 #include <png.h>
 #include "oil_resample.h"
-#include "oil_resample_internal.h"
 #include "oil_libpng.h"
 
 typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
@@ -315,14 +314,14 @@ int main(int argc, char *argv[])
 		num_impls++;
 	}
 
-#if defined(OIL_USE_SSE2)
+#if defined(__x86_64__)
 	if (impl_mode != 1) {
 		impls[num_impls].name = "sse2";
 		impls[num_impls].in = oil_scale_in_sse2;
 		impls[num_impls].out = oil_scale_out_sse2;
 		num_impls++;
 	}
-#elif defined(OIL_USE_NEON)
+#elif defined(__aarch64__)
 	if (impl_mode != 1) {
 		impls[num_impls].name = "neon";
 		impls[num_impls].in = oil_scale_in_neon;

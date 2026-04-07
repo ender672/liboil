@@ -2,14 +2,10 @@ CFLAGS += -O3 -Wall -pedantic
 -include local.mk
 
 OIL_OBJS = oil_resample.o
-ifeq ($(SIMD),none)
-CFLAGS += -DOIL_NO_SIMD
-else ifneq ($(filter aarch64 arm64,$(shell uname -m)),)
+ifneq ($(filter aarch64 arm64,$(shell uname -m)),)
 OIL_OBJS += oil_resample_neon.o
 else ifneq ($(filter x86_64,$(shell uname -m)),)
 OIL_OBJS += oil_resample_sse2.o
-else
-CFLAGS += -DOIL_NO_SIMD
 endif
 
 all: test imgscale benchmark

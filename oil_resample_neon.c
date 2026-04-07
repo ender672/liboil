@@ -22,8 +22,6 @@
 #include "oil_resample.h"
 #include "oil_resample_internal.h"
 
-#ifdef OIL_USE_NEON
-
 #include <string.h>
 #include <arm_neon.h>
 
@@ -74,14 +72,14 @@ static inline float32x4_t push_f(float32x4_t smp, float value)
 	return smp;
 }
 
-void oil_shift_left_f_neon(float *f)
+static void oil_shift_left_f_neon(float *f)
 {
 	float32x4_t v = vld1q_f32(f);
 	v = vextq_f32(v, vdupq_n_f32(0), 1);
 	vst1q_f32(f, v);
 }
 
-void oil_yscale_out_nonlinear_neon(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_nonlinear_neon(float *sums, int len, unsigned char *out)
 {
 	int i;
 	float32x4_t vals, f0, f1, f2, f3;
@@ -127,7 +125,7 @@ void oil_yscale_out_nonlinear_neon(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
 {
 	int i;
 	float32x4_t scale_v, vals, f0, f1, f2, f3;
@@ -167,7 +165,7 @@ void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
+static void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
 {
 	int i;
 	float32x4_t f0, f1, f2, f3;
@@ -253,7 +251,7 @@ void oil_yscale_out_ga_neon(float *sums, int width, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -285,7 +283,7 @@ void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_yscale_out_rgba_neon(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgba_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -335,7 +333,7 @@ void oil_yscale_out_rgba_neon(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_yscale_out_argb_neon(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_argb_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -383,7 +381,7 @@ void oil_yscale_out_argb_neon(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
 {
 	int i;
 	float32x4_t scale_v, vals, vals2, f0, f1, f2, f3, g0, g1, g2, g3;
@@ -469,7 +467,7 @@ void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -693,7 +691,7 @@ void oil_yscale_up_g_cmyk_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -829,7 +827,7 @@ void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -969,7 +967,7 @@ void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_rgbx_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgbx_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1104,7 +1102,7 @@ void oil_yscale_up_rgbx_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1303,7 +1301,7 @@ void oil_yscale_up_rgba_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_argb_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_argb_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1502,7 +1500,7 @@ void oil_yscale_up_argb_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_g_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_g_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1539,7 +1537,7 @@ void oil_xscale_up_g_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_ga_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_ga_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1588,7 +1586,7 @@ void oil_xscale_up_ga_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_rgb_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgb_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1668,7 +1666,7 @@ void oil_xscale_up_rgb_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_rgbx_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgbx_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1743,7 +1741,7 @@ void oil_xscale_up_rgbx_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_rgba_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgba_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1817,7 +1815,7 @@ void oil_xscale_up_rgba_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_argb_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_argb_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1891,7 +1889,7 @@ void oil_xscale_up_argb_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1963,7 +1961,7 @@ void oil_xscale_up_cmyk_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_scale_down_g_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_g_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2058,7 +2056,7 @@ void oil_scale_down_g_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2198,7 +2196,7 @@ void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2305,7 +2303,7 @@ void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgba_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgba_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2458,7 +2456,7 @@ void oil_scale_down_rgba_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_argb_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_argb_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2611,7 +2609,7 @@ void oil_scale_down_argb_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2746,7 +2744,7 @@ void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2865,7 +2863,7 @@ void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -2943,7 +2941,7 @@ void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -3050,7 +3048,7 @@ void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_rgba_nogamma_neon(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgba_nogamma_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -3099,7 +3097,7 @@ void oil_yscale_out_rgba_nogamma_neon(float *sums, int width, unsigned char *out
 	}
 }
 
-void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -3297,7 +3295,7 @@ void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -3369,7 +3367,7 @@ void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, float *out
 	}
 }
 
-void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -3520,7 +3518,7 @@ void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -3556,7 +3554,7 @@ void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned char *out
 	}
 }
 
-void oil_yscale_up_rgbx_nogamma_neon(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgbx_nogamma_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -3712,7 +3710,7 @@ void oil_yscale_up_rgbx_nogamma_neon(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -3787,7 +3785,7 @@ void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, float *out
 	}
 }
 
-void oil_scale_down_rgbx_nogamma_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgbx_nogamma_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -4158,5 +4156,3 @@ int oil_scale_out_neon(struct oil_scale *os, unsigned char *out)
 	os->out_pos++;
 	return 0;
 }
-
-#endif /* OIL_USE_NEON */

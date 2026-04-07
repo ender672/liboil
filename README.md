@@ -73,9 +73,7 @@ On macOS with Homebrew:
 
     brew install jpeg libpng
 
-The Makefile auto-detects the architecture and enables SIMD (SSE2 on x86\_64, NEON on ARM64). To disable SIMD:
-
-    make SIMD=none
+The Makefile auto-detects the architecture and builds the appropriate SIMD backend (SSE2 on x86\_64, NEON on ARM64).
 
 Per-machine compiler settings go in `local.mk` (gitignored, included by the Makefile). For example, on Apple Silicon:
 

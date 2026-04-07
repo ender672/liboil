@@ -24,13 +24,13 @@
 #include <immintrin.h>
 #include <string.h>
 
-void oil_shift_left_f_sse2(float *f)
+static void oil_shift_left_f_sse2(float *f)
 {
 	__m128i v = _mm_load_si128((__m128i *)f);
 	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
 
-void oil_yscale_out_nonlinear_sse2(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_nonlinear_sse2(float *sums, int len, unsigned char *out)
 {
 	int i;
 	__m128 vals, ab, cd, f0, f1, f2, f3;
@@ -134,7 +134,7 @@ void oil_yscale_out_nonlinear_sse2(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
 {
 	int i;
 	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
@@ -180,7 +180,7 @@ void oil_yscale_out_linear_sse2(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out)
+static void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out)
 {
 	int i;
 	__m128i v0, v1;
@@ -212,7 +212,7 @@ void oil_yscale_out_ga_sse2(float *sums, int width, unsigned char *out)
 	}
 }
 
-void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -244,7 +244,7 @@ void oil_yscale_out_rgbx_sse2(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -295,7 +295,7 @@ void oil_xscale_up_g_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_ga_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_ga_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -376,7 +376,7 @@ void oil_xscale_up_ga_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -497,7 +497,7 @@ void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -568,7 +568,7 @@ void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -634,7 +634,7 @@ void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgb_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgb_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -746,7 +746,7 @@ void oil_xscale_up_rgb_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_rgbx_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgbx_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -884,7 +884,7 @@ void oil_xscale_up_rgbx_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -964,7 +964,7 @@ void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1085,7 +1085,7 @@ void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -1114,7 +1114,7 @@ void oil_scale_down_g_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_ga_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_ga_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -1196,7 +1196,7 @@ void oil_scale_down_ga_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -1303,7 +1303,7 @@ void oil_scale_down_rgb_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -1351,7 +1351,7 @@ void oil_yscale_out_rgba_sse2(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_yscale_up_rgba_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgba_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1402,7 +1402,7 @@ void oil_yscale_up_rgba_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1538,7 +1538,7 @@ void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -1690,7 +1690,7 @@ void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_argb_sse2(float *sums, int width, unsigned char *out,
+static void oil_yscale_out_argb_sse2(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
@@ -1738,7 +1738,7 @@ void oil_yscale_out_argb_sse2(float *sums, int width, unsigned char *out,
 	}
 }
 
-void oil_yscale_up_argb_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_argb_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -1789,7 +1789,7 @@ void oil_yscale_up_argb_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_argb_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_argb_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -1925,7 +1925,7 @@ void oil_xscale_up_argb_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2078,7 +2078,7 @@ void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_cmyk_sse2(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_cmyk_sse2(float *sums, int len, unsigned char *out)
 {
 	int i;
 	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
@@ -2128,7 +2128,7 @@ void oil_yscale_out_cmyk_sse2(float *sums, int len, unsigned char *out)
 	}
 }
 
-void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2257,7 +2257,7 @@ void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2391,7 +2391,7 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -2491,7 +2491,7 @@ void oil_xscale_up_rgb_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
+static void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
 	unsigned char *out, int tap)
 {
 	int i, tap_off;
@@ -2561,7 +2561,7 @@ void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
 	}
 }
 
-void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -2695,7 +2695,7 @@ void oil_scale_down_rgbx_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_scale_down_rgb_nogamma_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgb_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
@@ -2802,7 +2802,7 @@ void oil_scale_down_rgb_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
+static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
 	unsigned char *out, int tap)
 {
 	int i, tap_off;
@@ -2905,7 +2905,7 @@ void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
 	}
 }
 
-void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -3014,7 +3014,7 @@ void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
@@ -3150,7 +3150,7 @@ void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out
 	}
 }
 
-void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
 {
@@ -3337,7 +3337,7 @@ void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
+static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
 	int i;
@@ -3411,7 +3411,7 @@ void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-void oil_xscale_up_rgbx_nogamma_sse2(unsigned char *in, int width_in, float *out,
+static void oil_xscale_up_rgbx_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
