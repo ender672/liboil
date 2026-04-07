@@ -191,6 +191,21 @@ int oil_scale_in(struct oil_scale *os, unsigned char *in);
 int oil_scale_out(struct oil_scale *os, unsigned char *out);
 
 /**
+ * SSE2-optimized version of oil_scale_in().
+ */
+int oil_scale_in_sse2(struct oil_scale *os, unsigned char *in);
+
+/**
+ * SSE2-optimized version of oil_scale_out().
+ */
+int oil_scale_out_sse2(struct oil_scale *os, unsigned char *out);
+
+/**
+ * SSE2-optimized version of oil_scale_out_discard().
+ */
+int oil_scale_out_discard_sse2(struct oil_scale *os);
+
+/**
  * Discard the next output scanline without producing it. Advances internal
  * state so that input feeding can continue.
  * @os: Pointer to the scaler struct.
