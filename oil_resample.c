@@ -852,13 +852,7 @@ static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, flo
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	int off0, off1, off2, off3;
-	float alpha, sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
+	float alpha, sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -871,15 +865,22 @@ static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, flo
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0 + j] += sample * coeffs_y[0];
-			sums_y[off1 + j] += sample * coeffs_y[1];
-			sums_y[off2 + j] += sample * coeffs_y[2];
-			sums_y[off3 + j] += sample * coeffs_y[3];
-			shift_left_f(sum[j]);
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
-		sums_y += 16;
 	}
 }
 
@@ -933,13 +934,7 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	int off0, off1, off2, off3;
-	float alpha, sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
+	float alpha, sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -952,15 +947,22 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0 + j] += sample * coeffs_y[0];
-			sums_y[off1 + j] += sample * coeffs_y[1];
-			sums_y[off2 + j] += sample * coeffs_y[2];
-			sums_y[off3 + j] += sample * coeffs_y[3];
-			shift_left_f(sum[j]);
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
-		sums_y += 16;
 	}
 }
 
@@ -968,13 +970,7 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	int off0, off1, off2, off3;
-	float sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
+	float sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -986,15 +982,22 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0 + j] += sample * coeffs_y[0];
-			sums_y[off1 + j] += sample * coeffs_y[1];
-			sums_y[off2 + j] += sample * coeffs_y[2];
-			sums_y[off3 + j] += sample * coeffs_y[3];
-			shift_left_f(sum[j]);
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
-		sums_y += 16;
 	}
 }
 
@@ -1002,13 +1005,7 @@ static void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width,
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j, k;
-	int off0, off1, off2, off3;
-	float alpha, sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
+	float alpha, sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1021,15 +1018,22 @@ static void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width,
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0 + j] += sample * coeffs_y[0];
-			sums_y[off1 + j] += sample * coeffs_y[1];
-			sums_y[off2 + j] += sample * coeffs_y[2];
-			sums_y[off3 + j] += sample * coeffs_y[3];
-			shift_left_f(sum[j]);
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
-		sums_y += 16;
 	}
 }
 
@@ -1037,13 +1041,7 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j;
-	int off0, off1, off2, off3;
-	float sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
+	float sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1057,15 +1055,22 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0 + j] += sample * coeffs_y[0];
-			sums_y[off1 + j] += sample * coeffs_y[1];
-			sums_y[off2 + j] += sample * coeffs_y[2];
-			sums_y[off3 + j] += sample * coeffs_y[3];
-			shift_left_f(sum[j]);
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
-		sums_y += 16;
 	}
 }
 
