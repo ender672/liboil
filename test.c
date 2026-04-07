@@ -3,6 +3,15 @@
 #include <math.h>
 #include <stdlib.h>
 #include "oil_resample.h"
+#include "oil_resample_internal.h"
+
+typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
+typedef int (*scale_out_fn)(struct oil_scale *, unsigned char *);
+typedef int (*scale_out_discard_fn)(struct oil_scale *);
+
+static scale_in_fn cur_scale_in;
+static scale_out_fn cur_scale_out;
+static scale_out_discard_fn cur_scale_out_discard;
 
 static long double srgb_sample_to_linear_reference(long double in_f)
 {
@@ -459,9 +468,9 @@ static void do_oil_scale(unsigned char **input_image, int in_width,
 	in_line = 0;
 	for (i=0; i<out_height; i++) {
 		while(oil_scale_slots(&os)) {
-			oil_scale_in(&os, input_image[in_line++]);
+			cur_scale_in(&os, input_image[in_line++]);
 		}
-		oil_scale_out(&os, output_image[i]);
+		cur_scale_out(&os, output_image[i]);
 	}
 	oil_scale_free(&os);
 }
@@ -589,26 +598,26 @@ static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
 	in_line = 0;
 	for (i=0; i<out_dim; i++) {
 		while(oil_scale_slots(&os_discard)) {
-			assert(oil_scale_in(&os_discard, input_image[in_line++]) == 0);
+			assert(cur_scale_in(&os_discard, input_image[in_line++]) == 0);
 		}
 		if (i % 2 == 0) {
-			oil_scale_out(&os_discard, discard_line);
+			cur_scale_out(&os_discard, discard_line);
 			for (j=0; j<out_row_stride; j++) {
 				assert(discard_line[j] == normal_output[i][j]);
 			}
 		} else {
-			oil_scale_out_discard(&os_discard);
+			cur_scale_out_discard(&os_discard);
 		}
 	}
 	oil_scale_free(&os_discard);
 
-	/* verify oil_scale_in returns -1 when output is ready */
+	/* verify cur_scale_in returns -1 when output is ready */
 	oil_scale_init(&os_discard, in_dim, out_dim, in_dim, out_dim, cs);
 	in_line = 0;
 	while(oil_scale_slots(&os_discard)) {
-		assert(oil_scale_in(&os_discard, input_image[in_line++]) == 0);
+		assert(cur_scale_in(&os_discard, input_image[in_line++]) == 0);
 	}
-	assert(oil_scale_in(&os_discard, input_image[0]) == -1);
+	assert(cur_scale_in(&os_discard, input_image[0]) == -1);
 	oil_scale_free(&os_discard);
 
 	free(discard_line);
@@ -647,40 +656,40 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 	out_row_stride = OIL_CMP(cs) * out_dim;
 	buf = malloc(out_row_stride);
 
-	/* calling oil_scale_out before any input should fail */
+	/* calling cur_scale_out before any input should fail */
 	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
-	assert(oil_scale_out(&os, buf) == -1);
-	assert(oil_scale_out_discard(&os) == -1);
+	assert(cur_scale_out(&os, buf) == -1);
+	assert(cur_scale_out_discard(&os) == -1);
 
 	/* feed one input line when more are needed, should still fail */
 	if (oil_scale_slots(&os) > 1) {
 		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
-		assert(oil_scale_in(&os, in_line) == 0);
+		assert(cur_scale_in(&os, in_line) == 0);
 		assert(oil_scale_slots(&os) > 0);
-		assert(oil_scale_out(&os, buf) == -1);
-		assert(oil_scale_out_discard(&os) == -1);
+		assert(cur_scale_out(&os, buf) == -1);
+		assert(cur_scale_out_discard(&os) == -1);
 		free(in_line);
 	}
 	oil_scale_free(&os);
 
-	/* feed enough input, then oil_scale_out should succeed */
+	/* feed enough input, then cur_scale_out should succeed */
 	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
 	while (oil_scale_slots(&os)) {
 		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
-		assert(oil_scale_in(&os, in_line) == 0);
+		assert(cur_scale_in(&os, in_line) == 0);
 		free(in_line);
 	}
-	assert(oil_scale_out(&os, buf) == 0);
+	assert(cur_scale_out(&os, buf) == 0);
 	oil_scale_free(&os);
 
 	/* same but with discard */
 	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
 	while (oil_scale_slots(&os)) {
 		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
-		assert(oil_scale_in(&os, in_line) == 0);
+		assert(cur_scale_in(&os, in_line) == 0);
 		free(in_line);
 	}
-	assert(oil_scale_out_discard(&os) == 0);
+	assert(cur_scale_out_discard(&os) == 0);
 	oil_scale_free(&os);
 
 	free(buf);
@@ -718,17 +727,61 @@ static void test_scale_all(void)
 	test_scale_all_permutations(2, 1);
 }
 
-int main(void)
+struct impl {
+	char *name;
+	scale_in_fn in;
+	scale_out_fn out;
+	scale_out_discard_fn out_discard;
+};
+
+static void run_tests(struct impl *impl)
 {
-	int t = 1531289551;
-	//int t = time(NULL);
-	printf("seed: %d\n", t);
-	srand(t);
-	oil_global_init();
+	printf("--- testing %s ---\n", impl->name);
+	cur_scale_in = impl->in;
+	cur_scale_out = impl->out;
+	cur_scale_out_discard = impl->out_discard;
+
 	test_scale_all();
 	test_scale_catrom_extremes();
 	test_out_discard_all();
 	test_out_not_ready_all();
+}
+
+int main(void)
+{
+	int t = 1531289551;
+	int i, num_impls;
+	struct impl impls[2];
+	//int t = time(NULL);
+	printf("seed: %d\n", t);
+	srand(t);
+	oil_global_init();
+
+	num_impls = 0;
+	impls[num_impls].name = "scalar";
+	impls[num_impls].in = oil_scale_in;
+	impls[num_impls].out = oil_scale_out;
+	impls[num_impls].out_discard = oil_scale_out_discard;
+	num_impls++;
+
+#if defined(OIL_USE_SSE2)
+	impls[num_impls].name = "sse2";
+	impls[num_impls].in = oil_scale_in_sse2;
+	impls[num_impls].out = oil_scale_out_sse2;
+	impls[num_impls].out_discard = oil_scale_out_discard_sse2;
+	num_impls++;
+#elif defined(OIL_USE_NEON)
+	impls[num_impls].name = "neon";
+	impls[num_impls].in = oil_scale_in_neon;
+	impls[num_impls].out = oil_scale_out_neon;
+	impls[num_impls].out_discard = oil_scale_out_discard_neon;
+	num_impls++;
+#endif
+
+	for (i=0; i<num_impls; i++) {
+		run_tests(&impls[i]);
+	}
+
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");
 	return 0;
