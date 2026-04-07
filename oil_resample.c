@@ -263,18 +263,6 @@ static void yscale_out_nonlinear(float *sums, int sl_len, unsigned char *out)
 	}
 }
 
-static void yscale_out_nonlinear_rb(float *sums, int sl_len, unsigned char *out,
-	int tap)
-{
-	int i, tap_off;
-
-	tap_off = tap;
-	for (i=0; i<sl_len; i++) {
-		out[i] = clamp8(sums[tap_off]);
-		sums[tap_off] = 0.0f;
-		sums += 4;
-	}
-}
 
 static void yscale_out_ga(float *sums, int width, unsigned char *out)
 {
@@ -300,19 +288,19 @@ static void yscale_out_rgba(float *sums, int width, unsigned char *out, int tap)
 	int i, j, tap_off;
 	float alpha, val;
 
-	tap_off = tap;
+	tap_off = tap * 4;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12 + tap_off]);
+		alpha = clampf(sums[tap_off + 3]);
 		for (j=0; j<3; j++) {
-			val = sums[j * 4 + tap_off];
+			val = sums[tap_off + j];
 			if (alpha != 0) {
 				val /= alpha;
 			}
 			out[j] = linear_sample_to_srgb(clampf(val));
-			sums[j * 4 + tap_off] = 0.0f;
+			sums[tap_off + j] = 0.0f;
 		}
 		out[3] = round(alpha * 255.0f);
-		sums[12 + tap_off] = 0.0f;
+		sums[tap_off + 3] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -324,19 +312,19 @@ static void oil_yscale_out_argb(float *sums, int width, unsigned char *out, int 
 	int i, j, tap_off;
 	float alpha, val;
 
-	tap_off = tap;
+	tap_off = tap * 4;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12 + tap_off]);
+		alpha = clampf(sums[tap_off + 3]);
 		out[0] = round(alpha * 255.0f);
 		for (j=0; j<3; j++) {
-			val = sums[j * 4 + tap_off];
+			val = sums[tap_off + j];
 			if (alpha != 0) {
 				val /= alpha;
 			}
 			out[j + 1] = linear_sample_to_srgb(clampf(val));
-			sums[j * 4 + tap_off] = 0.0f;
+			sums[tap_off + j] = 0.0f;
 		}
-		sums[12 + tap_off] = 0.0f;
+		sums[tap_off + 3] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -346,14 +334,14 @@ static void yscale_out_rgbx(float *sums, int width, unsigned char *out, int tap)
 {
 	int i, j, tap_off;
 
-	tap_off = tap;
+	tap_off = tap * 4;
 	for (i=0; i<width; i++) {
 		for (j=0; j<3; j++) {
-			out[j] = linear_sample_to_srgb(clampf(sums[j * 4 + tap_off]));
-			sums[j * 4 + tap_off] = 0.0f;
+			out[j] = linear_sample_to_srgb(clampf(sums[tap_off + j]));
+			sums[tap_off + j] = 0.0f;
 		}
 		out[3] = 255;
-		sums[12 + tap_off] = 0.0f;
+		sums[tap_off + 3] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -365,19 +353,19 @@ static void yscale_out_rgba_nogamma(float *sums, int width, unsigned char *out,
 	int i, j, tap_off;
 	float alpha, val;
 
-	tap_off = tap;
+	tap_off = tap * 4;
 	for (i=0; i<width; i++) {
-		alpha = clampf(sums[12 + tap_off]);
+		alpha = clampf(sums[tap_off + 3]);
 		for (j=0; j<3; j++) {
-			val = sums[j * 4 + tap_off];
+			val = sums[tap_off + j];
 			if (alpha != 0) {
 				val /= alpha;
 			}
 			out[j] = f2i(clampf(val) * 255.0f);
-			sums[j * 4 + tap_off] = 0.0f;
+			sums[tap_off + j] = 0.0f;
 		}
 		out[3] = round(alpha * 255.0f);
-		sums[12 + tap_off] = 0.0f;
+		sums[tap_off + 3] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -388,14 +376,14 @@ static void yscale_out_rgbx_nogamma(float *sums, int width, unsigned char *out,
 {
 	int i, j, tap_off;
 
-	tap_off = tap;
+	tap_off = tap * 4;
 	for (i=0; i<width; i++) {
 		for (j=0; j<3; j++) {
-			out[j] = f2i(clampf(sums[j * 4 + tap_off]) * 255.0f);
-			sums[j * 4 + tap_off] = 0.0f;
+			out[j] = f2i(clampf(sums[tap_off + j]) * 255.0f);
+			sums[tap_off + j] = 0.0f;
 		}
 		out[3] = 255;
-		sums[12 + tap_off] = 0.0f;
+		sums[tap_off + 3] = 0.0f;
 		sums += 16;
 		out += 4;
 	}
@@ -413,7 +401,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_nonlinear(sums, sl_len, out);
 		break;
 	case OIL_CS_CMYK:
-		yscale_out_nonlinear_rb(sums, sl_len, out, tap);
+		yscale_out_nonlinear(sums, sl_len, out);
 		break;
 	case OIL_CS_GA:
 		yscale_out_ga(sums, width, out);
@@ -835,16 +823,10 @@ static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float 
 }
 
 static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y, int tap)
+	int *border_buf, float *coeffs_y)
 {
 	int i, j;
-	int off0, off1, off2, off3;
-	float sample, sum[4][4] = {{ 0.0f }};
-
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	float sum[4][4] = {{ 0.0f }};
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -859,11 +841,7 @@ static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, flo
 		}
 
 		for (j=0; j<4; j++) {
-			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
 			shift_left_f(sum[j]);
 			sums_y += 4;
 		}
@@ -877,10 +855,10 @@ static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, flo
 	int off0, off1, off2, off3;
 	float alpha, sample, sum[4][4] = {{ 0.0f }};
 
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -895,13 +873,13 @@ static void scale_down_rgba(unsigned char *in, float *sums_y, int out_width, flo
 
 		for (j=0; j<4; j++) {
 			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			sums_y[off0 + j] += sample * coeffs_y[0];
+			sums_y[off1 + j] += sample * coeffs_y[1];
+			sums_y[off2 + j] += sample * coeffs_y[2];
+			sums_y[off3 + j] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
-			sums_y += 4;
 		}
+		sums_y += 16;
 	}
 }
 
@@ -958,10 +936,10 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 	int off0, off1, off2, off3;
 	float alpha, sample, sum[4][4] = {{ 0.0f }};
 
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -976,13 +954,13 @@ static void scale_down_rgba_nogamma(unsigned char *in, float *sums_y, int out_wi
 
 		for (j=0; j<4; j++) {
 			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			sums_y[off0 + j] += sample * coeffs_y[0];
+			sums_y[off1 + j] += sample * coeffs_y[1];
+			sums_y[off2 + j] += sample * coeffs_y[2];
+			sums_y[off3 + j] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
-			sums_y += 4;
 		}
+		sums_y += 16;
 	}
 }
 
@@ -993,10 +971,10 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 	int off0, off1, off2, off3;
 	float sample, sum[4][4] = {{ 0.0f }};
 
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1010,13 +988,13 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 
 		for (j=0; j<4; j++) {
 			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			sums_y[off0 + j] += sample * coeffs_y[0];
+			sums_y[off1 + j] += sample * coeffs_y[1];
+			sums_y[off2 + j] += sample * coeffs_y[2];
+			sums_y[off3 + j] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
-			sums_y += 4;
 		}
+		sums_y += 16;
 	}
 }
 
@@ -1027,10 +1005,10 @@ static void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width,
 	int off0, off1, off2, off3;
 	float alpha, sample, sum[4][4] = {{ 0.0f }};
 
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1045,13 +1023,13 @@ static void oil_scale_down_argb(unsigned char *in, float *sums_y, int out_width,
 
 		for (j=0; j<4; j++) {
 			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			sums_y[off0 + j] += sample * coeffs_y[0];
+			sums_y[off1 + j] += sample * coeffs_y[1];
+			sums_y[off2 + j] += sample * coeffs_y[2];
+			sums_y[off3 + j] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
-			sums_y += 4;
 		}
+		sums_y += 16;
 	}
 }
 
@@ -1062,10 +1040,10 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 	int off0, off1, off2, off3;
 	float sample, sum[4][4] = {{ 0.0f }};
 
-	off0 = tap;
-	off1 = (tap + 1) & 3;
-	off2 = (tap + 2) & 3;
-	off3 = (tap + 3) & 3;
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
 
 	for (i=0; i<out_width; i++) {
 		for (j=0; j<border_buf[i]; j++) {
@@ -1081,13 +1059,13 @@ static void scale_down_rgbx(unsigned char *in, float *sums_y, int out_width, flo
 
 		for (j=0; j<4; j++) {
 			sample = sum[j][0];
-			sums_y[off0] += sample * coeffs_y[0];
-			sums_y[off1] += sample * coeffs_y[1];
-			sums_y[off2] += sample * coeffs_y[2];
-			sums_y[off3] += sample * coeffs_y[3];
+			sums_y[off0 + j] += sample * coeffs_y[0];
+			sums_y[off1 + j] += sample * coeffs_y[1];
+			sums_y[off2 + j] += sample * coeffs_y[2];
+			sums_y[off3 + j] += sample * coeffs_y[3];
 			shift_left_f(sum[j]);
-			sums_y += 4;
 		}
+		sums_y += 16;
 	}
 }
 
@@ -1559,7 +1537,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		scale_down_g(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_CMYK:
-		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
+		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_RGBA:
 		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
