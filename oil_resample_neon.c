@@ -4124,6 +4124,23 @@ int oil_scale_out_neon(struct oil_scale *os, unsigned char *out)
 	return 0;
 }
 
+int oil_scale_out_discard_neon(struct oil_scale *os)
+{
+	if (oil_scale_slots(os) != 0) {
+		return -1;
+	}
 
+	if (os->out_height <= os->in_height) {
+		int sl_len = os->out_width * OIL_CMP(os->cs);
+		unsigned char tmp[sl_len];
+		yscale_out_neon(os->sums_y, os->out_width, tmp, os->cs, os->sums_y_tap);
+		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
+	} else {
+		os->borders_y[os->in_pos - 1] -= 1;
+	}
+
+	os->out_pos++;
+	return 0;
+}
 
 #endif /* OIL_USE_NEON */
