@@ -2509,39 +2509,42 @@ static void oil_yscale_out_rgbx_nogamma_avx2(float *sums, int width,
 	mask = _mm_set_epi32(0, -1, -1, -1);
 	x_val = _mm_set_epi32(255, 0, 0, 0);
 
-	for (i=0; i+1<width; i+=2) {
-		/* Pixel 1: read only the current tap */
-		vals = _mm_load_ps(sums + tap_off);
+	for (i=0; i+3<width; i+=4) {
+		__m128 v0, v1, v2, v3;
+		__m128i i0, i1, i2, i3, p01, p23;
 
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
-		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
+		v0 = _mm_load_ps(sums + tap_off);
+		v1 = _mm_load_ps(sums + 16 + tap_off);
+		v2 = _mm_load_ps(sums + 32 + tap_off);
+		v3 = _mm_load_ps(sums + 48 + tap_off);
 
-		/* Zero consumed tap */
+		v0 = _mm_min_ps(_mm_max_ps(v0, zero), one);
+		v1 = _mm_min_ps(_mm_max_ps(v1, zero), one);
+		v2 = _mm_min_ps(_mm_max_ps(v2, zero), one);
+		v3 = _mm_min_ps(_mm_max_ps(v3, zero), one);
+
+		i0 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v0, scale), half));
+		i1 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v1, scale), half));
+		i2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v2, scale), half));
+		i3 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v3, scale), half));
+
+		i0 = _mm_or_si128(_mm_and_si128(i0, mask), x_val);
+		i1 = _mm_or_si128(_mm_and_si128(i1, mask), x_val);
+		i2 = _mm_or_si128(_mm_and_si128(i2, mask), x_val);
+		i3 = _mm_or_si128(_mm_and_si128(i3, mask), x_val);
+
+		p01 = _mm_packs_epi32(i0, i1);
+		p23 = _mm_packs_epi32(i2, i3);
+		packed = _mm_packus_epi16(p01, p23);
+		_mm_storeu_si128((__m128i *)out, packed);
+
 		_mm_store_si128((__m128i *)(sums + tap_off), z);
+		_mm_store_si128((__m128i *)(sums + 16 + tap_off), z);
+		_mm_store_si128((__m128i *)(sums + 32 + tap_off), z);
+		_mm_store_si128((__m128i *)(sums + 48 + tap_off), z);
 
-		/* Pixel 2 */
-		{
-			__m128i idx2;
-			__m128 vals2;
-
-			vals2 = _mm_load_ps(sums + 16 + tap_off);
-
-			vals2 = _mm_min_ps(_mm_max_ps(vals2, zero), one);
-			idx2 = _mm_cvttps_epi32(_mm_add_ps(
-				_mm_mul_ps(vals2, scale), half));
-			idx2 = _mm_or_si128(_mm_and_si128(idx2, mask), x_val);
-
-			packed = _mm_packs_epi32(idx, idx2);
-			packed = _mm_packus_epi16(packed, packed);
-			_mm_storel_epi64((__m128i *)out, packed);
-
-			/* Zero consumed tap */
-			_mm_store_si128((__m128i *)(sums + 16 + tap_off), z);
-		}
-
-		sums += 32;
-		out += 8;
+		sums += 64;
+		out += 16;
 	}
 
 	for (; i<width; i++) {
