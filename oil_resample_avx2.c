@@ -1090,7 +1090,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
 	int i, j;
-	__m128 coeffs_x, sample_x, sum, sum2;
+	__m128 coeffs_x, sample_x, sum, sum2, sum3, sum4;
 	__m128 coeffs_y, sums_y, sample_y;
 
 	coeffs_y = _mm_load_ps(coeffs_y_f);
@@ -1098,7 +1098,9 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 
 	for (i=0; i<out_width; i++) {
 		sum2 = _mm_setzero_ps();
-		for (j=0; j+1<border_buf[i]; j+=2) {
+		sum3 = _mm_setzero_ps();
+		sum4 = _mm_setzero_ps();
+		for (j=0; j+3<border_buf[i]; j+=4) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
 			sample_x = _mm_set1_ps(i2f_map[in[0]]);
 			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
@@ -1107,8 +1109,16 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 			sample_x = _mm_set1_ps(i2f_map[in[1]]);
 			sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
 
-			in += 2;
-			coeffs_x_f += 8;
+			coeffs_x = _mm_load_ps(coeffs_x_f + 8);
+			sample_x = _mm_set1_ps(i2f_map[in[2]]);
+			sum3 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum3);
+
+			coeffs_x = _mm_load_ps(coeffs_x_f + 12);
+			sample_x = _mm_set1_ps(i2f_map[in[3]]);
+			sum4 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum4);
+
+			in += 4;
+			coeffs_x_f += 16;
 		}
 		for (; j<border_buf[i]; j++) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
@@ -1117,7 +1127,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 			in += 1;
 			coeffs_x_f += 4;
 		}
-		sum = _mm_add_ps(sum, sum2);
+		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
 
 		sums_y = _mm_load_ps(sums_y_out);
 		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
