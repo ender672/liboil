@@ -1144,12 +1144,13 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 {
 	int i, j;
 	__m128 coeffs_x, sample_x, sum;
-	__m128 coeffs_y, sums_y, sample_y;
+	__m256 coeffs_y256, sums_y256, sample_y256;
+	__m128 result_lo, result_hi;
 
-	coeffs_y = _mm_load_ps(coeffs_y_f);
+	coeffs_y256 = _mm256_broadcast_ps((__m128 const *)coeffs_y_f);
 	sum = _mm_setzero_ps();
 
-	for (i=0; i<out_width; i++) {
+	for (i=0; i+1<out_width; i+=2) {
 		for (j=0; j<border_buf[i]; j++) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
 			sample_x = _mm_set1_ps(i2f_map[in[0]]);
@@ -1157,13 +1158,41 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 			in += 1;
 			coeffs_x_f += 4;
 		}
+		result_lo = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
+		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
 
+		for (j=0; j<border_buf[i+1]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			sample_x = _mm_set1_ps(i2f_map[in[0]]);
+			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+			in += 1;
+			coeffs_x_f += 4;
+		}
+		result_hi = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
+		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+
+		sums_y256 = _mm256_load_ps(sums_y_out);
+		sample_y256 = _mm256_set_m128(result_hi, result_lo);
+		sums_y256 = _mm256_add_ps(_mm256_mul_ps(coeffs_y256, sample_y256), sums_y256);
+		_mm256_store_ps(sums_y_out, sums_y256);
+		sums_y_out += 8;
+	}
+
+	for (; i<out_width; i++) {
+		__m128 coeffs_y, sums_y, sample_y;
+		coeffs_y = _mm256_castps256_ps128(coeffs_y256);
+		for (j=0; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			sample_x = _mm_set1_ps(i2f_map[in[0]]);
+			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+			in += 1;
+			coeffs_x_f += 4;
+		}
 		sums_y = _mm_load_ps(sums_y_out);
 		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
 		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
-
 		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
 	}
 }
