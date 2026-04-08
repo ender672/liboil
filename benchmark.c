@@ -258,10 +258,10 @@ void run_bench(char *path, char *cs_arg, int iterations, int filter,
 
 int main(int argc, char *argv[])
 {
-	int iterations, filter, arg_pos, impl_mode;
+	int iterations, filter, arg_pos, impl_mode; /* 0=all,1=scalar,3=sse2,4=avx2,5=neon */
 	char *end, *path, *cs_arg;
 	unsigned long ul;
-	struct impl impls[2];
+	struct impl impls[3];
 	int num_impls;
 
 	/* Parse flags */
@@ -275,8 +275,12 @@ int main(int argc, char *argv[])
 			filter = 2;
 		} else if (strcmp(argv[arg_pos], "--scalar") == 0) {
 			impl_mode = 1;
-		} else if (strcmp(argv[arg_pos], "--simd") == 0) {
-			impl_mode = 2;
+		} else if (strcmp(argv[arg_pos], "--sse2") == 0) {
+			impl_mode = 3;
+		} else if (strcmp(argv[arg_pos], "--avx2") == 0) {
+			impl_mode = 4;
+		} else if (strcmp(argv[arg_pos], "--neon") == 0) {
+			impl_mode = 5;
 		} else {
 			fprintf(stderr, "Unknown option: %s\n", argv[arg_pos]);
 			return 1;
@@ -285,7 +289,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc - arg_pos < 1 || argc - arg_pos > 2) {
-		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--simd] <path> [colorspace]\n",
+		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--sse2|--avx2|--neon] <path> [colorspace]\n",
 			argv[0]);
 		return 1;
 	}
@@ -307,7 +311,7 @@ int main(int argc, char *argv[])
 
 	num_impls = 0;
 
-	if (impl_mode != 2) {
+	if (impl_mode == 0 || impl_mode == 1) {
 		impls[num_impls].name = "scalar";
 		impls[num_impls].in = oil_scale_in;
 		impls[num_impls].out = oil_scale_out;
@@ -315,21 +319,35 @@ int main(int argc, char *argv[])
 	}
 
 #if defined(__x86_64__)
-	if (impl_mode != 1) {
+	if (impl_mode == 0 || impl_mode == 3) {
 		impls[num_impls].name = "sse2";
 		impls[num_impls].in = oil_scale_in_sse2;
 		impls[num_impls].out = oil_scale_out_sse2;
 		num_impls++;
 	}
+	if (impl_mode == 0 || impl_mode == 4) {
+		impls[num_impls].name = "avx2";
+		impls[num_impls].in = oil_scale_in_avx2;
+		impls[num_impls].out = oil_scale_out_avx2;
+		num_impls++;
+	}
+	if (impl_mode == 5) {
+		fprintf(stderr, "NEON not available on x86_64.\n");
+		return 1;
+	}
 #elif defined(__aarch64__)
-	if (impl_mode != 1) {
+	if (impl_mode == 0 || impl_mode == 5) {
 		impls[num_impls].name = "neon";
 		impls[num_impls].in = oil_scale_in_neon;
 		impls[num_impls].out = oil_scale_out_neon;
 		num_impls++;
 	}
+	if (impl_mode == 3 || impl_mode == 4) {
+		fprintf(stderr, "SSE2/AVX2 not available on AArch64.\n");
+		return 1;
+	}
 #else
-	if (impl_mode == 2) {
+	if (impl_mode >= 3) {
 		fprintf(stderr, "No SIMD support compiled in.\n");
 		return 1;
 	}
