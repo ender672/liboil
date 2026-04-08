@@ -1085,6 +1085,50 @@ static void oil_yscale_up_g_cmyk_avx2(float **in, int len, float *coeffs,
 	}
 }
 
+static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
+	unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+{
+	int i, j;
+	__m128 coeffs_x, sample_x, sum, sum2;
+	__m128 coeffs_y, sums_y, sample_y;
+
+	coeffs_y = _mm_load_ps(coeffs_y_f);
+	sum = _mm_setzero_ps();
+
+	for (i=0; i<out_width; i++) {
+		sum2 = _mm_setzero_ps();
+		for (j=0; j+1<border_buf[i]; j+=2) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			sample_x = _mm_set1_ps(i2f_map[in[0]]);
+			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+
+			coeffs_x = _mm_load_ps(coeffs_x_f + 4);
+			sample_x = _mm_set1_ps(i2f_map[in[1]]);
+			sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
+
+			in += 2;
+			coeffs_x_f += 8;
+		}
+		for (; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			sample_x = _mm_set1_ps(i2f_map[in[0]]);
+			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+			in += 1;
+			coeffs_x_f += 4;
+		}
+		sum = _mm_add_ps(sum, sum2);
+
+		sums_y = _mm_load_ps(sums_y_out);
+		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
+		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
+		_mm_store_ps(sums_y_out, sums_y);
+		sums_y_out += 4;
+
+		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+	}
+}
+
 static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
@@ -3672,7 +3716,11 @@ static void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 		oil_scale_down_rgb_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_G:
-		oil_scale_down_g_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		if (os->in_width >= os->out_width * 2) {
+			oil_scale_down_g_heavy_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		} else {
+			oil_scale_down_g_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		}
 		break;
 	case OIL_CS_CMYK:
 		oil_scale_down_cmyk_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
