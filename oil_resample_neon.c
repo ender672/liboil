@@ -3539,9 +3539,8 @@ static void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned ch
 {
 	int i, tap_off;
 	float32x4_t scale_v, one, zero, half;
-	float32x4_t vals;
-	int32x4_t idx;
 	float32x4_t z;
+	uint8x16_t alpha_mask;
 
 	tap_off = tap * 4;
 	scale_v = vdupq_n_f32(255.0f);
@@ -3550,10 +3549,66 @@ static void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned ch
 	half = vdupq_n_f32(0.5f);
 	z = vdupq_n_f32(0.0f);
 
-	for (i=0; i<width; i++) {
-		vals = vld1q_f32(sums + tap_off);
+	{
+		static const uint8_t amask[16] = {0,0,0,255, 0,0,0,255,
+			0,0,0,255, 0,0,0,255};
+		alpha_mask = vld1q_u8(amask);
+	}
 
-		/* Clamp RGB to [0, 1], scale to [0, 255], round */
+	for (i=0; i+3<width; i+=4) {
+		float32x4_t v0, v1, v2, v3;
+		int32x4_t i0, i1, i2, i3;
+		int16x4_t h0, h1, h2, h3;
+		int16x8_t h01, h23;
+		uint8x8_t b01, b23;
+		uint8x16_t result;
+
+		v0 = vld1q_f32(sums + tap_off);
+		v1 = vld1q_f32(sums + 16 + tap_off);
+		v2 = vld1q_f32(sums + 32 + tap_off);
+		v3 = vld1q_f32(sums + 48 + tap_off);
+
+		v0 = vminq_f32(vmaxq_f32(v0, zero), one);
+		v1 = vminq_f32(vmaxq_f32(v1, zero), one);
+		v2 = vminq_f32(vmaxq_f32(v2, zero), one);
+		v3 = vminq_f32(vmaxq_f32(v3, zero), one);
+
+		i0 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(v0, scale_v), half));
+		i1 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(v1, scale_v), half));
+		i2 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(v2, scale_v), half));
+		i3 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(v3, scale_v), half));
+
+		h0 = vqmovn_s32(i0);
+		h1 = vqmovn_s32(i1);
+		h01 = vcombine_s16(h0, h1);
+		h2 = vqmovn_s32(i2);
+		h3 = vqmovn_s32(i3);
+		h23 = vcombine_s16(h2, h3);
+
+		b01 = vqmovun_s16(h01);
+		b23 = vqmovun_s16(h23);
+		result = vcombine_u8(b01, b23);
+
+		/* Set alpha lanes to 255 */
+		result = vbslq_u8(alpha_mask, vdupq_n_u8(255), result);
+
+		vst1q_u8(out, result);
+
+		/* Zero consumed taps */
+		vst1q_f32(sums + tap_off, z);
+		vst1q_f32(sums + 16 + tap_off, z);
+		vst1q_f32(sums + 32 + tap_off, z);
+		vst1q_f32(sums + 48 + tap_off, z);
+
+		sums += 64;
+		out += 16;
+	}
+
+	for (; i<width; i++) {
+		float32x4_t vals;
+		int32x4_t idx;
+
+		vals = vld1q_f32(sums + tap_off);
 		vals = vminq_f32(vmaxq_f32(vals, zero), one);
 		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
 
@@ -3562,7 +3617,6 @@ static void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned ch
 		out[2] = vgetq_lane_s32(idx, 2);
 		out[3] = 255;
 
-		/* Zero consumed tap */
 		vst1q_f32(sums + tap_off, z);
 
 		sums += 16;
