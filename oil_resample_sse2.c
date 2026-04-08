@@ -3159,22 +3159,6 @@ static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_ou
 	__m128 sum_r, sum_g, sum_b, sum_a;
 	__m128 sum_r2, sum_g2, sum_b2, sum_a2;
 	float *lut;
-#if defined(__AVX__) && defined(__FMA__)
-	__m256 cy256_lo, cy256_hi;
-	{
-		float cy_phys[4];
-		cy_phys[tap & 3] = coeffs_y_f[0];
-		cy_phys[(tap + 1) & 3] = coeffs_y_f[1];
-		cy_phys[(tap + 2) & 3] = coeffs_y_f[2];
-		cy_phys[(tap + 3) & 3] = coeffs_y_f[3];
-		cy256_lo = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[1]),
-			_mm_set1_ps(cy_phys[0]));
-		cy256_hi = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[3]),
-			_mm_set1_ps(cy_phys[2]));
-	}
-#else
 	int off0, off1, off2, off3;
 	__m128 cy0, cy1, cy2, cy3;
 	off0 = tap * 4;
@@ -3185,7 +3169,6 @@ static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_ou
 	cy1 = _mm_set1_ps(coeffs_y_f[1]);
 	cy2 = _mm_set1_ps(coeffs_y_f[2]);
 	cy3 = _mm_set1_ps(coeffs_y_f[3]);
-#endif
 
 	lut = i2f_map;
 
@@ -3296,18 +3279,6 @@ static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_ou
 			ba = _mm_unpacklo_ps(sum_b, sum_a);
 			rgba = _mm_movelh_ps(rg, ba);
 
-#if defined(__AVX__) && defined(__FMA__)
-			{
-				__m256 rgba256, sy_lo, sy_hi;
-				rgba256 = _mm256_set_m128(rgba, rgba);
-				sy_lo = _mm256_loadu_ps(sums_y_out);
-				sy_hi = _mm256_loadu_ps(sums_y_out + 8);
-				sy_lo = _mm256_fmadd_ps(cy256_lo, rgba256, sy_lo);
-				sy_hi = _mm256_fmadd_ps(cy256_hi, rgba256, sy_hi);
-				_mm256_storeu_ps(sums_y_out, sy_lo);
-				_mm256_storeu_ps(sums_y_out + 8, sy_hi);
-			}
-#else
 			{
 				__m128 sy;
 				sy = _mm_load_ps(sums_y_out + off0);
@@ -3326,7 +3297,6 @@ static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_ou
 				sy = _mm_add_ps(_mm_mul_ps(cy3, rgba), sy);
 				_mm_store_ps(sums_y_out + off3, sy);
 			}
-#endif
 			sums_y_out += 16;
 		}
 
