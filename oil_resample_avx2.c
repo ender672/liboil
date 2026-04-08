@@ -2675,6 +2675,9 @@ static void oil_scale_down_rgbx_nogamma_avx2(unsigned char *in, float *sums_y_ou
 			__m128 rg, bx, rgbx;
 			__m256 rgbx256, sy;
 
+			/* Prefetch next pixel's sums_y */
+			_mm_prefetch((const char *)(sums_y_out + 16), _MM_HINT_T0);
+
 			rg = _mm_unpacklo_ps(sum_r, sum_g);
 			bx = _mm_unpacklo_ps(sum_b, sum_b);
 			rgbx = _mm_movelh_ps(rg, bx);
