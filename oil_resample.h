@@ -202,6 +202,16 @@ int oil_scale_out_sse2(struct oil_scale *os, unsigned char *out);
 
 
 /**
+ * AVX2-optimized version of oil_scale_in().
+ */
+int oil_scale_in_avx2(struct oil_scale *os, unsigned char *in);
+
+/**
+ * AVX2-optimized version of oil_scale_out().
+ */
+int oil_scale_out_avx2(struct oil_scale *os, unsigned char *out);
+
+/**
  * NEON-optimized version of oil_scale_in().
  */
 int oil_scale_in_neon(struct oil_scale *os, unsigned char *in);

@@ -750,7 +750,7 @@ int main(void)
 {
 	int t = 1531289551;
 	int i, num_impls;
-	struct impl impls[2];
+	struct impl impls[3];
 	//int t = time(NULL);
 	printf("seed: %d\n", t);
 	srand(t);
@@ -767,6 +767,12 @@ int main(void)
 	impls[num_impls].name = "sse2";
 	impls[num_impls].in = oil_scale_in_sse2;
 	impls[num_impls].out = oil_scale_out_sse2;
+	impls[num_impls].out_discard = oil_scale_out_discard;
+	num_impls++;
+
+	impls[num_impls].name = "avx2";
+	impls[num_impls].in = oil_scale_in_avx2;
+	impls[num_impls].out = oil_scale_out_avx2;
 	impls[num_impls].out_discard = oil_scale_out_discard;
 	num_impls++;
 #elif defined(__aarch64__)
