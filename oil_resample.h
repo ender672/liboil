@@ -206,21 +206,4 @@ int oil_scale_out_neon(struct oil_scale *os, unsigned char *out);
  */
 int oil_scale_out_discard(struct oil_scale *os);
 
-/**
- * Calculate an output ratio that preserves the input aspect ratio.
- * @src_width: Width, in pixels, of the input image.
- * @src_height: Height, in pixels, of the input image.
- * @out_width: Width, in pixels, of the output bounding box.
- * @out_height: Height, in pixels, of the output bounding box.
- *
- * The out_width and out_height parameters will be modified, if necessary, to
- * maintain the input aspect ratio while staying within the given bounding box.
- *
- * Returns 0 on success.
- * Returns -1 if an argument is bad.
- * Returns -3 if an adjusted dimension would be out of range.
- */
- int oil_fix_ratio(int src_width, int src_height, int *out_width,
-	int *out_height);
-
 #endif

@@ -135,9 +135,7 @@ void do_bench(struct bench_image image, double ratio, int iterations,
 	clock_t t_min, t_tmp;
 
 	out_width = round(image.width * ratio);
-	out_height = 500000; /* reasonable maximum height */
-
-	oil_fix_ratio(image.width, image.height, &out_width, &out_height);
+	out_height = round(image.height * ratio);
 
 	t_min = 0;
 	for (i=0; i<iterations; i++) {

@@ -655,28 +655,3 @@ int oil_scale_out_discard(struct oil_scale *os)
 	return 0;
 }
 
-int oil_fix_ratio(int src_width, int src_height, int *out_width,
-	int *out_height)
-{
-	double width_ratio, height_ratio, tmp;
-	int *adjust_dim;
-
-	if (src_width < 1 || src_height < 1 || *out_width < 1 || *out_height < 1) {
-		return -1; // bad argument
-	}
-
-	width_ratio = *out_width / (double)src_width;
-	height_ratio = *out_height / (double)src_height;
-	if (width_ratio < height_ratio) {
-		tmp = round(width_ratio * src_height);
-		adjust_dim = out_height;
-	} else {
-		tmp = round(height_ratio * src_width);
-		adjust_dim = out_width;
-	}
-	if (tmp > INT_MAX) {
-		return -2; // adjusted dimension out of range
-	}
-	*adjust_dim = tmp ? tmp : 1;
-	return 0;
-}
