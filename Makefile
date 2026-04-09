@@ -19,6 +19,6 @@ oil_resample_neon.o: oil_resample_neon.c oil_resample.h oil_resample_internal.h
 test: test.c $(OIL_OBJS)
 	$(CC) $(CFLAGS) $(OIL_OBJS) test.c -o $@ -lm
 benchmark: benchmark.c $(OIL_OBJS)
-	$(CC) $(CFLAGS) $(OIL_OBJS) benchmark.c -o $@ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) $(OIL_OBJS) benchmark.c -o $@ $(LDFLAGS) -lpng -lm
 clean:
 	rm -rf test test.dSYM oil_resample.o oil_resample_sse2.o oil_resample_avx2.o oil_resample_neon.o benchmark
