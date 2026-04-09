@@ -30,6 +30,29 @@ static void oil_shift_left_f_sse2(float *f)
 	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
 
+/**
+ * Unpremultiply and clamp a GA vector [g0, a0, g1, a1].
+ * Spreads alpha to gray positions, divides gray by alpha (safe when alpha==0),
+ * clamps both to [0,1], and blends the result back to GA layout.
+ */
+static inline __m128 unpremul_clamp_ga_sse2(__m128 sum, __m128 zero, __m128 one,
+	__m128 blend_mask)
+{
+	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped;
+
+	alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
+	alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+	nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
+	safe_alpha = _mm_or_ps(
+		_mm_and_ps(nz_mask, alpha_spread),
+		_mm_andnot_ps(nz_mask, one));
+	divided = _mm_div_ps(sum, safe_alpha);
+	gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+	return _mm_or_ps(
+		_mm_andnot_ps(blend_mask, gray_clamped),
+		_mm_and_ps(blend_mask, alpha_spread));
+}
+
 static void oil_yscale_out_nonlinear_sse2(float *sums, int len, unsigned char *out)
 {
 	int i;
@@ -353,21 +376,16 @@ static void oil_xscale_up_ga_sse2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod_g = _mm_mul_ps(smp_g, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod_g, prod_g);
-			__m128 t2 = _mm_add_ps(prod_g, t1);
-			prod_g = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod_g);
+			__m128 pg = _mm_mul_ps(smp_g, coeffs);
+			__m128 pa = _mm_mul_ps(smp_a, coeffs);
+			__m128 lo = _mm_unpacklo_ps(pg, pa);
+			__m128 hh = _mm_unpackhi_ps(pg, pa);
+			__m128 sum = _mm_add_ps(lo, hh);
+			__m128 t1 = _mm_movehl_ps(sum, sum);
+			__m128 t2 = _mm_add_ps(sum, t1);
 			out[0] = _mm_cvtss_f32(t2);
-
-			__m128 prod_a = _mm_mul_ps(smp_a, coeffs);
-			t1 = _mm_movehl_ps(prod_a, prod_a);
-			t2 = _mm_add_ps(prod_a, t1);
-			prod_a = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod_a);
-			out[1] = _mm_cvtss_f32(t2);
-
+			out[1] = _mm_cvtss_f32(
+				_mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1)));
 			out += 2;
 			coeff_buf += 4;
 		}
@@ -382,8 +400,7 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 	int i;
 	__m128 c0, c1, c2, c3;
 	__m128 v0, v1, v2, v3, sum, sum2;
-	__m128 scale, half, zero, one;
-	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped, result;
+	__m128 scale, half, zero, one, result;
 	__m128 blend_mask;
 	__m128i idx;
 
@@ -417,33 +434,10 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 
 		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
-
-		/* Process first pair: spread alpha to both lanes */
-		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
+		result = unpremul_clamp_ga_sse2(sum, zero, one, blend_mask);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
 
-		/* Process second pair */
-		alpha_spread = _mm_shuffle_ps(sum2, sum2, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum2, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
+		result = unpremul_clamp_ga_sse2(sum2, zero, one, blend_mask);
 		__m128i idx2 = _mm_cvttps_epi32(
 			_mm_add_ps(_mm_mul_ps(result, scale), half));
 
@@ -463,17 +457,7 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
 			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 
-		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
+		result = unpremul_clamp_ga_sse2(sum, zero, one, blend_mask);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
 		idx = _mm_packs_epi32(idx, idx);
 		idx = _mm_packus_epi16(idx, idx);
@@ -1129,55 +1113,42 @@ static void oil_scale_down_ga_sse2(unsigned char *in, float *sums_y_out,
 	sum_a = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
-			sum_g2 = _mm_setzero_ps();
-			sum_a2 = _mm_setzero_ps();
+		sum_g2 = _mm_setzero_ps();
+		sum_a2 = _mm_setzero_ps();
 
-			for (j=0; j+1<border_buf[i]; j+=2) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
+		for (j=0; j+1<border_buf[i]; j+=2) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
 
-				alpha = i2f_map[in[1]];
-				sample_x = _mm_set1_ps(i2f_map[in[0]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
+			alpha = i2f_map[in[1]];
+			sample_x = _mm_set1_ps(i2f_map[in[0]] * alpha);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+			sample_x = _mm_set1_ps(alpha);
+			sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
 
-				alpha = i2f_map[in[3]];
-				sample_x = _mm_set1_ps(i2f_map[in[2]] * alpha);
-				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
-				sample_x = _mm_set1_ps(alpha);
-				sum_a2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_a2);
+			alpha = i2f_map[in[3]];
+			sample_x = _mm_set1_ps(i2f_map[in[2]] * alpha);
+			sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
+			sample_x = _mm_set1_ps(alpha);
+			sum_a2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_a2);
 
-				in += 4;
-				coeffs_x_f += 8;
-			}
-
-			for (; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-				alpha = i2f_map[in[1]];
-				sample_x = _mm_set1_ps(i2f_map[in[0]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
-				in += 2;
-				coeffs_x_f += 4;
-			}
-
-			sum_g = _mm_add_ps(sum_g, sum_g2);
-			sum_a = _mm_add_ps(sum_a, sum_a2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-				alpha = i2f_map[in[1]];
-				sample_x = _mm_set1_ps(i2f_map[in[0]] * alpha);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
-				sample_x = _mm_set1_ps(alpha);
-				sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
-				in += 2;
-				coeffs_x_f += 4;
-			}
+			in += 4;
+			coeffs_x_f += 8;
 		}
+
+		for (; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
+			alpha = i2f_map[in[1]];
+			sample_x = _mm_set1_ps(i2f_map[in[0]] * alpha);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+			sample_x = _mm_set1_ps(alpha);
+			sum_a = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_a);
+			in += 2;
+			coeffs_x_f += 4;
+		}
+
+		sum_g = _mm_add_ps(sum_g, sum_g2);
+		sum_a = _mm_add_ps(sum_a, sum_a2);
 
 		sums_y = _mm_load_ps(sums_y_out);
 		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
