@@ -18,12 +18,12 @@ Features
  * Antialiasing - the interpolator is scaled when shrinking images.
  * Color space aware - liboil converts images to linear RGB for processing.
  * Pre-multiplied alpha - avoids artifacts when resizing with transparency.
- * SIMD acceleration - SSE2 on x86\_64, NEON on AArch64 (ARM64).
+ * SIMD acceleration - SSE2 and AVX2 on x86_64, NEON on AArch64 (ARM64).
 
 imgscale
 --------
 
-The liboil repository include a command-line tool for resizing JPEG and PNG images. This resizer reads the original image from stdin and writes the resized image to stdout.
+The liboil repository includes a command-line tool for resizing JPEG and PNG images.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the aspect ratio: 
 
@@ -73,7 +73,7 @@ On macOS with Homebrew:
 
     brew install jpeg libpng
 
-The Makefile auto-detects the architecture and builds the appropriate SIMD backend (SSE2 on x86\_64, NEON on ARM64).
+The Makefile auto-detects the architecture and builds the appropriate SIMD backend (SSE2/AVX2 on x86_64, NEON on ARM64).
 
 Per-machine compiler settings go in `local.mk` (gitignored, included by the Makefile). For example, on Apple Silicon:
 
