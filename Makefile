@@ -1,4 +1,5 @@
-CFLAGS += -O3 -Wall -pedantic
+CFLAGS ?= -O2
+CFLAGS += -Wall -pedantic
 -include local.mk
 
 OIL_OBJS = oil_resample.o
