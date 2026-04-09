@@ -1519,6 +1519,7 @@ static void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 	sum_a = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
+		j = 0;
 		if (border_buf[i] >= 4) {
 			sum_r2 = _mm_setzero_ps();
 			sum_g2 = _mm_setzero_ps();
@@ -1563,50 +1564,30 @@ static void oil_scale_down_rgba_sse2(unsigned char *in, float *sums_y_out,
 				coeffs_x_f += 8;
 			}
 
-			for (; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-
-				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[3]]));
-
-				sample_x = _mm_set1_ps(sl[in[0]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
-
-				sample_x = _mm_set1_ps(sl[in[1]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
-
-				sample_x = _mm_set1_ps(sl[in[2]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
-
-				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-
 			sum_r = _mm_add_ps(sum_r, sum_r2);
 			sum_g = _mm_add_ps(sum_g, sum_g2);
 			sum_b = _mm_add_ps(sum_b, sum_b2);
 			sum_a = _mm_add_ps(sum_a, sum_a2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
+		}
 
-				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[3]]));
+		for (; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				sample_x = _mm_set1_ps(sl[in[0]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
+			coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[3]]));
 
-				sample_x = _mm_set1_ps(sl[in[1]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
+			sample_x = _mm_set1_ps(sl[in[0]]);
+			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(sl[in[2]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
+			sample_x = _mm_set1_ps(sl[in[1]]);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
+			sample_x = _mm_set1_ps(sl[in[2]]);
+			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-				in += 4;
-				coeffs_x_f += 4;
-			}
+			sum_a = _mm_add_ps(coeffs_x_a, sum_a);
+
+			in += 4;
+			coeffs_x_f += 4;
 		}
 
 		/* Vertical accumulation using ring buffer offsets */
@@ -1906,6 +1887,7 @@ static void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
 	sum_a = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
+		j = 0;
 		if (border_buf[i] >= 4) {
 			sum_r2 = _mm_setzero_ps();
 			sum_g2 = _mm_setzero_ps();
@@ -1951,50 +1933,30 @@ static void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
 				coeffs_x_f += 8;
 			}
 
-			for (; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-
-				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[0]]));
-
-				sample_x = _mm_set1_ps(sl[in[1]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
-
-				sample_x = _mm_set1_ps(sl[in[2]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
-
-				sample_x = _mm_set1_ps(sl[in[3]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
-
-				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-
 			sum_r = _mm_add_ps(sum_r, sum_r2);
 			sum_g = _mm_add_ps(sum_g, sum_g2);
 			sum_b = _mm_add_ps(sum_b, sum_b2);
 			sum_a = _mm_add_ps(sum_a, sum_a2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
+		}
 
-				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[0]]));
+		for (; j<border_buf[i]; j++) {
+			coeffs_x = _mm_load_ps(coeffs_x_f);
 
-				sample_x = _mm_set1_ps(sl[in[1]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
+			coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[0]]));
 
-				sample_x = _mm_set1_ps(sl[in[2]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
+			sample_x = _mm_set1_ps(sl[in[1]]);
+			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = _mm_set1_ps(sl[in[3]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
+			sample_x = _mm_set1_ps(sl[in[2]]);
+			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
+			sample_x = _mm_set1_ps(sl[in[3]]);
+			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-				in += 4;
-				coeffs_x_f += 4;
-			}
+			sum_a = _mm_add_ps(coeffs_x_a, sum_a);
+
+			in += 4;
+			coeffs_x_f += 4;
 		}
 
 		/* Vertical accumulation using ring buffer offsets */
