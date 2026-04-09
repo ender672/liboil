@@ -275,6 +275,24 @@ static void clear_surface(SDL_Surface *surface)
 	memset(surface->pixels, 0, surface->pitch * surface->h);
 }
 
+static void letterbox_blit(SDL_Surface *snap, SDL_Surface *dest)
+{
+	float scale_x, scale_y, scale;
+	SDL_Rect dst_rect;
+
+	scale_x = (float)dest->w / snap->w;
+	scale_y = (float)dest->h / snap->h;
+	scale = scale_x < scale_y ? scale_x : scale_y;
+
+	dst_rect.w = (int)(snap->w * scale);
+	dst_rect.h = (int)(snap->h * scale);
+	dst_rect.x = (dest->w - dst_rect.w) / 2;
+	dst_rect.y = (dest->h - dst_rect.h) / 2;
+
+	clear_surface(dest);
+	SDL_BlitSurfaceScaled(snap, NULL, dest, &dst_rect, SDL_SCALEMODE_LINEAR);
+}
+
 int main(int argc, char **argv) {
 	SDL_Window *window;
 	SDL_Surface *surface;
@@ -283,6 +301,9 @@ int main(int argc, char **argv) {
 	int ret, event_happened, render_in_progress, surface_is_dirty;
 	struct resumable_resize rr;
 	Uint64 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
+	SDL_Surface *snapshot = NULL;
+	Uint64 pending_resize_time = 0;
+	#define DEBOUNCE_MS 150
 	int argi;
 
 	path = NULL;
@@ -379,23 +400,41 @@ int main(int argc, char **argv) {
 	surface_is_dirty = 1;
 
 	while (1) {
-		event_happened = render_in_progress ? SDL_PollEvent(&event) : SDL_WaitEvent(&event);
+		event_happened = (render_in_progress || pending_resize_time) ? SDL_PollEvent(&event) : SDL_WaitEvent(&event);
 
 		if (event_happened && event.type == SDL_EVENT_QUIT) {
 			if (render_in_progress) {
 				resumable_resize_end(&rr);
 			}
+			if (snapshot)
+				SDL_DestroySurface(snapshot);
 			SDL_Quit();
 			return 0;
 		}
 
-		if (
-			(event_happened && event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
-			|| (event_happened && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5)
-		) {
+		if (event_happened && event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
 			if (render_in_progress) {
 				resumable_resize_end(&rr);
+				render_in_progress = 0;
 			}
+			surface = SDL_GetWindowSurface(window);
+			if (snapshot) {
+				letterbox_blit(snapshot, surface);
+				SDL_UpdateWindowSurface(window);
+				surface_is_dirty = 0;
+			} else {
+				clear_surface(surface);
+				surface_is_dirty = 1;
+			}
+			pending_resize_time = SDL_GetTicks();
+		}
+
+		if (event_happened && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5) {
+			if (render_in_progress) {
+				resumable_resize_end(&rr);
+				render_in_progress = 0;
+			}
+			pending_resize_time = 0;
 			surface = SDL_GetWindowSurface(window);
 			clear_surface(surface);
 			resize_start_time = SDL_GetTicks();
@@ -405,10 +444,38 @@ int main(int argc, char **argv) {
 			}
 		}
 
+		if (!render_in_progress && pending_resize_time > 0) {
+			currentTime = SDL_GetTicks();
+			if (currentTime - pending_resize_time >= DEBOUNCE_MS) {
+				pending_resize_time = 0;
+				surface = SDL_GetWindowSurface(window);
+				clear_surface(surface);
+				resize_start_time = SDL_GetTicks();
+				if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
+					render_in_progress = 1;
+					surface_is_dirty = 1;
+				}
+			}
+		}
+
 		if (render_in_progress) {
 			ret = resumable_resize_do(&rr);
 			if (ret == 0) { // 0 means the image resize finished
 				render_in_progress = 0;
+				if (snapshot)
+					SDL_DestroySurface(snapshot);
+				snapshot = SDL_CreateSurface(rr.out_width, rr.out_height, surface->format);
+				{
+					int y, center_offset;
+					center_offset = resize_center_offset(&rr);
+					for (y = 0; y < rr.out_height; y++) {
+						memcpy(
+							(unsigned char *)snapshot->pixels + y * snapshot->pitch,
+							(unsigned char *)surface->pixels + center_offset + y * surface->w * 4,
+							rr.out_width * 4
+						);
+					}
+				}
 				resumable_resize_end(&rr);
 				SDL_UpdateWindowSurface(window);
 				surface_is_dirty = 0;
