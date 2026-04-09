@@ -148,8 +148,6 @@ static void preprocess(long double *in, enum oil_colorspace cs)
 		in[1] *= in[3];
 		in[2] *= in[3];
 		break;
-	case OIL_CS_UNKNOWN:
-		break;
 	}
 }
 
@@ -174,8 +172,6 @@ static void postprocess(long double *in, enum oil_colorspace cs)
 		in[1] = clamp_f(in[1]);
 		in[2] = clamp_f(in[2]);
 		in[3] = alpha;
-		break;
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 }

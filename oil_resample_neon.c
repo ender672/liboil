@@ -487,8 +487,6 @@ static void yscale_out_neon(float *sums, int width, unsigned char *out,
 	case OIL_CS_RGBX_NOGAMMA:
 		oil_yscale_out_rgbx_nogamma_neon(sums, width, out, tap);
 		break;
-	case OIL_CS_UNKNOWN:
-		break;
 	}
 }
 
@@ -504,8 +502,6 @@ static void down_scale_in_neon(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		oil_scale_down_rgbx_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
-		break;
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 

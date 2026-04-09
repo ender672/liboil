@@ -511,8 +511,6 @@ static void yscale_out_avx2(float *sums, int width, unsigned char *out,
 	case OIL_CS_RGBX_NOGAMMA:
 		oil_yscale_out_rgbx_nogamma_avx2(sums, width, out, tap);
 		break;
-	case OIL_CS_UNKNOWN:
-		break;
 	}
 }
 
@@ -528,8 +526,6 @@ static void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		oil_scale_down_rgbx_nogamma_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
-		break;
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 

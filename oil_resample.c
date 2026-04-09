@@ -23,9 +23,7 @@
 #include "oil_resample_internal.h"
 #include <math.h>
 #include <stdlib.h>
-#include <limits.h>
 #include <string.h>
-#include <stdio.h>
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
@@ -226,8 +224,6 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		yscale_out_rgbx_nogamma(sums, width, out, tap);
-		break;
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 }
@@ -537,8 +533,6 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		scale_down_rgbx_nogamma(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
-		break;
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 

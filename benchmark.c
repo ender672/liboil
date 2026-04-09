@@ -59,7 +59,6 @@ static struct bench_image load_png(char *path, enum oil_colorspace cs)
 		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
-	case OIL_CS_UNKNOWN:
 		break;
 	}
 

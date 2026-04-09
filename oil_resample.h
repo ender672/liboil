@@ -22,17 +22,10 @@
 #ifndef OIL_RESAMPLE_H
 #define OIL_RESAMPLE_H
 
-#define OIL_VERSION_MAJOR 0
-#define OIL_VERSION_MINOR 2
-#define OIL_VERSION_PATCH 0
-
 /**
  * Color spaces currently supported by oil.
  */
 enum oil_colorspace {
-	// error
-	OIL_CS_UNKNOWN = 0,
-
 	// RGBA without sRGB linearization - premultiplied alpha, no gamma
 	OIL_CS_RGBA_NOGAMMA = 0x0604,
 
