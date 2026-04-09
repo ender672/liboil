@@ -4,9 +4,8 @@
 #include <math.h>
 #include <errno.h>
 #include <limits.h>
-#include <png.h>
+#include <stdio.h>
 #include "oil_resample.h"
-#include "oil_libpng.h"
 
 typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
 typedef int (*scale_out_fn)(struct oil_scale *, unsigned char *);
@@ -18,87 +17,27 @@ struct bench_image {
 	enum oil_colorspace cs;
 };
 
-static struct bench_image load_png(char *path, enum oil_colorspace cs)
+static struct bench_image generate_random_image(int width, int height,
+	enum oil_colorspace cs)
 {
-	struct bench_image bench_image;
-	int i;
-	png_structp rpng;
-	png_infop rinfo;
-	FILE *input;
-	size_t row_stride, buf_len;
-	unsigned char **buf_ptrs;
+	struct bench_image image;
+	size_t row_stride, buf_len, i;
 
-	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if (setjmp(png_jmpbuf(rpng))) {
-		fprintf(stderr, "PNG Decoding Error.\n");
+	image.width = width;
+	image.height = height;
+	image.cs = cs;
+
+	row_stride = width * OIL_CMP(cs);
+	buf_len = (size_t)height * row_stride;
+	image.buffer = malloc(buf_len);
+	if (!image.buffer) {
+		fprintf(stderr, "Unable to allocate image buffer.\n");
 		exit(1);
 	}
-
-	input = fopen(path, "rb");
-	if (!input) {
-		fprintf(stderr, "Unable to open file.\n");
-		exit(1);
+	for (i = 0; i < buf_len; i++) {
+		image.buffer[i] = rand() % 256;
 	}
-
-	rinfo = png_create_info_struct(rpng);
-	png_init_io(rpng, input);
-	png_read_info(rpng, rinfo);
-
-	if (png_get_color_type(rpng, rinfo) != PNG_COLOR_TYPE_RGBA) {
-		fprintf(stderr, "Input image must be RGBA.\n");
-		exit(1);
-	};
-
-	switch(cs) {
-	case OIL_CS_G:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		png_set_strip_alpha(rpng);
-		break;
-	case OIL_CS_GA:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		break;
-	case OIL_CS_RGB:
-		png_set_strip_alpha(rpng);
-		break;
-	case OIL_CS_RGBX:
-	case OIL_CS_RGBX_NOGAMMA:
-		png_set_strip_alpha(rpng);
-		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
-		break;
-	case OIL_CS_RGB_NOGAMMA:
-		png_set_strip_alpha(rpng);
-		break;
-	case OIL_CS_CMYK: /* Kind of cheating on CMYK by giving it RGBA */
-	case OIL_CS_RGBA:
-	case OIL_CS_RGBA_NOGAMMA:
-	case OIL_CS_ARGB:
-	case OIL_CS_UNKNOWN:
-		break;
-	}
-
-	bench_image.width = png_get_image_width(rpng, rinfo);
-	bench_image.height = png_get_image_height(rpng, rinfo);
-	bench_image.cs = cs;
-
-	row_stride = bench_image.width * OIL_CMP(cs);
-	buf_len = (size_t)bench_image.height * row_stride;
-	bench_image.buffer = malloc(buf_len);
-	buf_ptrs = malloc(bench_image.height * sizeof(unsigned char *));
-	if (!bench_image.buffer || !buf_ptrs) {
-		fprintf(stderr, "Unable to allocate buffers.\n");
-		exit(1);
-	}
-
-	for (i=0; i<bench_image.height; i++) {
-		buf_ptrs[i] = bench_image.buffer + i * row_stride;
-	}
-
-	png_read_image(rpng, buf_ptrs);
-	png_destroy_read_struct(&rpng, &rinfo, NULL);
-
-	free(buf_ptrs);
-	fclose(input);
-	return bench_image;
+	return image;
 }
 
 double time_to_ms(clock_t t)
@@ -164,7 +103,7 @@ void do_bench(struct bench_image image, double ratio, int iterations,
 }
 
 /* filter: 0=all, 1=downscale only (ratio<1), 2=upscale only (ratio>=1) */
-void do_bench_sizes(char *name, char *path, enum oil_colorspace cs,
+void do_bench_sizes(char *name, int width, int height, enum oil_colorspace cs,
 	int iterations, int filter, char *impl_name,
 	scale_in_fn do_in, scale_out_fn do_out)
 {
@@ -172,7 +111,7 @@ void do_bench_sizes(char *name, char *path, enum oil_colorspace cs,
 	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
 	size_t i, num_ratios;
 
-	image = load_png(path, cs);
+	image = generate_random_image(width, height, cs);
 
 	printf("%dx%d %s [%s]\n", image.width, image.height, name, impl_name);
 
@@ -192,7 +131,7 @@ struct impl {
 	scale_out_fn out;
 };
 
-void run_bench(char *path, char *cs_arg, int iterations, int filter,
+void run_bench(int width, int height, char *cs_arg, int iterations, int filter,
 	struct impl *impls, int num_impls)
 {
 	size_t i, j, num_spaces;
@@ -242,7 +181,7 @@ void run_bench(char *path, char *cs_arg, int iterations, int filter,
 		}
 		/* single colorspace */
 		for (j=0; j<(size_t)num_impls; j++) {
-			do_bench_sizes(space_names[i], path, spaces[i],
+			do_bench_sizes(space_names[i], width, height, spaces[i],
 				iterations, filter, impls[j].name,
 				impls[j].in, impls[j].out);
 		}
@@ -251,7 +190,7 @@ void run_bench(char *path, char *cs_arg, int iterations, int filter,
 
 	for (i=0; i<num_spaces; i++) {
 		for (j=0; j<(size_t)num_impls; j++) {
-			do_bench_sizes(space_names[i], path, spaces[i],
+			do_bench_sizes(space_names[i], width, height, spaces[i],
 				iterations, filter, impls[j].name,
 				impls[j].in, impls[j].out);
 		}
@@ -260,8 +199,8 @@ void run_bench(char *path, char *cs_arg, int iterations, int filter,
 
 int main(int argc, char *argv[])
 {
-	int iterations, filter, arg_pos, impl_mode; /* 0=all,1=scalar,3=sse2,4=avx2,5=neon */
-	char *end, *path, *cs_arg;
+	int iterations, filter, arg_pos, impl_mode, width, height;
+	char *end, *cs_arg;
 	unsigned long ul;
 	struct impl impls[3];
 	int num_impls;
@@ -290,14 +229,20 @@ int main(int argc, char *argv[])
 		arg_pos++;
 	}
 
-	if (argc - arg_pos < 1 || argc - arg_pos > 2) {
-		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--sse2|--avx2|--neon] <path> [colorspace]\n",
+	if (argc - arg_pos < 2 || argc - arg_pos > 3) {
+		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--sse2|--avx2|--neon] <width> <height> [colorspace]\n",
 			argv[0]);
 		return 1;
 	}
 
-	path = argv[arg_pos];
-	cs_arg = (argc - arg_pos == 2) ? argv[arg_pos + 1] : NULL;
+	width = atoi(argv[arg_pos]);
+	height = atoi(argv[arg_pos + 1]);
+	cs_arg = (argc - arg_pos == 3) ? argv[arg_pos + 2] : NULL;
+
+	if (width <= 0 || height <= 0) {
+		fprintf(stderr, "Width and height must be positive integers.\n");
+		return 1;
+	}
 
 	iterations = 100;
 	if (getenv("OILITERATIONS")) {
@@ -310,6 +255,8 @@ int main(int argc, char *argv[])
 		iterations = (int)ul;
 	}
 	fprintf(stderr, "Iterations: %d\n", iterations);
+
+	srand(time(NULL));
 
 	num_impls = 0;
 
@@ -355,6 +302,6 @@ int main(int argc, char *argv[])
 	}
 #endif
 
-	run_bench(path, cs_arg, iterations, filter, impls, num_impls);
+	run_bench(width, height, cs_arg, iterations, filter, impls, num_impls);
 	return 0;
 }
