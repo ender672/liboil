@@ -567,22 +567,3 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 	os->out_pos++;
 	return 0;
 }
-
-int oil_scale_out_discard(struct oil_scale *os)
-{
-	if (oil_scale_slots(os) != 0) {
-		return -1;
-	}
-
-	/* Use yscale_out to shift the sums_y accumulators, discarding
-	 * the output pixels. This avoids needing layout-specific shift
-	 * logic for each colorspace's sums_y memory layout. */
-	int sl_len = os->out_width * OIL_CMP(os->cs);
-	unsigned char tmp[sl_len];
-	yscale_out(os->sums_y, os->out_width, tmp, os->cs, os->sums_y_tap);
-	os->sums_y_tap = (os->sums_y_tap + 1) & 3;
-
-	os->out_pos++;
-	return 0;
-}
-

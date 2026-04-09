@@ -196,14 +196,4 @@ int oil_scale_in_neon(struct oil_scale *os, unsigned char *in);
  */
 int oil_scale_out_neon(struct oil_scale *os, unsigned char *out);
 
-/**
- * Discard the next output scanline without producing it. Advances internal
- * state so that input feeding can continue.
- * @os: Pointer to the scaler struct.
- *
- * Returns 0 on success.
- * Returns -1 if not enough input scanlines have been fed yet.
- */
-int oil_scale_out_discard(struct oil_scale *os);
-
 #endif

@@ -6,11 +6,9 @@
 
 typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
 typedef int (*scale_out_fn)(struct oil_scale *, unsigned char *);
-typedef int (*scale_out_discard_fn)(struct oil_scale *);
 
 static scale_in_fn cur_scale_in;
 static scale_out_fn cur_scale_out;
-static scale_out_discard_fn cur_scale_out_discard;
 
 /**
  * shared test helpers
@@ -423,64 +421,6 @@ static void test_scale_downscale(int dim_in, int dim_out)
 	test_scale_each_cs(dim_in, dim_out);
 }
 
-static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
-{
-	int i, j, in_line, out_row_stride;
-	struct oil_scale os_discard;
-	unsigned char **input_image, **normal_output, *discard_line;
-
-	in_line = OIL_CMP(cs) * in_dim;
-	out_row_stride = OIL_CMP(cs) * out_dim;
-
-	input_image = alloc_2d_uchar(in_line, in_dim);
-	for (i=0; i<in_dim; i++) {
-		fill_rand8(input_image[i], in_line);
-	}
-
-	/* normal scale for reference */
-	normal_output = alloc_2d_uchar(out_row_stride, out_dim);
-	do_oil_scale(input_image, in_dim, in_dim, normal_output, out_dim,
-		out_dim, cs);
-
-	/* scale with every other line discarded */
-	discard_line = malloc(out_row_stride);
-	oil_scale_init(&os_discard, in_dim, out_dim, in_dim, out_dim, cs);
-	in_line = 0;
-	for (i=0; i<out_dim; i++) {
-		while(oil_scale_slots(&os_discard)) {
-			assert(cur_scale_in(&os_discard, input_image[in_line++]) == 0);
-		}
-		if (i % 2 == 0) {
-			cur_scale_out(&os_discard, discard_line);
-			for (j=0; j<out_row_stride; j++) {
-				assert(discard_line[j] == normal_output[i][j]);
-			}
-		} else {
-			cur_scale_out_discard(&os_discard);
-		}
-	}
-	oil_scale_free(&os_discard);
-
-	/* verify cur_scale_in returns -1 when output is ready */
-	oil_scale_init(&os_discard, in_dim, out_dim, in_dim, out_dim, cs);
-	in_line = 0;
-	while(oil_scale_slots(&os_discard)) {
-		assert(cur_scale_in(&os_discard, input_image[in_line++]) == 0);
-	}
-	assert(cur_scale_in(&os_discard, input_image[0]) == -1);
-	oil_scale_free(&os_discard);
-
-	free(discard_line);
-	free_2d_uchar(normal_output, out_dim);
-	free_2d_uchar(input_image, in_dim);
-}
-
-static void test_out_discard_all(void)
-{
-	test_out_discard(100, 50, OIL_CS_RGBA_NOGAMMA);
-	test_out_discard(100, 50, OIL_CS_RGBX_NOGAMMA);
-}
-
 static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 {
 	struct oil_scale os;
@@ -493,7 +433,6 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 	/* calling cur_scale_out before any input should fail */
 	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
 	assert(cur_scale_out(&os, buf) == -1);
-	assert(cur_scale_out_discard(&os) == -1);
 
 	/* feed one input line when more are needed, should still fail */
 	if (oil_scale_slots(&os) > 1) {
@@ -501,7 +440,6 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 		assert(cur_scale_in(&os, in_line) == 0);
 		assert(oil_scale_slots(&os) > 0);
 		assert(cur_scale_out(&os, buf) == -1);
-		assert(cur_scale_out_discard(&os) == -1);
 		free(in_line);
 	}
 	oil_scale_free(&os);
@@ -514,16 +452,6 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 		free(in_line);
 	}
 	assert(cur_scale_out(&os, buf) == 0);
-	oil_scale_free(&os);
-
-	/* same but with discard */
-	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
-	while (oil_scale_slots(&os)) {
-		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
-		assert(cur_scale_in(&os, in_line) == 0);
-		free(in_line);
-	}
-	assert(cur_scale_out_discard(&os) == 0);
 	oil_scale_free(&os);
 
 	free(buf);
@@ -549,7 +477,6 @@ struct impl {
 	char *name;
 	scale_in_fn in;
 	scale_out_fn out;
-	scale_out_discard_fn out_discard;
 };
 
 static void run_tests(struct impl *impl)
@@ -557,10 +484,8 @@ static void run_tests(struct impl *impl)
 	printf("--- testing %s ---\n", impl->name);
 	cur_scale_in = impl->in;
 	cur_scale_out = impl->out;
-	cur_scale_out_discard = impl->out_discard;
 
 	test_scale_all();
-	test_out_discard_all();
 	test_out_not_ready_all();
 }
 
@@ -578,26 +503,26 @@ int main(void)
 	impls[num_impls].name = "scalar";
 	impls[num_impls].in = oil_scale_in;
 	impls[num_impls].out = oil_scale_out;
-	impls[num_impls].out_discard = oil_scale_out_discard;
+
 	num_impls++;
 
 #if defined(__x86_64__)
 	impls[num_impls].name = "sse2";
 	impls[num_impls].in = oil_scale_in_sse2;
 	impls[num_impls].out = oil_scale_out_sse2;
-	impls[num_impls].out_discard = oil_scale_out_discard;
+
 	num_impls++;
 
 	impls[num_impls].name = "avx2";
 	impls[num_impls].in = oil_scale_in_avx2;
 	impls[num_impls].out = oil_scale_out_avx2;
-	impls[num_impls].out_discard = oil_scale_out_discard;
+
 	num_impls++;
 #elif defined(__aarch64__)
 	impls[num_impls].name = "neon";
 	impls[num_impls].in = oil_scale_in_neon;
 	impls[num_impls].out = oil_scale_out_neon;
-	impls[num_impls].out_discard = oil_scale_out_discard;
+
 	num_impls++;
 #endif
 
