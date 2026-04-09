@@ -152,47 +152,6 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 }
 
 /**
- * Pre-calculated table of linear to srgb mappings. Initialized via build_l2s().
- *
- * catmull-rom interpolation can produce values from -17/64 to 81/64.
- *
- * The total allocated space will be split into three parts:
- *   * 17/98 of padding below zero
- *   * 64/98 of mapping
- *   * 17/98 of padding above one
- */
-#define L2S_ALL_LEN 32768
-static unsigned char l2s_map_all[L2S_ALL_LEN];
-int l2s_len;
-unsigned char *l2s_map;
-
-static void build_l2s(void)
-{
-	int i, padding;
-	double srgb_f, tmp, val;
-
-	padding = L2S_ALL_LEN * 17 / 98;
-	l2s_len = L2S_ALL_LEN - 2 * padding;
-	l2s_map = l2s_map_all + padding;
-
-	for (i=0; i<l2s_len; i++) {
-		srgb_f = (i + 0.5)/(l2s_len - 1);
-		if (srgb_f <= 0.00313) {
-			val = srgb_f * 12.92;
-		} else {
-			tmp = pow(srgb_f, 1/2.4);
-			val = 1.055 * tmp - 0.055;
-		}
-
-		l2s_map[i] = round(val * 255);
-	}
-
-	for (i=0; i<padding; i++) {
-		l2s_map[l2s_len + i] = 255;
-	}
-}
-
-/**
  * Takes a sample value, an array of 4 coefficients & 4 accumulators, and
  * adds the product of sample * coeffs[n] to each accumulator.
  */
@@ -274,32 +233,6 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 }
 
 /* horizontal scaling */
-
-/**
- * Holds pre-calculated mapping of sRGB chars to linear RGB floating point
- * values.
- */
-float s2l_map[256];
-
-/**
- * Populates s2l_map.
- */
-static void build_s2l(void)
-{
-	int input;
-	double in_f, tmp, val;
-
-	for (input=0; input<=255; input++) {
-		in_f = input / 255.0;
-		if (in_f <= 0.040448236277) {
-			val = in_f / 12.92;
-		} else {
-			tmp = ((in_f + 0.055)/1.055);
-			val = pow(tmp, 2.4);
-		}
-		s2l_map[input] = val;
-	}
-}
 
 float i2f_map[256];
 
@@ -443,8 +376,6 @@ static void scale_down_rgbx_nogamma(unsigned char *in, float *sums_y, int out_wi
 /* Global functions */
 void oil_global_init(void)
 {
-	build_s2l();
-	build_l2s();
 	build_i2f();
 }
 
@@ -527,7 +458,7 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
 
 	// Lazy perform global init, in case oil_global_ini() hasn't been
 	// called yet.
-	if (!s2l_map[128]) {
+	if (!i2f_map[128]) {
 		oil_global_init();
 	}
 
