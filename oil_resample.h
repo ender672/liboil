@@ -33,30 +33,6 @@ enum oil_colorspace {
 	// error
 	OIL_CS_UNKNOWN = 0,
 
-	// greyscale - no sRGB gamma space conversions
-	OIL_CS_G       = 0x0001,
-
-	// greyscale w/ alpha - uses premultiplied alpha
-	OIL_CS_GA      = 0x0002,
-
-	// sRGB - input will be converted to linear RGB during processing
-	OIL_CS_RGB     = 0x0003,
-
-	// sRGB w/ alpha - sRGB to linear conversion and premultiplied alpha
-	OIL_CS_RGBA    = 0x0104,
-
-	// sRGB w/ alpha - alpha first, then sRGB to linear conversion and premultiplied alpha
-	OIL_CS_ARGB    = 0x0304,
-
-	// sRGB w/o alpha - 4 bytes per pixel, 4th byte (X) is ignored
-	OIL_CS_RGBX    = 0x0404,
-
-	// no color space conversions
-	OIL_CS_CMYK    = 0x0204,
-
-	// RGB without sRGB linearization - samples treated as raw values
-	OIL_CS_RGB_NOGAMMA  = 0x0503,
-
 	// RGBA without sRGB linearization - premultiplied alpha, no gamma
 	OIL_CS_RGBA_NOGAMMA = 0x0604,
 

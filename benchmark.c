@@ -54,26 +54,11 @@ static struct bench_image load_png(char *path, enum oil_colorspace cs)
 	}
 
 	switch(cs) {
-	case OIL_CS_G:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		png_set_strip_alpha(rpng);
-		break;
-	case OIL_CS_GA:
-		png_set_rgb_to_gray(rpng, 1, -1, -1);
-		break;
-	case OIL_CS_RGB:
-	case OIL_CS_RGB_NOGAMMA:
-		png_set_strip_alpha(rpng);
-		break;
-	case OIL_CS_RGBX:
 	case OIL_CS_RGBX_NOGAMMA:
 		png_set_strip_alpha(rpng);
 		png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
 		break;
-	case OIL_CS_CMYK:
-	case OIL_CS_RGBA:
 	case OIL_CS_RGBA_NOGAMMA:
-	case OIL_CS_ARGB:
 	case OIL_CS_UNKNOWN:
 		break;
 	}
@@ -198,27 +183,11 @@ void run_bench(char *path, char *cs_arg, int iterations,
 	clock_t t;
 
 	enum oil_colorspace spaces[] = {
-		OIL_CS_G,
-		OIL_CS_GA,
-		OIL_CS_RGB,
-		OIL_CS_RGBX,
-		OIL_CS_RGBA,
-		OIL_CS_ARGB,
-		OIL_CS_CMYK,
-		OIL_CS_RGB_NOGAMMA,
 		OIL_CS_RGBA_NOGAMMA,
 		OIL_CS_RGBX_NOGAMMA,
 	};
 
 	char *space_names[] = {
-		"G",
-		"GA",
-		"RGB",
-		"RGBX",
-		"RGBA",
-		"ARGB",
-		"CMYK",
-		"RGB_NOGAMMA",
 		"RGBA_NOGAMMA",
 		"RGBX_NOGAMMA",
 	};

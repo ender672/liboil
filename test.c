@@ -12,34 +12,6 @@ static scale_in_fn cur_scale_in;
 static scale_out_fn cur_scale_out;
 static scale_out_discard_fn cur_scale_out_discard;
 
-static long double srgb_sample_to_linear_reference(long double in_f)
-{
-	long double tmp;
-	if (in_f <= 0.0404482362771082L) {
-		return in_f / 12.92L;
-	} else {
-		tmp = ((in_f + 0.055L)/1.055L);
-		return powl(tmp, 2.4L);
-	}
-}
-
-static long double linear_sample_to_srgb_reference(long double in_f)
-{
-	long double tmp;
-	if (in_f <= 0.0L) {
-		return 0.0L;
-	}
-	if (in_f >= 1.0L) {
-		return 1.0L;
-	}
-	if (in_f <= 0.00313066844250063L) {
-		return in_f * 12.92L;
-	} else {
-		tmp = powl(in_f, 1/2.4L);
-		return 1.055L * tmp - 0.055L;
-	}
-}
-
 /**
  * shared test helpers
  */
@@ -170,43 +142,15 @@ static long double clamp_f(long double in)
 static void preprocess(long double *in, enum oil_colorspace cs)
 {
 	switch (cs) {
-	case OIL_CS_G:
-	case OIL_CS_CMYK:
-	case OIL_CS_UNKNOWN:
-		break;
-	case OIL_CS_GA:
-		in[0] *= in[1];
-		break;
-	case OIL_CS_RGB:
-		in[0] = srgb_sample_to_linear_reference(in[0]);
-		in[1] = srgb_sample_to_linear_reference(in[1]);
-		in[2] = srgb_sample_to_linear_reference(in[2]);
-		break;
-	case OIL_CS_RGBA:
-		in[0] = in[3] * srgb_sample_to_linear_reference(in[0]);
-		in[1] = in[3] * srgb_sample_to_linear_reference(in[1]);
-		in[2] = in[3] * srgb_sample_to_linear_reference(in[2]);
-		break;
-	case OIL_CS_ARGB:
-		in[1] = in[0] * srgb_sample_to_linear_reference(in[1]);
-		in[2] = in[0] * srgb_sample_to_linear_reference(in[2]);
-		in[3] = in[0] * srgb_sample_to_linear_reference(in[3]);
-		break;
-	case OIL_CS_RGBX:
-		in[0] = srgb_sample_to_linear_reference(in[0]);
-		in[1] = srgb_sample_to_linear_reference(in[1]);
-		in[2] = srgb_sample_to_linear_reference(in[2]);
-		in[3] = 1.0L;
-		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		in[3] = 1.0L;
-		break;
-	case OIL_CS_RGB_NOGAMMA:
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 		in[0] *= in[3];
 		in[1] *= in[3];
 		in[2] *= in[3];
+		break;
+	case OIL_CS_UNKNOWN:
 		break;
 	}
 }
@@ -215,68 +159,11 @@ static void postprocess(long double *in, enum oil_colorspace cs)
 {
 	long double alpha;
 	switch (cs) {
-	case OIL_CS_G:
-		in[0] = clamp_f(in[0]);
-		break;
-	case OIL_CS_GA:
-		alpha = clamp_f(in[1]);
-		if (alpha != 0.0L) {
-			in[0] /= alpha;
-		}
-		in[0] = clamp_f(in[0]);
-		in[1] = alpha;
-		break;
-	case OIL_CS_RGB:
-		in[0] = linear_sample_to_srgb_reference(in[0]);
-		in[1] = linear_sample_to_srgb_reference(in[1]);
-		in[2] = linear_sample_to_srgb_reference(in[2]);
-		break;
-	case OIL_CS_RGBA:
-		alpha = clamp_f(in[3]);
-		if (alpha != 0.0L) {
-			in[0] /= alpha;
-			in[1] /= alpha;
-			in[2] /= alpha;
-		}
-		in[0] = linear_sample_to_srgb_reference(in[0]);
-		in[1] = linear_sample_to_srgb_reference(in[1]);
-		in[2] = linear_sample_to_srgb_reference(in[2]);
-		in[3] = alpha;
-		break;
-	case OIL_CS_ARGB:
-		alpha = clamp_f(in[0]);
-		if (alpha != 0.0L) {
-			in[1] /= alpha;
-			in[2] /= alpha;
-			in[3] /= alpha;
-		}
-		in[0] = alpha;
-		in[1] = linear_sample_to_srgb_reference(in[1]);
-		in[2] = linear_sample_to_srgb_reference(in[2]);
-		in[3] = linear_sample_to_srgb_reference(in[3]);
-		break;
-	case OIL_CS_CMYK:
-		in[0] = clamp_f(in[0]);
-		in[1] = clamp_f(in[1]);
-		in[2] = clamp_f(in[2]);
-		in[3] = clamp_f(in[3]);
-		break;
-	case OIL_CS_RGBX:
-		in[0] = linear_sample_to_srgb_reference(in[0]);
-		in[1] = linear_sample_to_srgb_reference(in[1]);
-		in[2] = linear_sample_to_srgb_reference(in[2]);
-		in[3] = 1.0L;
-		break;
 	case OIL_CS_RGBX_NOGAMMA:
 		in[0] = clamp_f(in[0]);
 		in[1] = clamp_f(in[1]);
 		in[2] = clamp_f(in[2]);
 		in[3] = 1.0L;
-		break;
-	case OIL_CS_RGB_NOGAMMA:
-		in[0] = clamp_f(in[0]);
-		in[1] = clamp_f(in[1]);
-		in[2] = clamp_f(in[2]);
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 		alpha = clamp_f(in[3]);
@@ -526,14 +413,6 @@ static void test_scale_square_rand(int in_dim, int out_dim,
 
 static void test_scale_each_cs(int dim_a, int dim_b)
 {
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_G);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_GA);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGB);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBA);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_ARGB);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_CMYK);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX);
-	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGB_NOGAMMA);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBA_NOGAMMA);
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX_NOGAMMA);
 }
@@ -598,13 +477,6 @@ static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
 
 static void test_out_discard_all(void)
 {
-	test_out_discard(100, 50, OIL_CS_G);
-	test_out_discard(100, 50, OIL_CS_RGB);
-	test_out_discard(100, 50, OIL_CS_RGBA);
-	test_out_discard(100, 50, OIL_CS_ARGB);
-	test_out_discard(100, 50, OIL_CS_CMYK);
-	test_out_discard(100, 50, OIL_CS_GA);
-	test_out_discard(100, 50, OIL_CS_RGB_NOGAMMA);
 	test_out_discard(100, 50, OIL_CS_RGBA_NOGAMMA);
 	test_out_discard(100, 50, OIL_CS_RGBX_NOGAMMA);
 }
@@ -659,13 +531,6 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 
 static void test_out_not_ready_all(void)
 {
-	test_out_not_ready(100, 50, OIL_CS_G);
-	test_out_not_ready(100, 50, OIL_CS_RGB);
-	test_out_not_ready(100, 50, OIL_CS_RGBA);
-	test_out_not_ready(100, 50, OIL_CS_ARGB);
-	test_out_not_ready(100, 50, OIL_CS_CMYK);
-	test_out_not_ready(100, 50, OIL_CS_GA);
-	test_out_not_ready(100, 50, OIL_CS_RGB_NOGAMMA);
 	test_out_not_ready(100, 50, OIL_CS_RGBA_NOGAMMA);
 	test_out_not_ready(100, 50, OIL_CS_RGBX_NOGAMMA);
 }
