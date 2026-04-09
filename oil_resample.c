@@ -400,7 +400,7 @@ static int downscale_alloc_size(int in_height, int out_height, int in_width,
 		+ ALIGN16(calc_coeffs_len(in_height, out_height))
 		+ ALIGN16(calc_borders_len(in_height, out_height))
 		+ ALIGN16(max(taps_x, taps_y) * sizeof(float))
-		+ ALIGN16(out_width * OIL_CMP(cs) * TAPS * sizeof(float));
+		+ ALIGN16(out_width * 4 * TAPS * sizeof(float));
 }
 
 static void downscale_init(struct oil_scale *os)
@@ -412,7 +412,7 @@ static void downscale_init(struct oil_scale *os)
 	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
 	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
 	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
-	sums_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+	sums_len = ALIGN16(os->out_width * 4 * TAPS * sizeof(float));
 
 	p = os->buf;
 	os->coeffs_x = (float *)p;		p += coeffs_x_len;

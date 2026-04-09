@@ -34,11 +34,6 @@ enum oil_colorspace {
 };
 
 /**
- * Macro to get the number of components from an oil color space.
- */
-#define OIL_CMP(x) ((x)&0xFF)
-
-/**
  * Struct to hold state for scaling. Changing these will produce unpredictable
  * results.
  */

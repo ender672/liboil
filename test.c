@@ -307,7 +307,7 @@ static void ref_scale(unsigned char **in, int in_width, int in_height,
 	int i, j, cmp, stride;
 	long double *pre_line, **intermediate;
 
-	cmp = OIL_CMP(cs);
+	cmp = 4;
 	stride = cmp * in_width;
 
 	// horizontal scaling
@@ -366,7 +366,7 @@ static void test_scale(int in_width, int in_height,
 	unsigned char **oil_output_image;
 	long double **ref_output_image;
 
-	out_row_stride = OIL_CMP(cs) * out_width;
+	out_row_stride = 4 * out_width;
 
 	/* oil scaling */
 	oil_output_image = alloc_2d_uchar(out_row_stride, out_height);
@@ -381,7 +381,7 @@ static void test_scale(int in_width, int in_height,
 	/* compare the two */
 	for (i=0; i<out_height; i++) {
 		validate_scanline8(oil_output_image[i], ref_output_image[i],
-			out_width, OIL_CMP(cs));
+			out_width, 4);
 	}
 
 	free_2d_uchar(oil_output_image, out_height);
@@ -394,7 +394,7 @@ static void test_scale_square_rand(int in_dim, int out_dim,
 	int i, in_row_stride;
 	unsigned char **input_image;
 
-	in_row_stride = OIL_CMP(cs) * in_dim;
+	in_row_stride = 4 * in_dim;
 
 	/* Allocate & populate input image */
 	input_image = alloc_2d_uchar(in_row_stride, in_dim);
@@ -423,7 +423,7 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 	int out_row_stride;
 	unsigned char *buf;
 
-	out_row_stride = OIL_CMP(cs) * out_dim;
+	out_row_stride = 4 * out_dim;
 	buf = malloc(out_row_stride);
 
 	/* calling cur_scale_out before any input should fail */
@@ -432,7 +432,7 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 
 	/* feed one input line when more are needed, should still fail */
 	if (oil_scale_slots(&os) > 1) {
-		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
+		unsigned char *in_line = calloc(4 * in_dim, 1);
 		assert(cur_scale_in(&os, in_line) == 0);
 		assert(oil_scale_slots(&os) > 0);
 		assert(cur_scale_out(&os, buf) == -1);
@@ -443,7 +443,7 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 	/* feed enough input, then cur_scale_out should succeed */
 	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
 	while (oil_scale_slots(&os)) {
-		unsigned char *in_line = calloc(OIL_CMP(cs) * in_dim, 1);
+		unsigned char *in_line = calloc(4 * in_dim, 1);
 		assert(cur_scale_in(&os, in_line) == 0);
 		free(in_line);
 	}

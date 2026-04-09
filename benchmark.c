@@ -66,7 +66,7 @@ static struct bench_image load_png(char *path, enum oil_colorspace cs)
 	image.height = png_get_image_height(rpng, rinfo);
 	image.cs = cs;
 
-	row_stride = image.width * OIL_CMP(cs);
+	row_stride = image.width * 4;
 	buf_len = (size_t)image.height * row_stride;
 	image.buffer = malloc(buf_len);
 	buf_ptrs = malloc(image.height * sizeof(unsigned char *));
@@ -103,10 +103,10 @@ clock_t resize(struct bench_image image, int out_width, int out_height,
 	clock_t t;
 
 	cs = image.cs;
-	in_row_stride = image.width * OIL_CMP(cs);
+	in_row_stride = image.width * 4;
 
 	inbuf = image.buffer;
-	outbuf = malloc(out_width * OIL_CMP(cs));
+	outbuf = malloc(out_width * 4);
 	if (!outbuf) {
 		fprintf(stderr, "Unable to allocate output buffer.\n");
 		exit(1);
