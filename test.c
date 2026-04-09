@@ -524,37 +524,6 @@ static void test_scale_square_rand(int in_dim, int out_dim,
 	free_2d_uchar(input_image, in_dim);
 }
 
-static void test_scale_catrom_extremes(void)
-{
-	unsigned char **input_image;
-
-	/* Allocate & populate input image */
-	input_image = alloc_2d_uchar(4, 4);
-
-	input_image[0][0] = 0;
-	input_image[0][1] = 0;
-	input_image[0][2] = 0;
-	input_image[0][3] = 0;
-
-	input_image[1][0] = 0;
-	input_image[1][1] = 255;
-	input_image[1][2] = 255;
-	input_image[1][3] = 0;
-
-	input_image[2][0] = 0;
-	input_image[2][1] = 255;
-	input_image[2][2] = 255;
-	input_image[2][3] = 0;
-
-	input_image[3][0] = 0;
-	input_image[3][1] = 0;
-	input_image[3][2] = 0;
-	input_image[3][3] = 0;
-
-	test_scale(4, 4, input_image, 7, 7, OIL_CS_G);
-	free_2d_uchar(input_image, 4);
-}
-
 static void test_scale_each_cs(int dim_a, int dim_b)
 {
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_G);
@@ -569,10 +538,10 @@ static void test_scale_each_cs(int dim_a, int dim_b)
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_RGBX_NOGAMMA);
 }
 
-static void test_scale_all_permutations(int dim_a, int dim_b)
+static void test_scale_downscale(int dim_in, int dim_out)
 {
-	test_scale_each_cs(dim_a, dim_b);
-	test_scale_each_cs(dim_b, dim_a);
+	assert(dim_in >= dim_out);
+	test_scale_each_cs(dim_in, dim_out);
 }
 
 static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
@@ -629,7 +598,6 @@ static void test_out_discard(int in_dim, int out_dim, enum oil_colorspace cs)
 
 static void test_out_discard_all(void)
 {
-	/* downscale */
 	test_out_discard(100, 50, OIL_CS_G);
 	test_out_discard(100, 50, OIL_CS_RGB);
 	test_out_discard(100, 50, OIL_CS_RGBA);
@@ -639,16 +607,6 @@ static void test_out_discard_all(void)
 	test_out_discard(100, 50, OIL_CS_RGB_NOGAMMA);
 	test_out_discard(100, 50, OIL_CS_RGBA_NOGAMMA);
 	test_out_discard(100, 50, OIL_CS_RGBX_NOGAMMA);
-	/* upscale */
-	test_out_discard(50, 100, OIL_CS_G);
-	test_out_discard(50, 100, OIL_CS_RGB);
-	test_out_discard(50, 100, OIL_CS_RGBA);
-	test_out_discard(50, 100, OIL_CS_ARGB);
-	test_out_discard(50, 100, OIL_CS_CMYK);
-	test_out_discard(50, 100, OIL_CS_GA);
-	test_out_discard(50, 100, OIL_CS_RGB_NOGAMMA);
-	test_out_discard(50, 100, OIL_CS_RGBA_NOGAMMA);
-	test_out_discard(50, 100, OIL_CS_RGBX_NOGAMMA);
 }
 
 static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
@@ -701,7 +659,6 @@ static void test_out_not_ready(int in_dim, int out_dim, enum oil_colorspace cs)
 
 static void test_out_not_ready_all(void)
 {
-	/* downscale */
 	test_out_not_ready(100, 50, OIL_CS_G);
 	test_out_not_ready(100, 50, OIL_CS_RGB);
 	test_out_not_ready(100, 50, OIL_CS_RGBA);
@@ -711,26 +668,16 @@ static void test_out_not_ready_all(void)
 	test_out_not_ready(100, 50, OIL_CS_RGB_NOGAMMA);
 	test_out_not_ready(100, 50, OIL_CS_RGBA_NOGAMMA);
 	test_out_not_ready(100, 50, OIL_CS_RGBX_NOGAMMA);
-	/* upscale */
-	test_out_not_ready(50, 100, OIL_CS_G);
-	test_out_not_ready(50, 100, OIL_CS_RGB);
-	test_out_not_ready(50, 100, OIL_CS_RGBA);
-	test_out_not_ready(50, 100, OIL_CS_ARGB);
-	test_out_not_ready(50, 100, OIL_CS_CMYK);
-	test_out_not_ready(50, 100, OIL_CS_GA);
-	test_out_not_ready(50, 100, OIL_CS_RGB_NOGAMMA);
-	test_out_not_ready(50, 100, OIL_CS_RGBA_NOGAMMA);
-	test_out_not_ready(50, 100, OIL_CS_RGBX_NOGAMMA);
 }
 
 static void test_scale_all(void)
 {
-	test_scale_all_permutations(5, 1);
-	test_scale_all_permutations(8, 1);
-	test_scale_all_permutations(8, 3);
-	test_scale_all_permutations(100, 1);
-	test_scale_all_permutations(100, 99);
-	test_scale_all_permutations(2, 1);
+	test_scale_downscale(5, 1);
+	test_scale_downscale(8, 1);
+	test_scale_downscale(8, 3);
+	test_scale_downscale(100, 1);
+	test_scale_downscale(100, 99);
+	test_scale_downscale(2, 1);
 }
 
 struct impl {
@@ -748,7 +695,6 @@ static void run_tests(struct impl *impl)
 	cur_scale_out_discard = impl->out_discard;
 
 	test_scale_all();
-	test_scale_catrom_extremes();
 	test_out_discard_all();
 	test_out_not_ready_all();
 }

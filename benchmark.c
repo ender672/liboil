@@ -102,13 +102,12 @@ void do_bench(struct bench_image image, double ratio, int iterations,
 	printf("    to %4dx%4d %6.2fms\n", out_width, out_height, time_to_ms(t_min));
 }
 
-/* filter: 0=all, 1=downscale only (ratio<1), 2=upscale only (ratio>=1) */
 void do_bench_sizes(char *name, int width, int height, enum oil_colorspace cs,
-	int iterations, int filter, char *impl_name,
+	int iterations, char *impl_name,
 	scale_in_fn do_in, scale_out_fn do_out)
 {
 	struct bench_image image;
-	double ratios[] = { 0.01, 0.125, 0.8, 2.14 };
+	double ratios[] = { 0.01, 0.125, 0.8 };
 	size_t i, num_ratios;
 
 	image = generate_random_image(width, height, cs);
@@ -117,8 +116,6 @@ void do_bench_sizes(char *name, int width, int height, enum oil_colorspace cs,
 
 	num_ratios = sizeof(ratios)/sizeof(ratios[0]);
 	for (i=0; i<num_ratios; i++) {
-		if (filter == 1 && ratios[i] >= 1.0) continue;
-		if (filter == 2 && ratios[i] < 1.0) continue;
 		do_bench(image, ratios[i], iterations, do_in, do_out);
 	}
 
@@ -131,7 +128,7 @@ struct impl {
 	scale_out_fn out;
 };
 
-void run_bench(int width, int height, char *cs_arg, int iterations, int filter,
+void run_bench(int width, int height, char *cs_arg, int iterations,
 	struct impl *impls, int num_impls)
 {
 	size_t i, j, num_spaces;
@@ -182,7 +179,7 @@ void run_bench(int width, int height, char *cs_arg, int iterations, int filter,
 		/* single colorspace */
 		for (j=0; j<(size_t)num_impls; j++) {
 			do_bench_sizes(space_names[i], width, height, spaces[i],
-				iterations, filter, impls[j].name,
+				iterations, impls[j].name,
 				impls[j].in, impls[j].out);
 		}
 		return;
@@ -191,7 +188,7 @@ void run_bench(int width, int height, char *cs_arg, int iterations, int filter,
 	for (i=0; i<num_spaces; i++) {
 		for (j=0; j<(size_t)num_impls; j++) {
 			do_bench_sizes(space_names[i], width, height, spaces[i],
-				iterations, filter, impls[j].name,
+				iterations, impls[j].name,
 				impls[j].in, impls[j].out);
 		}
 	}
@@ -199,22 +196,17 @@ void run_bench(int width, int height, char *cs_arg, int iterations, int filter,
 
 int main(int argc, char *argv[])
 {
-	int iterations, filter, arg_pos, impl_mode, width, height;
+	int iterations, arg_pos, impl_mode, width, height;
 	char *end, *cs_arg;
 	unsigned long ul;
 	struct impl impls[3];
 	int num_impls;
 
 	/* Parse flags */
-	filter = 0;
 	impl_mode = 0; /* 0=both, 1=scalar, 2=simd */
 	arg_pos = 1;
 	while (arg_pos < argc && argv[arg_pos][0] == '-') {
-		if (strcmp(argv[arg_pos], "--down") == 0) {
-			filter = 1;
-		} else if (strcmp(argv[arg_pos], "--up") == 0) {
-			filter = 2;
-		} else if (strcmp(argv[arg_pos], "--scalar") == 0) {
+		if (strcmp(argv[arg_pos], "--scalar") == 0) {
 			impl_mode = 1;
 		} else if (strcmp(argv[arg_pos], "--sse2") == 0) {
 			impl_mode = 3;
@@ -230,7 +222,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (argc - arg_pos < 2 || argc - arg_pos > 3) {
-		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--sse2|--avx2|--neon] <width> <height> [colorspace]\n",
+		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] <width> <height> [colorspace]\n",
 			argv[0]);
 		return 1;
 	}
@@ -302,6 +294,6 @@ int main(int argc, char *argv[])
 	}
 #endif
 
-	run_bench(width, height, cs_arg, iterations, filter, impls, num_impls);
+	run_bench(width, height, cs_arg, iterations, impls, num_impls);
 	return 0;
 }
