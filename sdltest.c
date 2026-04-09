@@ -1,6 +1,15 @@
 #include <stdio.h>
-#include <SDL2/SDL.h>
+#include <stdlib.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+
+enum backend { BACKEND_DEFAULT, BACKEND_SCALAR, BACKEND_SSE2, BACKEND_AVX2, BACKEND_NEON };
+static enum backend backend;
+
 #include "oil_resample.h"
+
+static int (*scale_in_fn)(struct oil_scale *, unsigned char *);
+static int (*scale_out_fn)(struct oil_scale *, unsigned char *);
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
 #include <jpeglib.h>
@@ -214,18 +223,37 @@ static int resumable_resize_do(struct resumable_resize *rr) {
 	tmp = rr->surface_pixels + center_offset + line_buf_offset;
 
 	if (rr->looks_like_png) {
-		scanline_ready = oil_libpng_proccess_scanline_part(rr->olp);
+		if (!oil_scale_slots(&rr->olp->os)) {
+			scanline_ready = 1;
+		} else {
+			switch (png_get_interlace_type(rr->olp->rpng, rr->olp->rinfo)) {
+			case PNG_INTERLACE_NONE:
+				png_read_row(rr->olp->rpng, rr->olp->inbuf, NULL);
+				break;
+			case PNG_INTERLACE_ADAM7:
+				rr->olp->inbuf = rr->olp->inimage[rr->olp->in_vpos++];
+				break;
+			}
+			scale_in_fn(&rr->olp->os, rr->olp->inbuf);
+			scanline_ready = oil_scale_slots(&rr->olp->os) == 0;
+		}
 		if (!scanline_ready) {
 			return -2;
 		}
-		oil_libpng_read_scanline(rr->olp, rr->outbuf);
+		scale_out_fn(&rr->olp->os, rr->outbuf);
 		rr->ypos += 1;
 	} else {
-		scanline_ready = oil_libjpeg_proccess_scanline_part(rr->olj);
+		if (!oil_scale_slots(&rr->olj->os)) {
+			scanline_ready = 1;
+		} else {
+			jpeg_read_scanlines(rr->olj->dinfo, &rr->olj->inbuf, 1);
+			scale_in_fn(&rr->olj->os, rr->olj->inbuf);
+			scanline_ready = oil_scale_slots(&rr->olj->os) == 0;
+		}
 		if (!scanline_ready) {
 			return -2;
 		}
-		oil_libjpeg_read_scanline(rr->olj, rr->outbuf);
+		scale_out_fn(&rr->olj->os, rr->outbuf);
 		rr->ypos += 1;
 	}
 	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
@@ -254,19 +282,85 @@ int main(int argc, char **argv) {
 	char *path;
 	int ret, event_happened, render_in_progress, surface_is_dirty;
 	struct resumable_resize rr;
-	Uint32 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
+	Uint64 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
+	int argi;
 
-	if (argc < 2) {
-		fprintf(stderr, "Usage: %s <image>\n", argv[0]);
+	path = NULL;
+	backend = BACKEND_DEFAULT;
+	for (argi = 1; argi < argc; argi++) {
+		if (strcmp(argv[argi], "--scalar") == 0) {
+			backend = BACKEND_SCALAR;
+		} else if (strcmp(argv[argi], "--sse2") == 0) {
+			backend = BACKEND_SSE2;
+		} else if (strcmp(argv[argi], "--avx2") == 0) {
+			backend = BACKEND_AVX2;
+		} else if (strcmp(argv[argi], "--neon") == 0) {
+			backend = BACKEND_NEON;
+		} else {
+			path = argv[argi];
+		}
+	}
+	if (!path) {
+		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] <image>\n", argv[0]);
 		return 1;
 	}
-	path = argv[1];
 
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+	if (backend == BACKEND_DEFAULT) {
+#if defined(__x86_64__)
+		if (__builtin_cpu_supports("avx2")) {
+			backend = BACKEND_AVX2;
+		} else {
+			backend = BACKEND_SSE2;
+		}
+#elif defined(__aarch64__)
+		backend = BACKEND_NEON;
+#else
+		backend = BACKEND_SCALAR;
+#endif
+	}
+
+	switch (backend) {
+	case BACKEND_DEFAULT:
+		/* unreachable */
+		break;
+	case BACKEND_SCALAR:
+		scale_in_fn = oil_scale_in;
+		scale_out_fn = oil_scale_out;
+		break;
+	case BACKEND_SSE2:
+#if defined(__x86_64__)
+		scale_in_fn = oil_scale_in_sse2;
+		scale_out_fn = oil_scale_out_sse2;
+#else
+		fprintf(stderr, "Error: SSE2 backend not available on this architecture\n");
+		return 1;
+#endif
+		break;
+	case BACKEND_AVX2:
+#if defined(__x86_64__)
+		scale_in_fn = oil_scale_in_avx2;
+		scale_out_fn = oil_scale_out_avx2;
+#else
+		fprintf(stderr, "Error: AVX2 backend not available on this architecture\n");
+		return 1;
+#endif
+		break;
+	case BACKEND_NEON:
+#if defined(__aarch64__)
+		scale_in_fn = oil_scale_in_neon;
+		scale_out_fn = oil_scale_out_neon;
+#else
+		fprintf(stderr, "Error: NEON backend not available on this architecture\n");
+		return 1;
+#endif
+		break;
+	}
+
+	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
 		return 1;
 	}
-	window = SDL_CreateWindow(path, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+	window = SDL_CreateWindow(path, 640, 480, SDL_WINDOW_RESIZABLE);
 	if (!window) {
 		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
 		SDL_Quit();
@@ -287,7 +381,7 @@ int main(int argc, char **argv) {
 	while (1) {
 		event_happened = render_in_progress ? SDL_PollEvent(&event) : SDL_WaitEvent(&event);
 
-		if (event_happened && event.type == SDL_QUIT) {
+		if (event_happened && event.type == SDL_EVENT_QUIT) {
 			if (render_in_progress) {
 				resumable_resize_end(&rr);
 			}
@@ -296,8 +390,8 @@ int main(int argc, char **argv) {
 		}
 
 		if (
-			(event_happened && event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
-			|| (event_happened && event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F5)
+			(event_happened && event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+			|| (event_happened && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5)
 		) {
 			if (render_in_progress) {
 				resumable_resize_end(&rr);
@@ -320,7 +414,7 @@ int main(int argc, char **argv) {
 				surface_is_dirty = 0;
 				lastUpdateTime = SDL_GetTicks();
 				elapsed_time = SDL_GetTicks() - resize_start_time;
-				fprintf(stderr, "Resize ticks: %d\n", elapsed_time);
+				fprintf(stderr, "Resize ticks: %llu\n", (unsigned long long)elapsed_time);
 			} else if (ret == -1) { // -1 means one scanline finished
 				surface_is_dirty = 1;
 			}

@@ -25,6 +25,6 @@ benchmark: benchmark.c $(OIL_OBJS)
 oilview: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oilview.c
 	$(CC) $(CFLAGS) `pkg-config --cflags gtk+-3.0` $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oilview.c -o $@ $(LDFLAGS) `pkg-config --libs gtk+-3.0` -ljpeg -lpng -lm -lX11
 sdltest: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o sdltest.c
-	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjpeg.o oil_libpng.o sdltest.c -o $@ $(LDFLAGS) -lSDL2 -ljpeg -lpng -lm
+	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjpeg.o oil_libpng.o sdltest.c -o $@ $(LDFLAGS) -lSDL3 -ljpeg -lpng -lm
 clean:
 	rm -rf test test.dSYM oil_resample.o oil_resample_sse2.o oil_resample_avx2.o oil_resample_neon.o oil_libpng.o oil_libjpeg.o imgscale oilview benchmark sdltest
