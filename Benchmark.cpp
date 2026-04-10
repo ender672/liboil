@@ -5,7 +5,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstdio>
-#include <png.h>
+#include "png.h"
 #include "OilResample.h"
 
 using namespace mozilla;
