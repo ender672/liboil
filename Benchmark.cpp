@@ -116,7 +116,13 @@ static clock_t Resize(BenchImage aImage, int aOutWidth, int aOutHeight,
   }
 
   t = clock();
-  OilScaleInit(&os, aImage.mHeight, aOutHeight, aImage.mWidth, aOutWidth, cs);
+  int rv = OilScaleInit(&os, aImage.mHeight, aOutHeight, aImage.mWidth,
+                        aOutWidth, cs);
+  if (rv) {
+    fprintf(stderr, "OilScaleInit failed: %d\n", rv);
+    free(outbuf);
+    exit(1);
+  }
   for (i = 0; i < aOutHeight; i++) {
     while (OilScaleSlots(&os)) {
       aDoIn(&os, inbuf);

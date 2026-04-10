@@ -74,9 +74,10 @@ int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
  */
-int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
-                          int aInWidth, int aOutWidth, OilColorspace aCs,
-                          void* aBuf);
+[[nodiscard]] int OilScaleInitAllocated(OilScale* aOs, int aInHeight,
+                                        int aOutHeight, int aInWidth,
+                                        int aOutWidth, OilColorspace aCs,
+                                        void* aBuf);
 
 /**
  * Initialize an oil scaler struct.
@@ -85,8 +86,8 @@ int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
  * Returns -1 if an argument is bad.
  * Returns -2 if unable to allocate memory.
  */
-int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight, int aInWidth,
-                 int aOutWidth, OilColorspace aCs);
+[[nodiscard]] int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight,
+                               int aInWidth, int aOutWidth, OilColorspace aCs);
 
 /**
  * Reset row counters in an oil scaler struct.
@@ -110,7 +111,7 @@ int OilScaleSlots(OilScale* aOs);
  * Returns 0 on success.
  * Returns -1 if an output scanline is ready and must be consumed first.
  */
-int OilScaleIn(OilScale* aOs, unsigned char* aIn);
+[[nodiscard]] int OilScaleIn(OilScale* aOs, unsigned char* aIn);
 
 /**
  * Scale previously ingested & buffered contents to produce the next scaled
@@ -119,37 +120,37 @@ int OilScaleIn(OilScale* aOs, unsigned char* aIn);
  * Returns 0 on success.
  * Returns -1 if not enough input scanlines have been fed yet.
  */
-int OilScaleOut(OilScale* aOs, unsigned char* aOut);
+[[nodiscard]] int OilScaleOut(OilScale* aOs, unsigned char* aOut);
 
 /**
  * SSE2-optimized version of OilScaleIn().
  */
-int OilScaleInSse2(OilScale* aOs, unsigned char* aIn);
+[[nodiscard]] int OilScaleInSse2(OilScale* aOs, unsigned char* aIn);
 
 /**
  * SSE2-optimized version of OilScaleOut().
  */
-int OilScaleOutSse2(OilScale* aOs, unsigned char* aOut);
+[[nodiscard]] int OilScaleOutSse2(OilScale* aOs, unsigned char* aOut);
 
 /**
  * AVX2-optimized version of OilScaleIn().
  */
-int OilScaleInAvx2(OilScale* aOs, unsigned char* aIn);
+[[nodiscard]] int OilScaleInAvx2(OilScale* aOs, unsigned char* aIn);
 
 /**
  * AVX2-optimized version of OilScaleOut().
  */
-int OilScaleOutAvx2(OilScale* aOs, unsigned char* aOut);
+[[nodiscard]] int OilScaleOutAvx2(OilScale* aOs, unsigned char* aOut);
 
 /**
  * NEON-optimized version of OilScaleIn().
  */
-int OilScaleInNeon(OilScale* aOs, unsigned char* aIn);
+[[nodiscard]] int OilScaleInNeon(OilScale* aOs, unsigned char* aIn);
 
 /**
  * NEON-optimized version of OilScaleOut().
  */
-int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut);
+[[nodiscard]] int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut);
 
 }  // namespace mozilla
 

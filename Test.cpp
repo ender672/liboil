@@ -329,7 +329,8 @@ static void DoOilScale(unsigned char** aInputImage, int aInWidth, int aInHeight,
   OilScale os;
   int i, inLine;
 
-  OilScaleInit(&os, aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
+  int rv = OilScaleInit(&os, aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
+  assert(rv == 0);
   inLine = 0;
   for (i = 0; i < aOutHeight; i++) {
     while (OilScaleSlots(&os)) {
@@ -401,7 +402,8 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   buf = static_cast<unsigned char*>(malloc(outRowStride));
 
   /* calling gCurScaleOut before any input should fail */
-  OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  int rv = OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  assert(rv == 0);
   assert(gCurScaleOut(&os, buf) == -1);
 
   /* feed one input line when more are needed, should still fail */
@@ -415,7 +417,8 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   OilScaleFree(&os);
 
   /* feed enough input, then gCurScaleOut should succeed */
-  OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  rv = OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  assert(rv == 0);
   while (OilScaleSlots(&os)) {
     unsigned char* inLine = static_cast<unsigned char*>(calloc(4 * aInDim, 1));
     assert(gCurScaleIn(&os, inLine) == 0);
