@@ -24,6 +24,8 @@
 #include <immintrin.h>
 #include <cstring>
 
+namespace mozilla {
+
 static void OilYscaleOutRgbxNogammaSse2(float* aSums, int aWidth,
     unsigned char* aOut, int aTap)
 {
@@ -546,3 +548,5 @@ int OilScaleOutSse2(OilScale* aOs, unsigned char* aOut)
   aOs->mOutPos++;
   return 0;
 }
+
+}  // namespace mozilla

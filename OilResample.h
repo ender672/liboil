@@ -22,6 +22,8 @@
 #ifndef OIL_RESAMPLE_H_
 #define OIL_RESAMPLE_H_
 
+namespace mozilla {
+
 /**
  * Color spaces currently supported by oil.
  */
@@ -147,5 +149,7 @@ int OilScaleInNeon(OilScale* aOs, unsigned char* aIn);
  * NEON-optimized version of OilScaleOut().
  */
 int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut);
+
+}  // namespace mozilla
 
 #endif

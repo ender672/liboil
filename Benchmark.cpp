@@ -8,6 +8,8 @@
 #include <png.h>
 #include "OilResample.h"
 
+using namespace mozilla;
+
 using ScaleInFn = int (*)(OilScale*, unsigned char*);
 using ScaleOutFn = int (*)(OilScale*, unsigned char*);
 

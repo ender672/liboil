@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace mozilla {
+
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
  * reach the limits of single-precision floats. Limit input dimensions to one
@@ -564,3 +566,5 @@ int OilScaleOut(OilScale* aOs, unsigned char* aOut)
   aOs->mOutPos++;
   return 0;
 }
+
+}  // namespace mozilla

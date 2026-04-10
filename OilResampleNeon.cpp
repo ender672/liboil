@@ -25,6 +25,8 @@
 #include <cstring>
 #include <arm_neon.h>
 
+namespace mozilla {
+
 static void OilYscaleOutRgbaNogammaNeon(float* aSums, int aWidth,
     unsigned char* aOut, int aTap)
 {
@@ -536,3 +538,5 @@ int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut)
   aOs->mOutPos++;
   return 0;
 }
+
+}  // namespace mozilla
