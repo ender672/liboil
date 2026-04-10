@@ -20,8 +20,7 @@ struct BenchImage {
   OilColorspace mCs;
 };
 
-static BenchImage LoadPng(char* aPath, OilColorspace aCs)
-{
+static BenchImage LoadPng(char* aPath, OilColorspace aCs) {
   BenchImage image;
   int i;
   png_structp rpng;
@@ -30,8 +29,8 @@ static BenchImage LoadPng(char* aPath, OilColorspace aCs)
   size_t rowStride, bufLen;
   unsigned char** bufPtrs;
 
-  rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr,
-      nullptr);
+  rpng =
+      png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   if (!rpng) {
     fprintf(stderr, "Unable to create PNG read struct.\n");
     exit(1);
@@ -91,14 +90,12 @@ static BenchImage LoadPng(char* aPath, OilColorspace aCs)
   return image;
 }
 
-static double TimeToMs(clock_t aT)
-{
+static double TimeToMs(clock_t aT) {
   return static_cast<double>(aT) * 1000.0 / CLOCKS_PER_SEC;
 }
 
 static clock_t Resize(BenchImage aImage, int aOutWidth, int aOutHeight,
-    ScaleInFn aDoIn, ScaleOutFn aDoOut)
-{
+                      ScaleInFn aDoIn, ScaleOutFn aDoOut) {
   int i;
   OilColorspace cs;
   OilScale os;
@@ -133,8 +130,7 @@ static clock_t Resize(BenchImage aImage, int aOutWidth, int aOutHeight,
 }
 
 static void DoBench(BenchImage aImage, double aRatio, int aIterations,
-    ScaleInFn aDoIn, ScaleOutFn aDoOut)
-{
+                    ScaleInFn aDoIn, ScaleOutFn aDoOut) {
   int i, outWidth, outHeight;
   clock_t tMin, tTmp;
 
@@ -153,11 +149,10 @@ static void DoBench(BenchImage aImage, double aRatio, int aIterations,
 }
 
 static void DoBenchSizes(const char* aName, char* aPath, OilColorspace aCs,
-    int aIterations, const char* aImplName,
-    ScaleInFn aDoIn, ScaleOutFn aDoOut)
-{
+                         int aIterations, const char* aImplName,
+                         ScaleInFn aDoIn, ScaleOutFn aDoOut) {
   BenchImage image;
-  double ratios[] = { 0.01, 0.125, 0.8 };
+  double ratios[] = {0.01, 0.125, 0.8};
   size_t i, numRatios;
 
   image = LoadPng(aPath, aCs);
@@ -178,20 +173,19 @@ struct Impl {
   ScaleOutFn mOut;
 };
 
-static void RunBench(char* aPath, char* aCsArg, int aIterations,
-    Impl* aImpls, int aNumImpls)
-{
+static void RunBench(char* aPath, char* aCsArg, int aIterations, Impl* aImpls,
+                     int aNumImpls) {
   size_t i, j, numSpaces;
   clock_t t;
 
   OilColorspace spaces[] = {
-    OilColorspace::RgbaNogamma,
-    OilColorspace::RgbxNogamma,
+      OilColorspace::RgbaNogamma,
+      OilColorspace::RgbxNogamma,
   };
 
   const char* spaceNames[] = {
-    "RGBA_NOGAMMA",
-    "RGBX_NOGAMMA",
+      "RGBA_NOGAMMA",
+      "RGBX_NOGAMMA",
   };
 
   t = clock();
@@ -213,24 +207,21 @@ static void RunBench(char* aPath, char* aCsArg, int aIterations,
     }
     /* single colorspace */
     for (j = 0; j < static_cast<size_t>(aNumImpls); j++) {
-      DoBenchSizes(spaceNames[i], aPath, spaces[i],
-          aIterations, aImpls[j].mName,
-          aImpls[j].mIn, aImpls[j].mOut);
+      DoBenchSizes(spaceNames[i], aPath, spaces[i], aIterations,
+                   aImpls[j].mName, aImpls[j].mIn, aImpls[j].mOut);
     }
     return;
   }
 
   for (i = 0; i < numSpaces; i++) {
     for (j = 0; j < static_cast<size_t>(aNumImpls); j++) {
-      DoBenchSizes(spaceNames[i], aPath, spaces[i],
-          aIterations, aImpls[j].mName,
-          aImpls[j].mIn, aImpls[j].mOut);
+      DoBenchSizes(spaceNames[i], aPath, spaces[i], aIterations,
+                   aImpls[j].mName, aImpls[j].mIn, aImpls[j].mOut);
     }
   }
 }
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
   int iterations, argPos, implMode, remaining;
   char* end;
   char* path;
@@ -260,7 +251,8 @@ int main(int argc, char* argv[])
 
   remaining = argc - argPos;
   if (remaining < 1 || remaining > 2) {
-    fprintf(stderr,
+    fprintf(
+        stderr,
         "Usage: %s [--scalar|--sse2|--avx2|--neon] <path.png> [colorspace]\n",
         argv[0]);
     return 1;

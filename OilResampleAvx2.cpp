@@ -27,8 +27,7 @@
 namespace mozilla {
 
 static void OilYscaleOutRgbxNogammaAvx2(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+                                        unsigned char* aOut, int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
   __m128 vals;
@@ -100,9 +99,9 @@ static void OilYscaleOutRgbxNogammaAvx2(float* aSums, int aWidth,
 }
 
 static void OilScaleDownRgbxNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
-    int aOutWidth, float* aCoeffsXF, int* aBorderBuf, float* aCoeffsYF,
-    int aTap)
-{
+                                        int aOutWidth, float* aCoeffsXF,
+                                        int* aBorderBuf, float* aCoeffsYF,
+                                        int aTap) {
   int i, j;
   __m128 coeffsX, coeffsX2, sampleX, sumR, sumG, sumB;
   __m128 sumR2, sumG2, sumB2;
@@ -118,12 +117,8 @@ static void OilScaleDownRgbxNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
     for (k = 0; k < 4; k++) {
       cySlot[k] = aCoeffsYF[(k - aTap + 4) & 3];
     }
-    cyLo = _mm256_set_m128(
-        _mm_set1_ps(cySlot[1]),
-        _mm_set1_ps(cySlot[0]));
-    cyHi = _mm256_set_m128(
-        _mm_set1_ps(cySlot[3]),
-        _mm_set1_ps(cySlot[2]));
+    cyLo = _mm256_set_m128(_mm_set1_ps(cySlot[1]), _mm_set1_ps(cySlot[0]));
+    cyHi = _mm256_set_m128(_mm_set1_ps(cySlot[3]), _mm_set1_ps(cySlot[2]));
   }
 
   sumR = _mm_setzero_ps();
@@ -212,8 +207,7 @@ static void OilScaleDownRgbxNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
       __m256 rgbx256, sy;
 
       /* Prefetch next pixel's sums_y */
-      _mm_prefetch(reinterpret_cast<const char*>(aSumsYOut + 16),
-          _MM_HINT_T0);
+      _mm_prefetch(reinterpret_cast<const char*>(aSumsYOut + 16), _MM_HINT_T0);
 
       rg = _mm_unpacklo_ps(sumR, sumG);
       bx = _mm_unpacklo_ps(sumB, sumB);
@@ -239,8 +233,7 @@ static void OilScaleDownRgbxNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
 }
 
 static void OilYscaleOutRgbaNogammaAvx2(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+                                        unsigned char* aOut, int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
   __m128 vals, alphaV;
@@ -339,10 +332,8 @@ static void OilYscaleOutRgbaNogammaAvx2(float* aSums, int aWidth,
     }
     vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
     {
-      __m128 hi = _mm_shuffle_ps(vals, alphaV,
-          _MM_SHUFFLE(0, 0, 2, 2));
-      vals = _mm_shuffle_ps(vals, hi,
-          _MM_SHUFFLE(2, 0, 1, 0));
+      __m128 hi = _mm_shuffle_ps(vals, alphaV, _MM_SHUFFLE(0, 0, 2, 2));
+      vals = _mm_shuffle_ps(vals, hi, _MM_SHUFFLE(2, 0, 1, 0));
     }
     idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
     packed = _mm_packs_epi32(idx, idx);
@@ -357,9 +348,9 @@ static void OilYscaleOutRgbaNogammaAvx2(float* aSums, int aWidth,
 }
 
 static void OilScaleDownRgbaNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
-    int aOutWidth, float* aCoeffsXF, int* aBorderBuf, float* aCoeffsYF,
-    int aTap)
-{
+                                        int aOutWidth, float* aCoeffsXF,
+                                        int* aBorderBuf, float* aCoeffsYF,
+                                        int aTap) {
   int i, j;
   __m128 coeffsX, coeffsX2, coeffsXA, coeffsX2A, sampleX;
   __m128 sumR, sumG, sumB, sumA;
@@ -372,12 +363,8 @@ static void OilScaleDownRgbaNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
     cyPhys[(aTap + 1) & 3] = aCoeffsYF[1];
     cyPhys[(aTap + 2) & 3] = aCoeffsYF[2];
     cyPhys[(aTap + 3) & 3] = aCoeffsYF[3];
-    cy256Lo = _mm256_set_m128(
-        _mm_set1_ps(cyPhys[1]),
-        _mm_set1_ps(cyPhys[0]));
-    cy256Hi = _mm256_set_m128(
-        _mm_set1_ps(cyPhys[3]),
-        _mm_set1_ps(cyPhys[2]));
+    cy256Lo = _mm256_set_m128(_mm_set1_ps(cyPhys[1]), _mm_set1_ps(cyPhys[0]));
+    cy256Hi = _mm256_set_m128(_mm_set1_ps(cyPhys[3]), _mm_set1_ps(cyPhys[2]));
   }
 
   lut = gI2fMap;
@@ -512,8 +499,7 @@ static void OilScaleDownRgbaNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
 /* AVX2 dispatch functions */
 
 static void YscaleOutAvx2(float* aSums, int aWidth, unsigned char* aOut,
-    OilColorspace aCs, int aTap)
-{
+                          OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
       OilYscaleOutRgbaNogammaAvx2(aSums, aWidth, aOut, aTap);
@@ -524,8 +510,7 @@ static void YscaleOutAvx2(float* aSums, int aWidth, unsigned char* aOut,
   }
 }
 
-static void DownScaleInAvx2(OilScale* aOs, unsigned char* aIn)
-{
+static void DownScaleInAvx2(OilScale* aOs, unsigned char* aIn) {
   float* coeffsY;
 
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
@@ -533,11 +518,13 @@ static void DownScaleInAvx2(OilScale* aOs, unsigned char* aIn)
   switch (aOs->mCs) {
     case OilColorspace::RgbaNogamma:
       OilScaleDownRgbaNogammaAvx2(aIn, aOs->mSumsY, aOs->mOutWidth,
-          aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
+                                  aOs->mSumsYTap);
       break;
     case OilColorspace::RgbxNogamma:
       OilScaleDownRgbxNogammaAvx2(aIn, aOs->mSumsY, aOs->mOutWidth,
-          aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
+                                  aOs->mSumsYTap);
       break;
   }
 
@@ -545,8 +532,7 @@ static void DownScaleInAvx2(OilScale* aOs, unsigned char* aIn)
   aOs->mInPos++;
 }
 
-int OilScaleInAvx2(OilScale* aOs, unsigned char* aIn)
-{
+int OilScaleInAvx2(OilScale* aOs, unsigned char* aIn) {
   if (OilScaleSlots(aOs) == 0) {
     return -1;
   }
@@ -554,14 +540,12 @@ int OilScaleInAvx2(OilScale* aOs, unsigned char* aIn)
   return 0;
 }
 
-int OilScaleOutAvx2(OilScale* aOs, unsigned char* aOut)
-{
+int OilScaleOutAvx2(OilScale* aOs, unsigned char* aOut) {
   if (OilScaleSlots(aOs) != 0) {
     return -1;
   }
 
-  YscaleOutAvx2(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs,
-      aOs->mSumsYTap);
+  YscaleOutAvx2(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
   aOs->mSumsYTap = (aOs->mSumsYTap + 1) & 3;
 
   aOs->mOutPos++;

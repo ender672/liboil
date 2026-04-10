@@ -66,7 +66,7 @@ void OilGlobalInit();
  * Calculate the buffer size needed for an oil scaler struct.
  */
 int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
-    int aOutWidth, OilColorspace aCs);
+                      int aOutWidth, OilColorspace aCs);
 
 /**
  * Initialize an oil scaler struct with a pre-allocated buffer.
@@ -75,7 +75,8 @@ int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
  * Returns -1 if an argument is bad.
  */
 int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
-    int aInWidth, int aOutWidth, OilColorspace aCs, void* aBuf);
+                          int aInWidth, int aOutWidth, OilColorspace aCs,
+                          void* aBuf);
 
 /**
  * Initialize an oil scaler struct.
@@ -84,8 +85,8 @@ int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
  * Returns -1 if an argument is bad.
  * Returns -2 if unable to allocate memory.
  */
-int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight,
-    int aInWidth, int aOutWidth, OilColorspace aCs);
+int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight, int aInWidth,
+                 int aOutWidth, OilColorspace aCs);
 
 /**
  * Reset row counters in an oil scaler struct.

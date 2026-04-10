@@ -1,0 +1,10 @@
+# Based on Mozilla/Firefox's .clang-format from mozilla-central.
+# Trimmed to remove Firefox-specific macro handling.
+
+BasedOnStyle: Google
+ColumnLimit: 80
+
+SortIncludes: false
+IndentPPDirectives: AfterHash
+DerivePointerAlignment: false
+PointerAlignment: Left

@@ -40,21 +40,14 @@ static constexpr int kMaxDimension = 1000000;
  */
 static constexpr int kTaps = 4;
 
-static int Max(int aA, int aB)
-{
-  return aA > aB ? aA : aB;
-}
+static int Max(int aA, int aB) { return aA > aB ? aA : aB; }
 
-static int Min(int aA, int aB)
-{
-  return aA < aB ? aA : aB;
-}
+static int Min(int aA, int aB) { return aA < aB ? aA : aB; }
 
 /**
  * Clamp a float between 0 and 1.
  */
-static float Clampf(float aX)
-{
+static float Clampf(float aX) {
   if (aX > 1.0f) {
     return 1.0f;
   } else if (aX < 0.0f) {
@@ -67,26 +60,21 @@ static float Clampf(float aX)
  * Convert a float to an int. When compiling on x86 without march=native, this
  * performs much better than roundf().
  */
-static int F2i(float aX)
-{
-  return aX + 0.5f;
-}
+static int F2i(float aX) { return aX + 0.5f; }
 
 /**
  * Map from the discreet dest coordinate pos to a continuous source coordinate.
  * The resulting coordinate can range from -0.5 to the maximum of the
  * destination image dimension.
  */
-static double Map(int aDimIn, int aDimOut, int aPos)
-{
+static double Map(int aDimIn, int aDimOut, int aPos) {
   return (aPos + 0.5) * (static_cast<double>(aDimIn) / aDimOut) - 0.5;
 }
 
 /**
  * Returns the mapped input position and put the sub-pixel remainder in rest.
  */
-static int SplitMap(int aDimIn, int aDimOut, int aPos, float* aRest)
-{
+static int SplitMap(int aDimIn, int aDimOut, int aPos, float* aRest) {
   double smp;
   int smpI;
 
@@ -103,8 +91,7 @@ static int SplitMap(int aDimIn, int aDimOut, int aPos, float* aRest)
  * When we reduce an image by a factor of two, we need to scale our resampling
  * function by two as well in order to avoid aliasing.
  */
-static int CalcTaps(int aDimIn, int aDimOut)
-{
+static int CalcTaps(int aDimIn, int aDimOut) {
   int tmp;
   if (aDimOut > aDimIn) {
     return kTaps;
@@ -116,8 +103,7 @@ static int CalcTaps(int aDimIn, int aDimOut)
 /**
  * Catmull-Rom interpolator.
  */
-static float Catrom(float aX)
-{
+static float Catrom(float aX) {
   if (aX < 1) {
     return (1.5f * aX - 2.5f) * aX * aX + 1;
   }
@@ -128,8 +114,7 @@ static float Catrom(float aX)
  * Given an offset tx, calculate taps coefficients.
  */
 static void CalcCoeffs(float* aCoeffs, float aTx, int aTaps, int aLtrim,
-    int aRtrim)
-{
+                       int aRtrim) {
   int i;
   float tmp, tapMult, fudge;
 
@@ -153,8 +138,7 @@ static void CalcCoeffs(float* aCoeffs, float aTx, int aTaps, int aLtrim,
  * Takes a sample value, an array of 4 coefficients & 4 accumulators, and
  * adds the product of sample * coeffs[n] to each accumulator.
  */
-static void AddSampleToSumF(float aSample, float* aCoeffs, float* aSum)
-{
+static void AddSampleToSumF(float aSample, float* aCoeffs, float* aSum) {
   int i;
   for (i = 0; i < 4; i++) {
     aSum[i] += aSample * aCoeffs[i];
@@ -165,17 +149,15 @@ static void AddSampleToSumF(float aSample, float* aCoeffs, float* aSum)
  * Takes an array of 4 floats and shifts them left. The rightmost element is
  * set to 0.0.
  */
-static void ShiftLeftF(float* aF)
-{
+static void ShiftLeftF(float* aF) {
   aF[0] = aF[1];
   aF[1] = aF[2];
   aF[2] = aF[3];
   aF[3] = 0.0f;
 }
 
-static void YscaleOutRgbaNogamma(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+static void YscaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
+                                 int aTap) {
   int i, j, tapOff;
   float alpha, val;
 
@@ -197,9 +179,8 @@ static void YscaleOutRgbaNogamma(float* aSums, int aWidth,
   }
 }
 
-static void YscaleOutRgbxNogamma(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+static void YscaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
+                                 int aTap) {
   int i, j, tapOff;
 
   tapOff = aTap * 4;
@@ -216,8 +197,7 @@ static void YscaleOutRgbxNogamma(float* aSums, int aWidth,
 }
 
 static void YscaleOut(float* aSums, int aWidth, unsigned char* aOut,
-    OilColorspace aCs, int aTap)
-{
+                      OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
       YscaleOutRgbaNogamma(aSums, aWidth, aOut, aTap);
@@ -232,8 +212,7 @@ static void YscaleOut(float* aSums, int aWidth, unsigned char* aOut,
 
 float gI2fMap[256];
 
-static void BuildI2f()
-{
+static void BuildI2f() {
   int i;
 
   for (i = 0; i <= 255; i++) {
@@ -253,8 +232,7 @@ static void BuildI2f()
  * to process before the next output sample is finished.
  */
 static void ScaleDownCoeffs(int aInDim, int aOutDim, float* aCoeffBuf,
-    int* aBorderBuf, float* aTmpCoeffs)
-{
+                            int* aBorderBuf, float* aTmpCoeffs) {
   int smpI, i, j, taps, offset, pos, ltrim, rtrim, smpEnd, smpStart, ends[4];
   float tx;
 
@@ -299,11 +277,10 @@ static void ScaleDownCoeffs(int aInDim, int aOutDim, float* aCoeffBuf,
 }
 
 static void ScaleDownRgbaNogamma(unsigned char* aIn, float* aSumsY,
-    int aOutWidth, float* aCoeffsX, int* aBorderBuf, float* aCoeffsY,
-    int aTap)
-{
+                                 int aOutWidth, float* aCoeffsX,
+                                 int* aBorderBuf, float* aCoeffsY, int aTap) {
   int i, j, k;
-  float alpha, sum[4][4] = {{ 0.0f }};
+  float alpha, sum[4][4] = {{0.0f}};
 
   for (i = 0; i < aOutWidth; i++) {
     for (j = 0; j < aBorderBuf[i]; j++) {
@@ -336,11 +313,10 @@ static void ScaleDownRgbaNogamma(unsigned char* aIn, float* aSumsY,
 }
 
 static void ScaleDownRgbxNogamma(unsigned char* aIn, float* aSumsY,
-    int aOutWidth, float* aCoeffsX, int* aBorderBuf, float* aCoeffsY,
-    int aTap)
-{
+                                 int aOutWidth, float* aCoeffsX,
+                                 int* aBorderBuf, float* aCoeffsY, int aTap) {
   int i, j, k;
-  float sum[4][4] = {{ 0.0f }};
+  float sum[4][4] = {{0.0f}};
 
   for (i = 0; i < aOutWidth; i++) {
     for (j = 0; j < aBorderBuf[i]; j++) {
@@ -372,44 +348,34 @@ static void ScaleDownRgbxNogamma(unsigned char* aIn, float* aSumsY,
 }
 
 /* Global functions */
-void OilGlobalInit()
-{
-  BuildI2f();
-}
+void OilGlobalInit() { BuildI2f(); }
 
-static constexpr int Align16(int aX)
-{
-  return (aX + 15) & ~15;
-}
+static constexpr int Align16(int aX) { return (aX + 15) & ~15; }
 
-static int CalcCoeffsLen(int aInDim, int aOutDim)
-{
+static int CalcCoeffsLen(int aInDim, int aOutDim) {
   return kTaps * Max(aInDim, aOutDim) * sizeof(float);
 }
 
-static int CalcBordersLen(int aInDim, int aOutDim)
-{
+static int CalcBordersLen(int aInDim, int aOutDim) {
   return Min(aInDim, aOutDim) * sizeof(int);
 }
 
 static int DownscaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
-    int aOutWidth, OilColorspace aCs)
-{
+                              int aOutWidth, OilColorspace aCs) {
   int tapsX, tapsY;
 
   tapsX = CalcTaps(aInWidth, aOutWidth);
   tapsY = CalcTaps(aInHeight, aOutHeight);
 
-  return Align16(CalcCoeffsLen(aInWidth, aOutWidth))
-      + Align16(CalcBordersLen(aInWidth, aOutWidth))
-      + Align16(CalcCoeffsLen(aInHeight, aOutHeight))
-      + Align16(CalcBordersLen(aInHeight, aOutHeight))
-      + Align16(Max(tapsX, tapsY) * sizeof(float))
-      + Align16(aOutWidth * 4 * kTaps * sizeof(float));
+  return Align16(CalcCoeffsLen(aInWidth, aOutWidth)) +
+         Align16(CalcBordersLen(aInWidth, aOutWidth)) +
+         Align16(CalcCoeffsLen(aInHeight, aOutHeight)) +
+         Align16(CalcBordersLen(aInHeight, aOutHeight)) +
+         Align16(Max(tapsX, tapsY) * sizeof(float)) +
+         Align16(aOutWidth * 4 * kTaps * sizeof(float));
 }
 
-static void DownscaleInit(OilScale* aOs)
-{
+static void DownscaleInit(OilScale* aOs) {
   int coeffsXLen, coeffsYLen, bordersXLen, bordersYLen, sumsLen;
   char* p;
 
@@ -420,33 +386,37 @@ static void DownscaleInit(OilScale* aOs)
   sumsLen = Align16(aOs->mOutWidth * 4 * kTaps * sizeof(float));
 
   p = static_cast<char*>(aOs->mBuf);
-  aOs->mCoeffsX = reinterpret_cast<float*>(p);     p += coeffsXLen;
-  aOs->mBordersX = reinterpret_cast<int*>(p);      p += bordersXLen;
-  aOs->mCoeffsY = reinterpret_cast<float*>(p);     p += coeffsYLen;
-  aOs->mBordersY = reinterpret_cast<int*>(p);      p += bordersYLen;
-  aOs->mSumsY = reinterpret_cast<float*>(p);       p += sumsLen;
+  aOs->mCoeffsX = reinterpret_cast<float*>(p);
+  p += coeffsXLen;
+  aOs->mBordersX = reinterpret_cast<int*>(p);
+  p += bordersXLen;
+  aOs->mCoeffsY = reinterpret_cast<float*>(p);
+  p += coeffsYLen;
+  aOs->mBordersY = reinterpret_cast<int*>(p);
+  p += bordersYLen;
+  aOs->mSumsY = reinterpret_cast<float*>(p);
+  p += sumsLen;
   aOs->mTmpCoeffs = reinterpret_cast<float*>(p);
 
-  ScaleDownCoeffs(aOs->mInWidth, aOs->mOutWidth, aOs->mCoeffsX,
-      aOs->mBordersX, aOs->mTmpCoeffs);
+  ScaleDownCoeffs(aOs->mInWidth, aOs->mOutWidth, aOs->mCoeffsX, aOs->mBordersX,
+                  aOs->mTmpCoeffs);
   ScaleDownCoeffs(aOs->mInHeight, aOs->mOutHeight, aOs->mCoeffsY,
-      aOs->mBordersY, aOs->mTmpCoeffs);
+                  aOs->mBordersY, aOs->mTmpCoeffs);
 }
 
 int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
-    int aOutWidth, OilColorspace aCs)
-{
+                      int aOutWidth, OilColorspace aCs) {
   return DownscaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
 }
 
 int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
-    int aInWidth, int aOutWidth, OilColorspace aCs, void* aBuf)
-{
+                          int aInWidth, int aOutWidth, OilColorspace aCs,
+                          void* aBuf) {
   /* sanity check on arguments */
   if (!aOs || !aBuf || aInHeight > kMaxDimension ||
       aOutHeight > kMaxDimension || aInHeight < 1 || aOutHeight < 1 ||
-      aInWidth > kMaxDimension || aOutWidth > kMaxDimension ||
-      aInWidth < 1 || aOutWidth < 1) {
+      aInWidth > kMaxDimension || aOutWidth > kMaxDimension || aInWidth < 1 ||
+      aOutWidth < 1) {
     return -1;
   }
 
@@ -474,21 +444,20 @@ int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
   return 0;
 }
 
-int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight,
-    int aInWidth, int aOutWidth, OilColorspace aCs)
-{
+int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight, int aInWidth,
+                 int aOutWidth, OilColorspace aCs) {
   int allocSize, ret;
   void* buf;
 
-  allocSize = OilScaleAllocSize(aInHeight, aOutHeight, aInWidth,
-      aOutWidth, aCs);
+  allocSize =
+      OilScaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
   buf = calloc(1, allocSize);
   if (!buf) {
     return -2;
   }
 
-  ret = OilScaleInitAllocated(aOs, aInHeight, aOutHeight, aInWidth,
-      aOutWidth, aCs, buf);
+  ret = OilScaleInitAllocated(aOs, aInHeight, aOutHeight, aInWidth, aOutWidth,
+                              aCs, buf);
   if (ret) {
     free(buf);
     return ret;
@@ -497,14 +466,12 @@ int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight,
   return 0;
 }
 
-void OilScaleRestart(OilScale* aOs)
-{
+void OilScaleRestart(OilScale* aOs) {
   aOs->mInPos = aOs->mOutPos = 0;
   aOs->mSumsYTap = 0;
 }
 
-void OilScaleFree(OilScale* aOs)
-{
+void OilScaleFree(OilScale* aOs) {
   if (!aOs) {
     return;
   }
@@ -519,13 +486,9 @@ void OilScaleFree(OilScale* aOs)
   aOs->mTmpCoeffs = nullptr;
 }
 
-int OilScaleSlots(OilScale* aOs)
-{
-  return aOs->mBordersY[aOs->mOutPos];
-}
+int OilScaleSlots(OilScale* aOs) { return aOs->mBordersY[aOs->mOutPos]; }
 
-static void DownScaleIn(OilScale* aOs, unsigned char* aIn)
-{
+static void DownScaleIn(OilScale* aOs, unsigned char* aIn) {
   float* coeffsY;
 
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
@@ -533,11 +496,11 @@ static void DownScaleIn(OilScale* aOs, unsigned char* aIn)
   switch (aOs->mCs) {
     case OilColorspace::RgbaNogamma:
       ScaleDownRgbaNogamma(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
-          aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
     case OilColorspace::RgbxNogamma:
       ScaleDownRgbxNogamma(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
-          aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
   }
 
@@ -545,8 +508,7 @@ static void DownScaleIn(OilScale* aOs, unsigned char* aIn)
   aOs->mInPos++;
 }
 
-int OilScaleIn(OilScale* aOs, unsigned char* aIn)
-{
+int OilScaleIn(OilScale* aOs, unsigned char* aIn) {
   if (OilScaleSlots(aOs) == 0) {
     return -1;
   }
@@ -554,8 +516,7 @@ int OilScaleIn(OilScale* aOs, unsigned char* aIn)
   return 0;
 }
 
-int OilScaleOut(OilScale* aOs, unsigned char* aOut)
-{
+int OilScaleOut(OilScale* aOs, unsigned char* aOut) {
   if (OilScaleSlots(aOs) != 0) {
     return -1;
   }

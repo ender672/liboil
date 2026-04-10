@@ -28,8 +28,7 @@
 namespace mozilla {
 
 static void OilYscaleOutRgbaNogammaNeon(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+                                        unsigned char* aOut, int aTap) {
   int i, tapOff;
   float32x4_t scaleV, one, zero, half;
   float32x4_t vals, alphaV;
@@ -80,9 +79,9 @@ static void OilYscaleOutRgbaNogammaNeon(float* aSums, int aWidth,
 }
 
 static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
-    int aOutWidth, float* aCoeffsXF, int* aBorderBuf, float* aCoeffsYF,
-    int aTap)
-{
+                                        int aOutWidth, float* aCoeffsXF,
+                                        int* aBorderBuf, float* aCoeffsYF,
+                                        int aTap) {
   int i, j;
   int off0, off1, off2, off3;
   float32x4_t coeffsX, coeffsX2, coeffsXA, coeffsX2A, sampleX;
@@ -119,8 +118,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
         coeffsX = vld1q_f32(aCoeffsXF);
         coeffsX2 = vld1q_f32(aCoeffsXF + 4);
 
-        coeffsXA = vmulq_f32(coeffsX,
-            vdupq_n_f32(gI2fMap[px0 >> 24]));
+        coeffsXA = vmulq_f32(coeffsX, vdupq_n_f32(gI2fMap[px0 >> 24]));
 
         sampleX = vdupq_n_f32(gI2fMap[px0 & 0xFF]);
         sumR = vaddq_f32(vmulq_f32(coeffsXA, sampleX), sumR);
@@ -133,8 +131,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 
         sumA = vaddq_f32(coeffsXA, sumA);
 
-        coeffsX2A = vmulq_f32(coeffsX2,
-            vdupq_n_f32(gI2fMap[px1 >> 24]));
+        coeffsX2A = vmulq_f32(coeffsX2, vdupq_n_f32(gI2fMap[px1 >> 24]));
 
         sampleX = vdupq_n_f32(gI2fMap[px1 & 0xFF]);
         sumR2 = vaddq_f32(vmulq_f32(coeffsX2A, sampleX), sumR2);
@@ -157,8 +154,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 
         coeffsX = vld1q_f32(aCoeffsXF);
 
-        coeffsXA = vmulq_f32(coeffsX,
-            vdupq_n_f32(gI2fMap[px >> 24]));
+        coeffsXA = vmulq_f32(coeffsX, vdupq_n_f32(gI2fMap[px >> 24]));
 
         sampleX = vdupq_n_f32(gI2fMap[px & 0xFF]);
         sumR = vaddq_f32(vmulq_f32(coeffsXA, sampleX), sumR);
@@ -186,8 +182,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 
         coeffsX = vld1q_f32(aCoeffsXF);
 
-        coeffsXA = vmulq_f32(coeffsX,
-            vdupq_n_f32(gI2fMap[px >> 24]));
+        coeffsXA = vmulq_f32(coeffsX, vdupq_n_f32(gI2fMap[px >> 24]));
 
         sampleX = vdupq_n_f32(gI2fMap[px & 0xFF]);
         sumR = vaddq_f32(vmulq_f32(coeffsXA, sampleX), sumR);
@@ -241,8 +236,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 }
 
 static void OilYscaleOutRgbxNogammaNeon(float* aSums, int aWidth,
-    unsigned char* aOut, int aTap)
-{
+                                        unsigned char* aOut, int aTap) {
   int i, tapOff;
   float32x4_t scaleV, one, zero, half;
   float32x4_t z;
@@ -257,7 +251,7 @@ static void OilYscaleOutRgbxNogammaNeon(float* aSums, int aWidth,
 
   {
     static const uint8_t amask[16] = {0, 0, 0, 255, 0, 0, 0, 255,
-        0, 0, 0, 255, 0, 0, 0, 255};
+                                      0, 0, 0, 255, 0, 0, 0, 255};
     alphaMask = vld1q_u8(amask);
   }
 
@@ -331,9 +325,9 @@ static void OilYscaleOutRgbxNogammaNeon(float* aSums, int aWidth,
 }
 
 static void OilScaleDownRgbxNogammaNeon(unsigned char* aIn, float* aSumsYOut,
-    int aOutWidth, float* aCoeffsXF, int* aBorderBuf, float* aCoeffsYF,
-    int aTap)
-{
+                                        int aOutWidth, float* aCoeffsXF,
+                                        int* aBorderBuf, float* aCoeffsYF,
+                                        int aTap) {
   int i, j;
   int off0, off1, off2, off3;
   float32x4_t coeffsX, coeffsX2, sampleX, sumR, sumG, sumB, sumX;
@@ -483,8 +477,7 @@ static void OilScaleDownRgbxNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 /* NEON dispatch functions */
 
 static void YscaleOutNeon(float* aSums, int aWidth, unsigned char* aOut,
-    OilColorspace aCs, int aTap)
-{
+                          OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
       OilYscaleOutRgbaNogammaNeon(aSums, aWidth, aOut, aTap);
@@ -495,8 +488,7 @@ static void YscaleOutNeon(float* aSums, int aWidth, unsigned char* aOut,
   }
 }
 
-static void DownScaleInNeon(OilScale* aOs, unsigned char* aIn)
-{
+static void DownScaleInNeon(OilScale* aOs, unsigned char* aIn) {
   float* coeffsY;
 
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
@@ -504,11 +496,13 @@ static void DownScaleInNeon(OilScale* aOs, unsigned char* aIn)
   switch (aOs->mCs) {
     case OilColorspace::RgbaNogamma:
       OilScaleDownRgbaNogammaNeon(aIn, aOs->mSumsY, aOs->mOutWidth,
-          aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
+                                  aOs->mSumsYTap);
       break;
     case OilColorspace::RgbxNogamma:
       OilScaleDownRgbxNogammaNeon(aIn, aOs->mSumsY, aOs->mOutWidth,
-          aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
+                                  aOs->mSumsYTap);
       break;
   }
 
@@ -516,8 +510,7 @@ static void DownScaleInNeon(OilScale* aOs, unsigned char* aIn)
   aOs->mInPos++;
 }
 
-int OilScaleInNeon(OilScale* aOs, unsigned char* aIn)
-{
+int OilScaleInNeon(OilScale* aOs, unsigned char* aIn) {
   if (OilScaleSlots(aOs) == 0) {
     return -1;
   }
@@ -525,14 +518,12 @@ int OilScaleInNeon(OilScale* aOs, unsigned char* aIn)
   return 0;
 }
 
-int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut)
-{
+int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut) {
   if (OilScaleSlots(aOs) != 0) {
     return -1;
   }
 
-  YscaleOutNeon(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs,
-      aOs->mSumsYTap);
+  YscaleOutNeon(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
   aOs->mSumsYTap = (aOs->mSumsYTap + 1) & 3;
 
   aOs->mOutPos++;

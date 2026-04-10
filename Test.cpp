@@ -15,34 +15,25 @@ static ScaleOutFn gCurScaleOut;
 /**
  * shared test helpers
  */
-static long double Cubic(long double aB, long double aC, long double aX)
-{
+static long double Cubic(long double aB, long double aC, long double aX) {
   if (aX < 1.0l) {
-    return (
-        (12.0l - 9.0l * aB - 6.0l * aC) * aX * aX * aX +
-        (-18.0l + 12.0l * aB + 6.0l * aC) * aX * aX +
-        (6.0l - 2.0l * aB)
-    ) / 6.0l;
+    return ((12.0l - 9.0l * aB - 6.0l * aC) * aX * aX * aX +
+            (-18.0l + 12.0l * aB + 6.0l * aC) * aX * aX + (6.0l - 2.0l * aB)) /
+           6.0l;
   }
   if (aX < 2.0l) {
-    return (
-        (-aB - 6.0l * aC) * aX * aX * aX +
-        (6.0l * aB + 30.0l * aC) * aX * aX +
-        (-12.0l * aB - 48.0l * aC) * aX +
-        (8.0l * aB + 24.0l * aC)
-    ) / 6.0l;
+    return ((-aB - 6.0l * aC) * aX * aX * aX +
+            (6.0l * aB + 30.0l * aC) * aX * aX +
+            (-12.0l * aB - 48.0l * aC) * aX + (8.0l * aB + 24.0l * aC)) /
+           6.0l;
   }
   return 0.0;
 }
 
-static long double RefCatrom(long double aX)
-{
-  return Cubic(0, 0.5l, aX);
-}
+static long double RefCatrom(long double aX) { return Cubic(0, 0.5l, aX); }
 
-static void RefCalcCoeffs(long double* aCoeffs, long double aOffset,
-    int aTaps, int aLtrim, int aRtrim)
-{
+static void RefCalcCoeffs(long double* aCoeffs, long double aOffset, int aTaps,
+                          int aLtrim, int aRtrim) {
   int i;
   long double tapOffset, tapMult, fudge, totalCheck;
 
@@ -66,16 +57,14 @@ static void RefCalcCoeffs(long double* aCoeffs, long double aOffset,
   assert(fabsl(totalCheck - 1.0) < 0.0000000001L);
 }
 
-static void FillRand8(unsigned char* aBuf, int aLen)
-{
+static void FillRand8(unsigned char* aBuf, int aLen) {
   int i;
   for (i = 0; i < aLen; i++) {
     aBuf[i] = rand() % 256;
   }
 }
 
-static int CalcTapsCheck(int aDimIn, int aDimOut)
-{
+static int CalcTapsCheck(int aDimIn, int aDimOut) {
   int tmpI;
   if (aDimIn < aDimOut) {
     return 4;
@@ -84,14 +73,11 @@ static int CalcTapsCheck(int aDimIn, int aDimOut)
   return tmpI - (tmpI % 2);
 }
 
-static long double RefMap(int aDimIn, int aDimOut, int aPos)
-{
+static long double RefMap(int aDimIn, int aDimOut, int aPos) {
   return (aPos + 0.5l) * static_cast<long double>(aDimIn) / aDimOut - 0.5l;
 }
 
-static int SplitMapCheck(int aDimIn, int aDimOut, int aPos,
-    long double* aTy)
-{
+static int SplitMapCheck(int aDimIn, int aDimOut, int aPos, long double* aTy) {
   long double smp;
   int smpI;
 
@@ -104,8 +90,7 @@ static int SplitMapCheck(int aDimIn, int aDimOut, int aPos,
 static double gWorst;
 
 static void ValidateScanline8(unsigned char* aOil, long double* aRef,
-    int aWidth, int aCmp)
-{
+                              int aWidth, int aCmp) {
   int i, j, refI, pos;
   double error, refF;
   for (i = 0; i < aWidth; i++) {
@@ -121,16 +106,15 @@ static void ValidateScanline8(unsigned char* aOil, long double* aRef,
        * functions shifted the random data, exposing edge cases
        * where float precision just barely exceeds 0.06. */
       if (error > 0.07) {
-        fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9f)\n",
-            i, j, refI, aOil[pos], refF);
+        fprintf(stderr, "[%d:%d] expected: %d, got %d (%.9f)\n", i, j, refI,
+                aOil[pos], refF);
         assert(0 && "pixel error exceeds tolerance");
       }
     }
   }
 }
 
-static long double ClampF(long double aIn)
-{
+static long double ClampF(long double aIn) {
   if (aIn <= 0.0L) {
     return 0.0L;
   }
@@ -140,8 +124,7 @@ static long double ClampF(long double aIn)
   return aIn;
 }
 
-static void Preprocess(long double* aIn, OilColorspace aCs)
-{
+static void Preprocess(long double* aIn, OilColorspace aCs) {
   switch (aCs) {
     case OilColorspace::RgbxNogamma:
       aIn[3] = 1.0L;
@@ -154,8 +137,7 @@ static void Preprocess(long double* aIn, OilColorspace aCs)
   }
 }
 
-static void Postprocess(long double* aIn, OilColorspace aCs)
-{
+static void Postprocess(long double* aIn, OilColorspace aCs) {
   long double alpha;
   switch (aCs) {
     case OilColorspace::RgbxNogamma:
@@ -179,22 +161,19 @@ static void Postprocess(long double* aIn, OilColorspace aCs)
   }
 }
 
-static unsigned char** Alloc2dUchar(int aWidth, int aHeight)
-{
+static unsigned char** Alloc2dUchar(int aWidth, int aHeight) {
   int i;
   unsigned char** rows;
 
-  rows = static_cast<unsigned char**>(
-      malloc(aHeight * sizeof(unsigned char*)));
+  rows = static_cast<unsigned char**>(malloc(aHeight * sizeof(unsigned char*)));
   for (i = 0; i < aHeight; i++) {
-    rows[i] = static_cast<unsigned char*>(
-        malloc(aWidth * sizeof(unsigned char)));
+    rows[i] =
+        static_cast<unsigned char*>(malloc(aWidth * sizeof(unsigned char)));
   }
   return rows;
 }
 
-static void Free2dUchar(unsigned char** aPtr, int aHeight)
-{
+static void Free2dUchar(unsigned char** aPtr, int aHeight) {
   int i;
 
   for (i = 0; i < aHeight; i++) {
@@ -203,22 +182,18 @@ static void Free2dUchar(unsigned char** aPtr, int aHeight)
   free(aPtr);
 }
 
-static long double** Alloc2dLd(int aWidth, int aHeight)
-{
+static long double** Alloc2dLd(int aWidth, int aHeight) {
   int i;
   long double** rows;
 
-  rows = static_cast<long double**>(
-      malloc(aHeight * sizeof(long double*)));
+  rows = static_cast<long double**>(malloc(aHeight * sizeof(long double*)));
   for (i = 0; i < aHeight; i++) {
-    rows[i] = static_cast<long double*>(
-        malloc(aWidth * sizeof(long double)));
+    rows[i] = static_cast<long double*>(malloc(aWidth * sizeof(long double)));
   }
   return rows;
 }
 
-static void Free2dLd(long double** aPtr, int aHeight)
-{
+static void Free2dLd(long double** aPtr, int aHeight) {
   int i;
 
   for (i = 0; i < aHeight; i++) {
@@ -228,16 +203,14 @@ static void Free2dLd(long double** aPtr, int aHeight)
 }
 
 static void RefXscale(long double* aIn, int aInWidth, long double* aOut,
-    int aOutWidth, int aCmp)
-{
-  int i, j, k, taps, smpI, start, ltrim, rtrim, startSafe,
-      tapsSafe, maxPos, inPos;
+                      int aOutWidth, int aCmp) {
+  int i, j, k, taps, smpI, start, ltrim, rtrim, startSafe, tapsSafe, maxPos,
+      inPos;
   long double* coeffs;
   long double inVal, tx;
 
   taps = CalcTapsCheck(aInWidth, aOutWidth);
-  coeffs = static_cast<long double*>(
-      malloc(taps * sizeof(long double)));
+  coeffs = static_cast<long double*>(malloc(taps * sizeof(long double)));
   maxPos = aInWidth - 1;
   for (i = 0; i < aOutWidth; i++) {
     smpI = SplitMapCheck(aInWidth, aOutWidth, i, &tx);
@@ -270,9 +243,8 @@ static void RefXscale(long double* aIn, int aInWidth, long double* aOut,
   free(coeffs);
 }
 
-static void RefTransposeLine(long double* aIn, int aWidth,
-    long double** aOut, int aOutOffset, int aCmp)
-{
+static void RefTransposeLine(long double* aIn, int aWidth, long double** aOut,
+                             int aOutOffset, int aCmp) {
   int i, j;
   for (i = 0; i < aWidth; i++) {
     for (j = 0; j < aCmp; j++) {
@@ -282,8 +254,7 @@ static void RefTransposeLine(long double* aIn, int aWidth,
 }
 
 static void RefTransposeColumn(long double** aIn, int aHeight,
-    long double* aOut, int aInOffset, int aCmp)
-{
+                               long double* aOut, int aInOffset, int aCmp) {
   int i, j;
   for (i = 0; i < aHeight; i++) {
     for (j = 0; j < aCmp; j++) {
@@ -293,14 +264,13 @@ static void RefTransposeColumn(long double** aIn, int aHeight,
 }
 
 static void RefYscale(long double** aIn, int aWidth, int aInHeight,
-    long double** aOut, int aOutHeight, int aCmp)
-{
+                      long double** aOut, int aOutHeight, int aCmp) {
   int i;
   long double* transposed;
   long double* transScaled;
 
-  transposed = static_cast<long double*>(
-      malloc(aInHeight * aCmp * sizeof(long double)));
+  transposed =
+      static_cast<long double*>(malloc(aInHeight * aCmp * sizeof(long double)));
   transScaled = static_cast<long double*>(
       malloc(aOutHeight * aCmp * sizeof(long double)));
   for (i = 0; i < aWidth; i++) {
@@ -313,9 +283,8 @@ static void RefYscale(long double** aIn, int aWidth, int aInHeight,
 }
 
 static void RefScale(unsigned char** aIn, int aInWidth, int aInHeight,
-    long double** aOut, int aOutWidth, int aOutHeight,
-    OilColorspace aCs)
-{
+                     long double** aOut, int aOutWidth, int aOutHeight,
+                     OilColorspace aCs) {
   int i, j, cmp, stride;
   long double* preLine;
   long double** intermediate;
@@ -324,8 +293,7 @@ static void RefScale(unsigned char** aIn, int aInWidth, int aInHeight,
   stride = cmp * aInWidth;
 
   // horizontal scaling
-  preLine = static_cast<long double*>(
-      malloc(stride * sizeof(long double)));
+  preLine = static_cast<long double*>(malloc(stride * sizeof(long double)));
   intermediate = Alloc2dLd(aOutWidth * cmp, aInHeight);
   for (i = 0; i < aInHeight; i++) {
     // Convert chars to floats
@@ -354,10 +322,9 @@ static void RefScale(unsigned char** aIn, int aInWidth, int aInHeight,
   Free2dLd(intermediate, aInHeight);
 }
 
-static void DoOilScale(unsigned char** aInputImage, int aInWidth,
-    int aInHeight, unsigned char** aOutputImage, int aOutWidth,
-    int aOutHeight, OilColorspace aCs)
-{
+static void DoOilScale(unsigned char** aInputImage, int aInWidth, int aInHeight,
+                       unsigned char** aOutputImage, int aOutWidth,
+                       int aOutHeight, OilColorspace aCs) {
   OilScale os;
   int i, inLine;
 
@@ -372,10 +339,8 @@ static void DoOilScale(unsigned char** aInputImage, int aInWidth,
   OilScaleFree(&os);
 }
 
-static void TestScale(int aInWidth, int aInHeight,
-    unsigned char** aInputImage, int aOutWidth, int aOutHeight,
-    OilColorspace aCs)
-{
+static void TestScale(int aInWidth, int aInHeight, unsigned char** aInputImage,
+                      int aOutWidth, int aOutHeight, OilColorspace aCs) {
   int i, outRowStride;
   unsigned char** oilOutputImage;
   long double** refOutputImage;
@@ -384,27 +349,24 @@ static void TestScale(int aInWidth, int aInHeight,
 
   /* oil scaling */
   oilOutputImage = Alloc2dUchar(outRowStride, aOutHeight);
-  DoOilScale(aInputImage, aInWidth, aInHeight, oilOutputImage,
-      aOutWidth, aOutHeight, aCs);
+  DoOilScale(aInputImage, aInWidth, aInHeight, oilOutputImage, aOutWidth,
+             aOutHeight, aCs);
 
   /* reference scaling */
   refOutputImage = Alloc2dLd(outRowStride, aOutHeight);
   RefScale(aInputImage, aInWidth, aInHeight, refOutputImage, aOutWidth,
-      aOutHeight, aCs);
+           aOutHeight, aCs);
 
   /* compare the two */
   for (i = 0; i < aOutHeight; i++) {
-    ValidateScanline8(oilOutputImage[i], refOutputImage[i],
-        aOutWidth, 4);
+    ValidateScanline8(oilOutputImage[i], refOutputImage[i], aOutWidth, 4);
   }
 
   Free2dUchar(oilOutputImage, aOutHeight);
   Free2dLd(refOutputImage, aOutHeight);
 }
 
-static void TestScaleSquareRand(int aInDim, int aOutDim,
-    OilColorspace aCs)
-{
+static void TestScaleSquareRand(int aInDim, int aOutDim, OilColorspace aCs) {
   int i, inRowStride;
   unsigned char** inputImage;
 
@@ -419,20 +381,17 @@ static void TestScaleSquareRand(int aInDim, int aOutDim,
   Free2dUchar(inputImage, aInDim);
 }
 
-static void TestScaleEachCs(int aDimA, int aDimB)
-{
+static void TestScaleEachCs(int aDimA, int aDimB) {
   TestScaleSquareRand(aDimA, aDimB, OilColorspace::RgbaNogamma);
   TestScaleSquareRand(aDimA, aDimB, OilColorspace::RgbxNogamma);
 }
 
-static void TestScaleDownscale(int aDimIn, int aDimOut)
-{
+static void TestScaleDownscale(int aDimIn, int aDimOut) {
   assert(aDimIn >= aDimOut);
   TestScaleEachCs(aDimIn, aDimOut);
 }
 
-static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs)
-{
+static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   OilScale os;
   int outRowStride;
   unsigned char* buf;
@@ -446,8 +405,7 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs)
 
   /* feed one input line when more are needed, should still fail */
   if (OilScaleSlots(&os) > 1) {
-    unsigned char* inLine = static_cast<unsigned char*>(
-        calloc(4 * aInDim, 1));
+    unsigned char* inLine = static_cast<unsigned char*>(calloc(4 * aInDim, 1));
     assert(gCurScaleIn(&os, inLine) == 0);
     assert(OilScaleSlots(&os) > 0);
     assert(gCurScaleOut(&os, buf) == -1);
@@ -458,8 +416,7 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs)
   /* feed enough input, then gCurScaleOut should succeed */
   OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
   while (OilScaleSlots(&os)) {
-    unsigned char* inLine = static_cast<unsigned char*>(
-        calloc(4 * aInDim, 1));
+    unsigned char* inLine = static_cast<unsigned char*>(calloc(4 * aInDim, 1));
     assert(gCurScaleIn(&os, inLine) == 0);
     free(inLine);
   }
@@ -469,14 +426,12 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs)
   free(buf);
 }
 
-static void TestOutNotReadyAll()
-{
+static void TestOutNotReadyAll() {
   TestOutNotReady(100, 50, OilColorspace::RgbaNogamma);
   TestOutNotReady(100, 50, OilColorspace::RgbxNogamma);
 }
 
-static void TestScaleAll()
-{
+static void TestScaleAll() {
   TestScaleDownscale(5, 1);
   TestScaleDownscale(8, 1);
   TestScaleDownscale(8, 3);
@@ -491,8 +446,7 @@ struct Impl {
   ScaleOutFn mOut;
 };
 
-static void RunTests(Impl* aImpl)
-{
+static void RunTests(Impl* aImpl) {
   printf("--- testing %s ---\n", aImpl->mName);
   gCurScaleIn = aImpl->mIn;
   gCurScaleOut = aImpl->mOut;
@@ -501,12 +455,11 @@ static void RunTests(Impl* aImpl)
   TestOutNotReadyAll();
 }
 
-int main()
-{
+int main() {
   int t = 1531289551;
   int i, numImpls;
   Impl impls[3];
-  //int t = time(NULL);
+  // int t = time(NULL);
   printf("seed: %d\n", t);
   srand(t);
   OilGlobalInit();
