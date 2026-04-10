@@ -386,7 +386,7 @@ static int CalcBordersLen(int aInDim, int aOutDim) {
 }
 
 static int DownscaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
-                              int aOutWidth, OilColorspace aCs) {
+                              int aOutWidth) {
   int tapsX, tapsY;
 
   tapsX = CalcTaps(aInWidth, aOutWidth);
@@ -430,8 +430,8 @@ static void DownscaleInit(OilScale* aOs) {
 }
 
 int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
-                      int aOutWidth, OilColorspace aCs) {
-  return DownscaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
+                      int aOutWidth, OilColorspace /*aCs*/) {
+  return DownscaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth);
 }
 
 int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,

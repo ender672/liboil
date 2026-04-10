@@ -183,7 +183,6 @@ struct Impl {
 static void RunBench(char* aPath, char* aCsArg, int aIterations, Impl* aImpls,
                      int aNumImpls) {
   size_t i, j, numSpaces;
-  clock_t t;
 
   OilColorspace spaces[] = {
       OilColorspace::RgbaNogamma,
