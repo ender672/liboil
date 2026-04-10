@@ -20,6 +20,7 @@
  */
 
 #include "OilResample.h"
+
 #include "OilResampleInternal.h"
 #include <cmath>
 #include <cstdlib>

@@ -1,8 +1,9 @@
-#include <cassert>
-#include <cstdio>
-#include <cmath>
-#include <cstdlib>
 #include "OilResample.h"
+
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 using namespace mozilla;
 

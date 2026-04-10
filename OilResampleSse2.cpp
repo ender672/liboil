@@ -20,9 +20,10 @@
  */
 
 #include "OilResample.h"
+
 #include "OilResampleInternal.h"
-#include <immintrin.h>
 #include <cstring>
+#include <immintrin.h>
 
 namespace mozilla {
 

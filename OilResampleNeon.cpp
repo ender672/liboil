@@ -20,10 +20,10 @@
  */
 
 #include "OilResample.h"
-#include "OilResampleInternal.h"
 
-#include <cstring>
+#include "OilResampleInternal.h"
 #include <arm_neon.h>
+#include <cstring>
 
 namespace mozilla {
 

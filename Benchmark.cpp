@@ -1,12 +1,13 @@
-#include <cstdlib>
-#include <ctime>
-#include <cstring>
-#include <cmath>
+#include "OilResample.h"
+
+#include "png.h"
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdio>
-#include "png.h"
-#include "OilResample.h"
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 using namespace mozilla;
 
