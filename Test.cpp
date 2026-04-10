@@ -459,7 +459,7 @@ int main() {
   int t = 1531289551;
   int i, numImpls;
   Impl impls[3];
-  // int t = time(NULL);
+  // int t = time(nullptr);
   printf("seed: %d\n", t);
   srand(t);
   OilGlobalInit();
