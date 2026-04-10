@@ -27,8 +27,8 @@
 
 namespace mozilla {
 
-static void OilYScaleOutRgbxNogammaSse2(float* aSums, int aWidth,
-                                        unsigned char* aOut, int aTap) {
+static void OilYScaleOutRgbxSse2(float* aSums, int aWidth, unsigned char* aOut,
+                                 int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
   __m128 vals;
@@ -95,10 +95,9 @@ static void OilYScaleOutRgbxNogammaSse2(float* aSums, int aWidth,
   }
 }
 
-static void OilScaleDownRgbxNogammaSse2(unsigned char* aIn, float* aSumsYOut,
-                                        int aOutWidth, float* aCoeffsXF,
-                                        int* aBorderBuf, float* aCoeffsYF,
-                                        int aTap) {
+static void OilScaleDownRgbxSse2(unsigned char* aIn, float* aSumsYOut,
+                                 int aOutWidth, float* aCoeffsXF,
+                                 int* aBorderBuf, float* aCoeffsYF, int aTap) {
   int i, j;
   int off0, off1, off2, off3;
   __m128 coeffsX, coeffsX2, sampleX, sumR, sumG, sumB;
@@ -229,8 +228,8 @@ static void OilScaleDownRgbxNogammaSse2(unsigned char* aIn, float* aSumsYOut,
   }
 }
 
-static void OilYScaleOutRgbaNogammaSse2(float* aSums, int aWidth,
-                                        unsigned char* aOut, int aTap) {
+static void OilYScaleOutRgbaSse2(float* aSums, int aWidth, unsigned char* aOut,
+                                 int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
   __m128 vals, alphaV;
@@ -323,10 +322,9 @@ static void OilYScaleOutRgbaNogammaSse2(float* aSums, int aWidth,
   }
 }
 
-static void OilScaleDownRgbaNogammaSse2(unsigned char* aIn, float* aSumsYOut,
-                                        int aOutWidth, float* aCoeffsXF,
-                                        int* aBorderBuf, float* aCoeffsYF,
-                                        int aTap) {
+static void OilScaleDownRgbaSse2(unsigned char* aIn, float* aSumsYOut,
+                                 int aOutWidth, float* aCoeffsXF,
+                                 int* aBorderBuf, float* aCoeffsYF, int aTap) {
   int i, j;
   __m128 coeffsX, coeffsX2, coeffsXA, coeffsX2A, sampleX;
   __m128 sumR, sumG, sumB, sumA;
@@ -485,11 +483,11 @@ static void OilScaleDownRgbaNogammaSse2(unsigned char* aIn, float* aSumsYOut,
 static void YScaleOutSse2(float* aSums, int aWidth, unsigned char* aOut,
                           OilColorspace aCs, int aTap) {
   switch (aCs) {
-    case OilColorspace::RgbaNogamma:
-      OilYScaleOutRgbaNogammaSse2(aSums, aWidth, aOut, aTap);
+    case OilColorspace::Rgba:
+      OilYScaleOutRgbaSse2(aSums, aWidth, aOut, aTap);
       break;
-    case OilColorspace::RgbxNogamma:
-      OilYScaleOutRgbxNogammaSse2(aSums, aWidth, aOut, aTap);
+    case OilColorspace::Rgbx:
+      OilYScaleOutRgbxSse2(aSums, aWidth, aOut, aTap);
       break;
   }
 }
@@ -500,15 +498,13 @@ static void DownScaleInSse2(OilScale* aOs, unsigned char* aIn) {
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
 
   switch (aOs->mCs) {
-    case OilColorspace::RgbaNogamma:
-      OilScaleDownRgbaNogammaSse2(aIn, aOs->mSumsY, aOs->mOutWidth,
-                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
-                                  aOs->mSumsYTap);
+    case OilColorspace::Rgba:
+      OilScaleDownRgbaSse2(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
+                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
-    case OilColorspace::RgbxNogamma:
-      OilScaleDownRgbxNogammaSse2(aIn, aOs->mSumsY, aOs->mOutWidth,
-                                  aOs->mCoeffsX, aOs->mBordersX, coeffsY,
-                                  aOs->mSumsYTap);
+    case OilColorspace::Rgbx:
+      OilScaleDownRgbxSse2(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
+                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
   }
 

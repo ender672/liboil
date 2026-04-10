@@ -193,8 +193,8 @@ static void ShiftLeftF(float* aF) {
   aF[3] = 0.0f;
 }
 
-static void YScaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
-                                 int aTap) {
+static void YScaleOutRgba(float* aSums, int aWidth, unsigned char* aOut,
+                          int aTap) {
   int i, j, tapOff;
   float alpha, val;
 
@@ -216,8 +216,8 @@ static void YScaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
   }
 }
 
-static void YScaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
-                                 int aTap) {
+static void YScaleOutRgbx(float* aSums, int aWidth, unsigned char* aOut,
+                          int aTap) {
   int i, j, tapOff;
 
   tapOff = aTap * 4;
@@ -236,11 +236,11 @@ static void YScaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
 static void YScaleOut(float* aSums, int aWidth, unsigned char* aOut,
                       OilColorspace aCs, int aTap) {
   switch (aCs) {
-    case OilColorspace::RgbaNogamma:
-      YScaleOutRgbaNogamma(aSums, aWidth, aOut, aTap);
+    case OilColorspace::Rgba:
+      YScaleOutRgba(aSums, aWidth, aOut, aTap);
       break;
-    case OilColorspace::RgbxNogamma:
-      YScaleOutRgbxNogamma(aSums, aWidth, aOut, aTap);
+    case OilColorspace::Rgbx:
+      YScaleOutRgbx(aSums, aWidth, aOut, aTap);
       break;
   }
 }
@@ -303,9 +303,9 @@ static void ScaleDownCoeffs(int aInDim, int aOutDim, float* aCoeffBuf,
   }
 }
 
-static void ScaleDownRgbaNogamma(unsigned char* aIn, float* aSumsY,
-                                 int aOutWidth, float* aCoeffsX,
-                                 int* aBorderBuf, float* aCoeffsY, int aTap) {
+static void ScaleDownRgba(unsigned char* aIn, float* aSumsY, int aOutWidth,
+                          float* aCoeffsX, int* aBorderBuf, float* aCoeffsY,
+                          int aTap) {
   int i, j, k;
   float alpha, sum[4][4] = {{0.0f}};
 
@@ -339,9 +339,9 @@ static void ScaleDownRgbaNogamma(unsigned char* aIn, float* aSumsY,
   }
 }
 
-static void ScaleDownRgbxNogamma(unsigned char* aIn, float* aSumsY,
-                                 int aOutWidth, float* aCoeffsX,
-                                 int* aBorderBuf, float* aCoeffsY, int aTap) {
+static void ScaleDownRgbx(unsigned char* aIn, float* aSumsY, int aOutWidth,
+                          float* aCoeffsX, int* aBorderBuf, float* aCoeffsY,
+                          int aTap) {
   int i, j, k;
   float sum[4][4] = {{0.0f}};
 
@@ -489,13 +489,13 @@ static void DownScaleIn(OilScale* aOs, unsigned char* aIn) {
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
 
   switch (aOs->mCs) {
-    case OilColorspace::RgbaNogamma:
-      ScaleDownRgbaNogamma(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
-                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+    case OilColorspace::Rgba:
+      ScaleDownRgba(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
+                    aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
-    case OilColorspace::RgbxNogamma:
-      ScaleDownRgbxNogamma(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
-                           aOs->mBordersX, coeffsY, aOs->mSumsYTap);
+    case OilColorspace::Rgbx:
+      ScaleDownRgbx(aIn, aOs->mSumsY, aOs->mOutWidth, aOs->mCoeffsX,
+                    aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
   }
 

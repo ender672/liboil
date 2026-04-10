@@ -30,7 +30,7 @@ struct oil_scale os;
 inbuf = malloc(in_width * 4);
 outbuf = malloc(out_width * 4);
 
-ret = oil_scale_init(&os, in_height, out_height, in_width, out_width, OIL_CS_RGBX_NOGAMMA);
+ret = oil_scale_init(&os, in_height, out_height, in_width, out_width, OIL_CS_RGBX);
 if (ret!=0) {
     fprintf(stderr, "Unable to allocate buffers.");
     exit(1);

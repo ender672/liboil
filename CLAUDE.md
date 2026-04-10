@@ -42,7 +42,7 @@ Note: Build commands and dependencies will change as the port progresses.
 
 The code that matters for this port:
 
-- **Core resampler** (`oil_resample.h/c`): The scaling engine. `struct oil_scale` holds all state. Callers feed input scanlines with `oil_scale_in()` and read output with `oil_scale_out()`. Supports RGBX_NOGAMMA and RGBA_NOGAMMA color spaces (4 bytes per pixel, no sRGB conversion). The filter widens its tap count automatically when downsampling to prevent aliasing.
+- **Core resampler** (`oil_resample.h/c`): The scaling engine. `struct oil_scale` holds all state. Callers feed input scanlines with `oil_scale_in()` and read output with `oil_scale_out()`. Supports RGBX and RGBA color spaces (4 bytes per pixel, no sRGB conversion). The filter widens its tap count automatically when downsampling to prevent aliasing.
 
 - **SIMD backends**: SSE2 on x86_64 (`oil_resample_sse2.c`), AVX2 on x86_64, NEON on AArch64 (`oil_resample_neon.c`). Each provides its own `oil_scale_in_*`/`oil_scale_out_*` entry points. Built unconditionally for the detected architecture.
 

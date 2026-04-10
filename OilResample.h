@@ -28,8 +28,8 @@ namespace mozilla {
  * Color spaces currently supported by oil.
  */
 enum class OilColorspace {
-  RgbaNogamma = 0x0604,
-  RgbxNogamma = 0x0704,
+  Rgba = 0x0604,
+  Rgbx = 0x0704,
 };
 
 /**
