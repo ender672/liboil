@@ -466,8 +466,6 @@ int main() {
   // int t = time(nullptr);
   printf("seed: %d\n", t);
   srand(t);
-  OilGlobalInit();
-
   numImpls = 0;
   impls[numImpls].mName = "scalar";
   impls[numImpls].mIn = OilScaleIn;

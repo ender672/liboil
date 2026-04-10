@@ -195,11 +195,6 @@ static void RunBench(char* aPath, char* aCsArg, int aIterations, Impl* aImpls,
       "RGBX_NOGAMMA",
   };
 
-  t = clock();
-  OilGlobalInit();
-  t = clock() - t;
-  printf("global init: %6.2fms\n", TimeToMs(t));
-
   numSpaces = sizeof(spaces) / sizeof(spaces[0]);
 
   if (aCsArg) {

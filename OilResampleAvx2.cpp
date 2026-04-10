@@ -107,7 +107,7 @@ static void OilScaleDownRgbxNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
   __m128 coeffsX, coeffsX2, sampleX, sumR, sumG, sumB;
   __m128 sumR2, sumG2, sumB2;
   __m256 cyLo, cyHi;
-  float* lut;
+  const float* lut;
 
   lut = gI2fMap;
 
@@ -356,7 +356,7 @@ static void OilScaleDownRgbaNogammaAvx2(unsigned char* aIn, float* aSumsYOut,
   __m128 coeffsX, coeffsX2, coeffsXA, coeffsX2A, sampleX;
   __m128 sumR, sumG, sumB, sumA;
   __m128 sumR2, sumG2, sumB2, sumA2;
-  float* lut;
+  const float* lut;
   __m256 cy256Lo, cy256Hi;
   {
     float cyPhys[4];

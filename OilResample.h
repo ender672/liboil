@@ -55,14 +55,6 @@ struct OilScale {
 };
 
 /**
- * Initialize static, pre-calculated tables. This only needs to be called once.
- * A call to OilScaleInit() will initialize these tables if not already done,
- * so explicitly calling OilGlobalInit() is only needed if there are
- * concurrency concerns.
- */
-void OilGlobalInit();
-
-/**
  * Calculate the buffer size needed for an oil scaler struct.
  */
 int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
