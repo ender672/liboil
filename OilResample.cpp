@@ -23,7 +23,6 @@
 
 #include "OilResampleInternal.h"
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 
 namespace mozilla {
@@ -463,28 +462,6 @@ int OilScaleInitAllocated(OilScale* aOs, int aInHeight, int aOutHeight,
   return 0;
 }
 
-int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight, int aInWidth,
-                 int aOutWidth, OilColorspace aCs) {
-  int allocSize, ret;
-  void* buf;
-
-  allocSize =
-      OilScaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
-  buf = calloc(1, allocSize);
-  if (!buf) {
-    return -2;
-  }
-
-  ret = OilScaleInitAllocated(aOs, aInHeight, aOutHeight, aInWidth, aOutWidth,
-                              aCs, buf);
-  if (ret) {
-    free(buf);
-    return ret;
-  }
-
-  return 0;
-}
-
 void OilScaleRestart(OilScale* aOs) {
   aOs->mInPos = aOs->mOutPos = 0;
   aOs->mSumsYTap = 0;
@@ -495,7 +472,6 @@ void OilScaleFree(OilScale* aOs) {
     return;
   }
 
-  free(aOs->mBuf);
   aOs->mBuf = nullptr;
   aOs->mCoeffsX = nullptr;
   aOs->mBordersX = nullptr;

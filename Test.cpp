@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 using namespace mozilla;
 
@@ -329,7 +330,12 @@ static void DoOilScale(unsigned char** aInputImage, int aInWidth, int aInHeight,
   OilScale os;
   int i, inLine;
 
-  int rv = OilScaleInit(&os, aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
+  int allocSize =
+      OilScaleAllocSize(aInHeight, aOutHeight, aInWidth, aOutWidth, aCs);
+  void* buf = calloc(1, allocSize);
+  assert(buf);
+  int rv = OilScaleInitAllocated(&os, aInHeight, aOutHeight, aInWidth,
+                                 aOutWidth, aCs, buf);
   assert(rv == 0);
   inLine = 0;
   for (i = 0; i < aOutHeight; i++) {
@@ -339,6 +345,7 @@ static void DoOilScale(unsigned char** aInputImage, int aInWidth, int aInHeight,
     gCurScaleOut(&os, aOutputImage[i]);
   }
   OilScaleFree(&os);
+  free(buf);
 }
 
 static void TestScale(int aInWidth, int aInHeight, unsigned char** aInputImage,
@@ -401,8 +408,13 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   outRowStride = 4 * aOutDim;
   buf = static_cast<unsigned char*>(malloc(outRowStride));
 
+  int allocSize = OilScaleAllocSize(aInDim, aOutDim, aInDim, aOutDim, aCs);
+  void* scaleBuf = calloc(1, allocSize);
+  assert(scaleBuf);
+
   /* calling gCurScaleOut before any input should fail */
-  int rv = OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  int rv = OilScaleInitAllocated(&os, aInDim, aOutDim, aInDim, aOutDim, aCs,
+                                 scaleBuf);
   assert(rv == 0);
   assert(gCurScaleOut(&os, buf) == -1);
 
@@ -417,7 +429,9 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   OilScaleFree(&os);
 
   /* feed enough input, then gCurScaleOut should succeed */
-  rv = OilScaleInit(&os, aInDim, aOutDim, aInDim, aOutDim, aCs);
+  memset(scaleBuf, 0, allocSize);
+  rv = OilScaleInitAllocated(&os, aInDim, aOutDim, aInDim, aOutDim, aCs,
+                             scaleBuf);
   assert(rv == 0);
   while (OilScaleSlots(&os)) {
     unsigned char* inLine = static_cast<unsigned char*>(calloc(4 * aInDim, 1));
@@ -427,6 +441,7 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs) {
   assert(gCurScaleOut(&os, buf) == 0);
   OilScaleFree(&os);
 
+  free(scaleBuf);
   free(buf);
 }
 

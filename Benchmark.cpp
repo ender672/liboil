@@ -115,11 +115,21 @@ static clock_t Resize(BenchImage aImage, int aOutWidth, int aOutHeight,
     exit(1);
   }
 
+  int allocSize = OilScaleAllocSize(aImage.mHeight, aOutHeight, aImage.mWidth,
+                                    aOutWidth, cs);
+  void* scaleBuf = calloc(1, allocSize);
+  if (!scaleBuf) {
+    fprintf(stderr, "Unable to allocate scale buffer.\n");
+    free(outbuf);
+    exit(1);
+  }
+
   t = clock();
-  int rv = OilScaleInit(&os, aImage.mHeight, aOutHeight, aImage.mWidth,
-                        aOutWidth, cs);
+  int rv = OilScaleInitAllocated(&os, aImage.mHeight, aOutHeight, aImage.mWidth,
+                                 aOutWidth, cs, scaleBuf);
   if (rv) {
-    fprintf(stderr, "OilScaleInit failed: %d\n", rv);
+    fprintf(stderr, "OilScaleInitAllocated failed: %d\n", rv);
+    free(scaleBuf);
     free(outbuf);
     exit(1);
   }
@@ -133,6 +143,7 @@ static clock_t Resize(BenchImage aImage, int aOutWidth, int aOutHeight,
   t = clock() - t;
   free(outbuf);
   OilScaleFree(&os);
+  free(scaleBuf);
   return t;
 }
 

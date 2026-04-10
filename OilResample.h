@@ -72,22 +72,12 @@ int OilScaleAllocSize(int aInHeight, int aOutHeight, int aInWidth,
                                         void* aBuf);
 
 /**
- * Initialize an oil scaler struct.
- *
- * Returns 0 on success.
- * Returns -1 if an argument is bad.
- * Returns -2 if unable to allocate memory.
- */
-[[nodiscard]] int OilScaleInit(OilScale* aOs, int aInHeight, int aOutHeight,
-                               int aInWidth, int aOutWidth, OilColorspace aCs);
-
-/**
  * Reset row counters in an oil scaler struct.
  */
 void OilScaleRestart(OilScale* aOs);
 
 /**
- * Free heap allocations associated with an oil scaler struct.
+ * Clear an oil scaler struct.
  */
 void OilScaleFree(OilScale* aOs);
 
