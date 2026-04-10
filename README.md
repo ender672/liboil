@@ -10,24 +10,12 @@ liboil aims to provide excellent general-purpose image thumbnailing and is optim
 
 liboil is not very configurable -- it currently only has one interpolator (catmull-rom). It is not suited for scenarios where you want to customize your settings by hand for each image.
 
-An example use-case is a web server that thumbnails user-uploaded images.
-
 Features
 --------
 
  * Antialiasing - the interpolator is scaled when shrinking images.
- * Color space aware - liboil converts images to linear RGB for processing.
  * Pre-multiplied alpha - avoids artifacts when resizing with transparency.
  * SIMD acceleration - SSE2 and AVX2 on x86_64, NEON on AArch64 (ARM64).
-
-imgscale
---------
-
-The liboil repository includes a command-line tool for resizing JPEG and PNG images.
-
-For example, to resize in.jpg to fit in a 400x800 box while preserving the aspect ratio: 
-
-    ./imgscale 400 800 in.jpg out.jpg
 
 Example usage as a C library
 ----------------------------
