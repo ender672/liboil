@@ -57,11 +57,11 @@ static BenchImage LoadPng(char* aPath, OilColorspace aCs)
   }
 
   switch (aCs) {
-    case OilColorspace::eRgbxNogamma:
+    case OilColorspace::RgbxNogamma:
       png_set_strip_alpha(rpng);
       png_set_filler(rpng, 0xffff, PNG_FILLER_AFTER);
       break;
-    case OilColorspace::eRgbaNogamma:
+    case OilColorspace::RgbaNogamma:
       break;
   }
 
@@ -185,8 +185,8 @@ static void RunBench(char* aPath, char* aCsArg, int aIterations,
   clock_t t;
 
   OilColorspace spaces[] = {
-    OilColorspace::eRgbaNogamma,
-    OilColorspace::eRgbxNogamma,
+    OilColorspace::RgbaNogamma,
+    OilColorspace::RgbxNogamma,
   };
 
   const char* spaceNames[] = {

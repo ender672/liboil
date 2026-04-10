@@ -143,10 +143,10 @@ static long double ClampF(long double aIn)
 static void Preprocess(long double* aIn, OilColorspace aCs)
 {
   switch (aCs) {
-    case OilColorspace::eRgbxNogamma:
+    case OilColorspace::RgbxNogamma:
       aIn[3] = 1.0L;
       break;
-    case OilColorspace::eRgbaNogamma:
+    case OilColorspace::RgbaNogamma:
       aIn[0] *= aIn[3];
       aIn[1] *= aIn[3];
       aIn[2] *= aIn[3];
@@ -158,13 +158,13 @@ static void Postprocess(long double* aIn, OilColorspace aCs)
 {
   long double alpha;
   switch (aCs) {
-    case OilColorspace::eRgbxNogamma:
+    case OilColorspace::RgbxNogamma:
       aIn[0] = ClampF(aIn[0]);
       aIn[1] = ClampF(aIn[1]);
       aIn[2] = ClampF(aIn[2]);
       aIn[3] = 1.0L;
       break;
-    case OilColorspace::eRgbaNogamma:
+    case OilColorspace::RgbaNogamma:
       alpha = ClampF(aIn[3]);
       if (alpha != 0.0L) {
         aIn[0] /= alpha;
@@ -421,8 +421,8 @@ static void TestScaleSquareRand(int aInDim, int aOutDim,
 
 static void TestScaleEachCs(int aDimA, int aDimB)
 {
-  TestScaleSquareRand(aDimA, aDimB, OilColorspace::eRgbaNogamma);
-  TestScaleSquareRand(aDimA, aDimB, OilColorspace::eRgbxNogamma);
+  TestScaleSquareRand(aDimA, aDimB, OilColorspace::RgbaNogamma);
+  TestScaleSquareRand(aDimA, aDimB, OilColorspace::RgbxNogamma);
 }
 
 static void TestScaleDownscale(int aDimIn, int aDimOut)
@@ -471,8 +471,8 @@ static void TestOutNotReady(int aInDim, int aOutDim, OilColorspace aCs)
 
 static void TestOutNotReadyAll()
 {
-  TestOutNotReady(100, 50, OilColorspace::eRgbaNogamma);
-  TestOutNotReady(100, 50, OilColorspace::eRgbxNogamma);
+  TestOutNotReady(100, 50, OilColorspace::RgbaNogamma);
+  TestOutNotReady(100, 50, OilColorspace::RgbxNogamma);
 }
 
 static void TestScaleAll()

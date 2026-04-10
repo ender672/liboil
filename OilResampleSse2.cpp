@@ -496,10 +496,10 @@ static void YscaleOutSse2(float* aSums, int aWidth, unsigned char* aOut,
     OilColorspace aCs, int aTap)
 {
   switch (aCs) {
-    case OilColorspace::eRgbaNogamma:
+    case OilColorspace::RgbaNogamma:
       OilYscaleOutRgbaNogammaSse2(aSums, aWidth, aOut, aTap);
       break;
-    case OilColorspace::eRgbxNogamma:
+    case OilColorspace::RgbxNogamma:
       OilYscaleOutRgbxNogammaSse2(aSums, aWidth, aOut, aTap);
       break;
   }
@@ -512,11 +512,11 @@ static void DownScaleInSse2(OilScale* aOs, unsigned char* aIn)
   coeffsY = aOs->mCoeffsY + aOs->mInPos * 4;
 
   switch (aOs->mCs) {
-    case OilColorspace::eRgbaNogamma:
+    case OilColorspace::RgbaNogamma:
       OilScaleDownRgbaNogammaSse2(aIn, aOs->mSumsY, aOs->mOutWidth,
           aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
-    case OilColorspace::eRgbxNogamma:
+    case OilColorspace::RgbxNogamma:
       OilScaleDownRgbxNogammaSse2(aIn, aOs->mSumsY, aOs->mOutWidth,
           aOs->mCoeffsX, aOs->mBordersX, coeffsY, aOs->mSumsYTap);
       break;
