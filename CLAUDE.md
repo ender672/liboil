@@ -29,6 +29,13 @@ Compiler settings are in `local.mk` (gitignored, included by Makefile). On macOS
 
 Dependencies: libjpeg, libpng, libm. On macOS: `brew install jpeg libpng`. Optional: SDL2 (`make sdltest`), GTK+3 (`make oilview`).
 
+Formatting is enforced with clang-format, configured in `.clang-format` (based on Firefox's Google-style config):
+
+```bash
+clang-format --dry-run --Werror *.cpp *.h   # check for violations
+clang-format -i *.cpp *.h                   # auto-fix
+```
+
 Note: Build commands and dependencies will change as the port progresses.
 
 ## Architecture

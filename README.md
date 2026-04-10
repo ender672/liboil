@@ -87,6 +87,17 @@ It is recommended to run it with valgrind as well:
 
     valgrind ./test
 
+Formatting
+----------
+
+Code formatting is enforced with clang-format, using a config based on Firefox's Google-style `.clang-format`. To check for violations:
+
+    clang-format --dry-run --Werror *.cpp *.h
+
+To auto-fix:
+
+    clang-format -i *.cpp *.h
+
 Benchmarking
 ------------
 
