@@ -202,7 +202,7 @@ static void Free2dLd(long double** aPtr, int aHeight) {
   free(aPtr);
 }
 
-static void RefXscale(long double* aIn, int aInWidth, long double* aOut,
+static void RefXScale(long double* aIn, int aInWidth, long double* aOut,
                       int aOutWidth, int aCmp) {
   int i, j, k, taps, smpI, start, ltrim, rtrim, startSafe, tapsSafe, maxPos,
       inPos;
@@ -263,7 +263,7 @@ static void RefTransposeColumn(long double** aIn, int aHeight,
   }
 }
 
-static void RefYscale(long double** aIn, int aWidth, int aInHeight,
+static void RefYScale(long double** aIn, int aWidth, int aInHeight,
                       long double** aOut, int aOutHeight, int aCmp) {
   int i;
   long double* transposed;
@@ -275,7 +275,7 @@ static void RefYscale(long double** aIn, int aWidth, int aInHeight,
       malloc(aOutHeight * aCmp * sizeof(long double)));
   for (i = 0; i < aWidth; i++) {
     RefTransposeColumn(aIn, aInHeight, transposed, i * aCmp, aCmp);
-    RefXscale(transposed, aInHeight, transScaled, aOutHeight, aCmp);
+    RefXScale(transposed, aInHeight, transScaled, aOutHeight, aCmp);
     RefTransposeLine(transScaled, aOutHeight, aOut, i * aCmp, aCmp);
   }
   free(transposed);
@@ -307,11 +307,11 @@ static void RefScale(unsigned char** aIn, int aInWidth, int aInHeight,
     }
 
     // xscale
-    RefXscale(preLine, aInWidth, intermediate[i], aOutWidth, cmp);
+    RefXScale(preLine, aInWidth, intermediate[i], aOutWidth, cmp);
   }
 
   // vertical scaling
-  RefYscale(intermediate, aOutWidth, aInHeight, aOut, aOutHeight, cmp);
+  RefYScale(intermediate, aOutWidth, aInHeight, aOut, aOutHeight, cmp);
   for (i = 0; i < aOutHeight; i++) {
     for (j = 0; j < aOutWidth; j++) {
       Postprocess(aOut[i] + j * cmp, aCs);

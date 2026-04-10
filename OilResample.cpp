@@ -47,7 +47,7 @@ static int Min(int aA, int aB) { return aA < aB ? aA : aB; }
 /**
  * Clamp a float between 0 and 1.
  */
-static float Clampf(float aX) {
+static float ClampF(float aX) {
   if (aX > 1.0f) {
     return 1.0f;
   } else if (aX < 0.0f) {
@@ -60,7 +60,7 @@ static float Clampf(float aX) {
  * Convert a float to an int. When compiling on x86 without march=native, this
  * performs much better than roundf().
  */
-static int F2i(float aX) { return aX + 0.5f; }
+static int F2I(float aX) { return aX + 0.5f; }
 
 /**
  * Map from the discreet dest coordinate pos to a continuous source coordinate.
@@ -156,20 +156,20 @@ static void ShiftLeftF(float* aF) {
   aF[3] = 0.0f;
 }
 
-static void YscaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
+static void YScaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
                                  int aTap) {
   int i, j, tapOff;
   float alpha, val;
 
   tapOff = aTap * 4;
   for (i = 0; i < aWidth; i++) {
-    alpha = Clampf(aSums[tapOff + 3]);
+    alpha = ClampF(aSums[tapOff + 3]);
     for (j = 0; j < 3; j++) {
       val = aSums[tapOff + j];
       if (alpha != 0) {
         val /= alpha;
       }
-      aOut[j] = F2i(Clampf(val) * 255.0f);
+      aOut[j] = F2I(ClampF(val) * 255.0f);
       aSums[tapOff + j] = 0.0f;
     }
     aOut[3] = round(alpha * 255.0f);
@@ -179,14 +179,14 @@ static void YscaleOutRgbaNogamma(float* aSums, int aWidth, unsigned char* aOut,
   }
 }
 
-static void YscaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
+static void YScaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
                                  int aTap) {
   int i, j, tapOff;
 
   tapOff = aTap * 4;
   for (i = 0; i < aWidth; i++) {
     for (j = 0; j < 3; j++) {
-      aOut[j] = F2i(Clampf(aSums[tapOff + j]) * 255.0f);
+      aOut[j] = F2I(ClampF(aSums[tapOff + j]) * 255.0f);
       aSums[tapOff + j] = 0.0f;
     }
     aOut[3] = 255;
@@ -196,14 +196,14 @@ static void YscaleOutRgbxNogamma(float* aSums, int aWidth, unsigned char* aOut,
   }
 }
 
-static void YscaleOut(float* aSums, int aWidth, unsigned char* aOut,
+static void YScaleOut(float* aSums, int aWidth, unsigned char* aOut,
                       OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
-      YscaleOutRgbaNogamma(aSums, aWidth, aOut, aTap);
+      YScaleOutRgbaNogamma(aSums, aWidth, aOut, aTap);
       break;
     case OilColorspace::RgbxNogamma:
-      YscaleOutRgbxNogamma(aSums, aWidth, aOut, aTap);
+      YScaleOutRgbxNogamma(aSums, aWidth, aOut, aTap);
       break;
   }
 }
@@ -521,7 +521,7 @@ int OilScaleOut(OilScale* aOs, unsigned char* aOut) {
     return -1;
   }
 
-  YscaleOut(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
+  YScaleOut(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
   aOs->mSumsYTap = (aOs->mSumsYTap + 1) & 3;
 
   aOs->mOutPos++;

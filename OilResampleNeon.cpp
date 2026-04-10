@@ -27,7 +27,7 @@
 
 namespace mozilla {
 
-static void OilYscaleOutRgbaNogammaNeon(float* aSums, int aWidth,
+static void OilYScaleOutRgbaNogammaNeon(float* aSums, int aWidth,
                                         unsigned char* aOut, int aTap) {
   int i, tapOff;
   float32x4_t scaleV, one, zero, half;
@@ -235,7 +235,7 @@ static void OilScaleDownRgbaNogammaNeon(unsigned char* aIn, float* aSumsYOut,
   }
 }
 
-static void OilYscaleOutRgbxNogammaNeon(float* aSums, int aWidth,
+static void OilYScaleOutRgbxNogammaNeon(float* aSums, int aWidth,
                                         unsigned char* aOut, int aTap) {
   int i, tapOff;
   float32x4_t scaleV, one, zero, half;
@@ -476,14 +476,14 @@ static void OilScaleDownRgbxNogammaNeon(unsigned char* aIn, float* aSumsYOut,
 
 /* NEON dispatch functions */
 
-static void YscaleOutNeon(float* aSums, int aWidth, unsigned char* aOut,
+static void YScaleOutNeon(float* aSums, int aWidth, unsigned char* aOut,
                           OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
-      OilYscaleOutRgbaNogammaNeon(aSums, aWidth, aOut, aTap);
+      OilYScaleOutRgbaNogammaNeon(aSums, aWidth, aOut, aTap);
       break;
     case OilColorspace::RgbxNogamma:
-      OilYscaleOutRgbxNogammaNeon(aSums, aWidth, aOut, aTap);
+      OilYScaleOutRgbxNogammaNeon(aSums, aWidth, aOut, aTap);
       break;
   }
 }
@@ -523,7 +523,7 @@ int OilScaleOutNeon(OilScale* aOs, unsigned char* aOut) {
     return -1;
   }
 
-  YscaleOutNeon(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
+  YScaleOutNeon(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
   aOs->mSumsYTap = (aOs->mSumsYTap + 1) & 3;
 
   aOs->mOutPos++;

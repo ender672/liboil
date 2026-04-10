@@ -26,7 +26,7 @@
 
 namespace mozilla {
 
-static void OilYscaleOutRgbxNogammaSse2(float* aSums, int aWidth,
+static void OilYScaleOutRgbxNogammaSse2(float* aSums, int aWidth,
                                         unsigned char* aOut, int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
@@ -228,7 +228,7 @@ static void OilScaleDownRgbxNogammaSse2(unsigned char* aIn, float* aSumsYOut,
   }
 }
 
-static void OilYscaleOutRgbaNogammaSse2(float* aSums, int aWidth,
+static void OilYScaleOutRgbaNogammaSse2(float* aSums, int aWidth,
                                         unsigned char* aOut, int aTap) {
   int i, tapOff;
   __m128 scale, half, one, zero;
@@ -481,14 +481,14 @@ static void OilScaleDownRgbaNogammaSse2(unsigned char* aIn, float* aSumsYOut,
 
 /* SSE2 dispatch functions */
 
-static void YscaleOutSse2(float* aSums, int aWidth, unsigned char* aOut,
+static void YScaleOutSse2(float* aSums, int aWidth, unsigned char* aOut,
                           OilColorspace aCs, int aTap) {
   switch (aCs) {
     case OilColorspace::RgbaNogamma:
-      OilYscaleOutRgbaNogammaSse2(aSums, aWidth, aOut, aTap);
+      OilYScaleOutRgbaNogammaSse2(aSums, aWidth, aOut, aTap);
       break;
     case OilColorspace::RgbxNogamma:
-      OilYscaleOutRgbxNogammaSse2(aSums, aWidth, aOut, aTap);
+      OilYScaleOutRgbxNogammaSse2(aSums, aWidth, aOut, aTap);
       break;
   }
 }
@@ -528,7 +528,7 @@ int OilScaleOutSse2(OilScale* aOs, unsigned char* aOut) {
     return -1;
   }
 
-  YscaleOutSse2(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
+  YScaleOutSse2(aOs->mSumsY, aOs->mOutWidth, aOut, aOs->mCs, aOs->mSumsYTap);
   aOs->mSumsYTap = (aOs->mSumsYTap + 1) & 3;
 
   aOs->mOutPos++;
