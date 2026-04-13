@@ -68,26 +68,21 @@ static long double ref_catrom(long double x)
 	return cubic(0, 0.5l, x);
 }
 
-static void ref_calc_coeffs(long double *coeffs, long double offset, int taps,
-	int ltrim, int rtrim)
+static void ref_calc_coeffs(long double *coeffs, int n_samples, int smp_start,
+	long double center, long double tap_mult)
 {
 	int i;
-	long double tap_offset, tap_mult, fudge, total_check;
+	long double dist, fudge, total_check;
 
-	assert(taps - ltrim - rtrim > 0);
-	tap_mult = (long double)taps / 4;
+	assert(n_samples > 0);
 	fudge = 0.0;
-	for (i=0; i<taps; i++) {
-		if (i<ltrim || i>=taps-rtrim) {
-			coeffs[i] = 0;
-			continue;
-		}
-		tap_offset = 1 - offset - taps / 2 + i;
-		coeffs[i] = ref_catrom(fabsl(tap_offset) / tap_mult) / tap_mult;
+	for (i=0; i<n_samples; i++) {
+		dist = fabsl((long double)(smp_start + i) - center);
+		coeffs[i] = ref_catrom(dist / tap_mult) / tap_mult;
 		fudge += coeffs[i];
 	}
 	total_check = 0.0;
-	for (i=0; i<taps; i++) {
+	for (i=0; i<n_samples; i++) {
 		coeffs[i] /= fudge;
 		total_check += coeffs[i];
 	}
@@ -102,14 +97,12 @@ static void fill_rand8(unsigned char *buf, int len)
 	}
 }
 
-static int calc_taps_check(int dim_in, int dim_out)
+static int max_taps_check(int dim_in, int dim_out)
 {
-	int tmp_i;
-	if (dim_in < dim_out) {
+	if (dim_in <= dim_out) {
 		return 4;
 	}
-	tmp_i = dim_in * 4 / dim_out;
-	return tmp_i - (tmp_i%2);
+	return (int)ceill(4.0L * dim_in / dim_out) + 1;
 }
 
 static long double ref_map(int dim_in, int dim_out, int pos)
@@ -342,37 +335,40 @@ static void free_2d_ld(long double **ptr, int height)
 static void ref_xscale(long double *in, int in_width, long double *out,
 	int out_width, int cmp)
 {
-	int i, j, k, taps, smp_i, start, ltrim, rtrim, start_safe,
-		taps_safe, max_pos, in_pos;
-	long double *coeffs, in_val, tx;
+	int i, j, k, smp_i, smp_start, smp_end, n_samples, max_pos;
+	long double *coeffs, tx, tap_mult, center, radius;
 
-	taps = calc_taps_check(in_width, out_width);
-	coeffs = malloc(taps * sizeof(long double));
+	tap_mult = in_width <= out_width ? 1.0L : (long double)in_width / out_width;
+	radius = 2.0L * tap_mult;
+	coeffs = malloc(max_taps_check(in_width, out_width) * sizeof(long double));
 	max_pos = in_width - 1;
+
 	for (i=0; i<out_width; i++) {
 		smp_i = split_map_check(in_width, out_width, i, &tx);
-		start = smp_i - (taps/2 - 1);
+		center = smp_i + tx;
 
-		start_safe = start;
-		if (start_safe < 0) {
-			start_safe = 0;
+		smp_start = (int)ceill(center - radius);
+		smp_end = (int)floorl(center + radius);
+		if ((long double)smp_start == center - radius) {
+			smp_start++;
 		}
-		ltrim = start_safe - start;
-
-		taps_safe = taps - ltrim;
-		if (start_safe + taps_safe > max_pos) {
-			taps_safe = max_pos - start_safe + 1;
+		if ((long double)smp_end == center + radius) {
+			smp_end--;
 		}
-		rtrim = (start + taps) - (start_safe + taps_safe);
+		if (smp_start < 0) {
+			smp_start = 0;
+		}
+		if (smp_end > max_pos) {
+			smp_end = max_pos;
+		}
+		n_samples = smp_end - smp_start + 1;
 
-		ref_calc_coeffs(coeffs, tx, taps, ltrim, rtrim);
+		ref_calc_coeffs(coeffs, n_samples, smp_start, center, tap_mult);
 
 		for (j=0; j<cmp; j++) {
 			out[i * cmp + j] = 0;
-			for(k=0; k<taps_safe; k++) {
-				in_pos = start_safe + k;
-				in_val = in[in_pos * cmp + j];
-				out[i * cmp + j] += coeffs[ltrim + k] * in_val;
+			for (k=0; k<n_samples; k++) {
+				out[i * cmp + j] += coeffs[k] * in[(smp_start + k) * cmp + j];
 			}
 		}
 	}

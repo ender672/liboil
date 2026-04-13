@@ -105,20 +105,15 @@ static int split_map(int dim_in, int dim_out, int pos, float *rest)
 }
 
 /**
- * Given input and output dimension, calculate the total number of taps that
- * will be needed to calculate an output sample.
- *
- * When we reduce an image by a factor of two, we need to scale our resampling
- * function by two as well in order to avoid aliasing.
+ * Return the maximum number of input samples that can contribute to any single
+ * output sample. Used only for buffer allocation.
  */
-static int calc_taps(int dim_in, int dim_out)
+static int max_taps(int dim_in, int dim_out)
 {
-	int tmp;
-	if (dim_out > dim_in) {
+	if (dim_out >= dim_in) {
 		return TAPS;
 	}
-	tmp = TAPS * dim_in / dim_out;
-	return tmp - (tmp & 1);
+	return (int)ceil(4.0 * dim_in / dim_out) + 1;
 }
 
 /**
@@ -692,33 +687,54 @@ static void build_i2f(void)
 static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf,
 	float *tmp_coeffs)
 {
-	int smp_i, i, j, taps, offset, pos, ltrim, rtrim, smp_end, smp_start, ends[4];
-	float tx;
+	int smp_i, i, j, offset, pos, smp_end, smp_start, n_samples, ends[4];
+	float tx, fudge;
+	double tap_mult, radius, center, left_edge, right_edge, dist;
 
-	taps = calc_taps(in_dim, out_dim);
+	tap_mult = (double)in_dim / out_dim;
+	radius = 2.0 * tap_mult;
+
 	for (i=0; i<4; i++) {
 		ends[i] = -1;
 	}
 
 	for (i=0; i<out_dim; i++) {
 		smp_i = split_map(in_dim, out_dim, i, &tx);
+		center = smp_i + (double)tx;
 
-		smp_start = smp_i - (taps/2 - 1);
-		smp_end = smp_i + taps/2;
+		left_edge = center - radius;
+		right_edge = center + radius;
+		smp_start = (int)ceil(left_edge);
+		smp_end = (int)floor(right_edge);
+		if ((double)smp_start == left_edge) {
+			smp_start++;
+		}
+		if ((double)smp_end == right_edge) {
+			smp_end--;
+		}
+		if (smp_start < 0) {
+			smp_start = 0;
+		}
 		if (smp_end >= in_dim) {
 			smp_end = in_dim - 1;
 		}
+		n_samples = smp_end - smp_start + 1;
+
 		ends[i%4] = smp_end;
 		border_buf[i] = smp_end - ends[(i+3)%4];
 
-		ltrim = 0;
-		if (smp_start < 0) {
-			ltrim = -1 * smp_start;
+		fudge = 0.0f;
+		for (j=0; j<n_samples; j++) {
+			dist = fabs((double)(smp_start + j) - center);
+			tmp_coeffs[j] = catrom((float)(dist / tap_mult)) / (float)tap_mult;
+			fudge += tmp_coeffs[j];
 		}
-		rtrim = smp_start + (taps - 1) - smp_end;
-		calc_coeffs(tmp_coeffs, tx, taps, ltrim, rtrim);
+		fudge = 1.0f / fudge;
+		for (j=0; j<n_samples; j++) {
+			tmp_coeffs[j] *= fudge;
+		}
 
-		for (j=ltrim; j<taps - rtrim; j++) {
+		for (j=0; j<n_samples; j++) {
 			pos = smp_start + j;
 
 			offset = 3;
@@ -1376,8 +1392,8 @@ static int downscale_alloc_size(int in_height, int out_height, int in_width,
 {
 	int taps_x, taps_y;
 
-	taps_x = calc_taps(in_width, out_width);
-	taps_y = calc_taps(in_height, out_height);
+	taps_x = max_taps(in_width, out_width);
+	taps_y = max_taps(in_height, out_height);
 
 	return ALIGN16(calc_coeffs_len(in_width, out_width))
 		+ ALIGN16(calc_borders_len(in_width, out_width))
