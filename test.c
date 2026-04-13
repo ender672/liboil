@@ -110,18 +110,6 @@ static long double ref_map(int dim_in, int dim_out, int pos)
 	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
 }
 
-static int split_map_check(int dim_in, int dim_out, int pos,
-	long double *ty)
-{
-	long double smp;
-	int smp_i;
-
-	smp = ref_map(dim_in, dim_out, pos);
-	smp_i = floorl(smp);
-	*ty = smp - smp_i;
-	return smp_i;
-}
-
 static double worst;
 
 static void validate_scanline8(unsigned char *oil, long double *ref,
@@ -335,17 +323,18 @@ static void free_2d_ld(long double **ptr, int height)
 static void ref_xscale(long double *in, int in_width, long double *out,
 	int out_width, int cmp)
 {
-	int i, j, k, smp_i, smp_start, smp_end, n_samples, max_pos;
-	long double *coeffs, tx, tap_mult, center, radius;
+	int i, j, k, smp_start, smp_end, n_samples, max_pos;
+	long double *coeffs, tap_mult, center, radius;
 
+	/* Upscale: fixed 4-tap Catmull-Rom (tap_mult=1).
+	 * Downscale: widen kernel to cover input range, preventing aliasing. */
 	tap_mult = in_width <= out_width ? 1.0L : (long double)in_width / out_width;
 	radius = 2.0L * tap_mult;
 	coeffs = malloc(max_taps_check(in_width, out_width) * sizeof(long double));
 	max_pos = in_width - 1;
 
 	for (i=0; i<out_width; i++) {
-		smp_i = split_map_check(in_width, out_width, i, &tx);
-		center = smp_i + tx;
+		center = ref_map(in_width, out_width, i);
 
 		smp_start = (int)ceill(center - radius);
 		smp_end = (int)floorl(center + radius);
