@@ -30,6 +30,16 @@ static void oil_shift_left_f_avx2(float *f)
 	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
 }
 
+/* Shift smp left by one lane and place v into the now-empty top lane. */
+static inline __m128 oil_push_f_avx2(__m128 smp, float v)
+{
+	__m128 newval, hi;
+	smp = (__m128)_mm_srli_si128((__m128i)smp, 4);
+	newval = _mm_set_ss(v);
+	hi = _mm_shuffle_ps(smp, newval, _MM_SHUFFLE(0, 0, 3, 2));
+	return _mm_shuffle_ps(smp, hi, _MM_SHUFFLE(2, 0, 1, 0));
+}
+
 static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *out)
 {
 	int i;
@@ -249,16 +259,12 @@ static void oil_xscale_up_g_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp, newval, hi, coeffs, prod, t1, t2;
+	__m128 smp, coeffs, prod, t1, t2;
 
 	smp = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f: shift left, insert new value at position 3 */
-		smp = (__m128)_mm_srli_si128((__m128i)smp, 4);
-		newval = _mm_set_ss(i2f_map[in[i]]);
-		hi = _mm_shuffle_ps(smp, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp = _mm_shuffle_ps(smp, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp = oil_push_f_avx2(smp, i2f_map[in[i]]);
 
 		j = border_buf[i];
 
@@ -300,24 +306,15 @@ static void oil_xscale_up_ga_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_g, smp_a, newval, hi;
+	__m128 smp_g, smp_a;
 
 	smp_g = _mm_setzero_ps();
 	smp_a = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f for alpha: shift left, insert new alpha at position 3 */
 		float alpha_new = in[1] / 255.0f;
-		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
-		newval = _mm_set_ss(alpha_new);
-		hi = _mm_shuffle_ps(smp_a, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_a = _mm_shuffle_ps(smp_a, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for gray: premultiplied by new alpha */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(alpha_new * i2f_map[in[0]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_a = oil_push_f_avx2(smp_a, alpha_new);
+		smp_g = oil_push_f_avx2(smp_g, alpha_new * i2f_map[in[0]]);
 
 		j = border_buf[i];
 
@@ -639,30 +636,16 @@ static void oil_xscale_up_rgb_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, newval, hi;
+	__m128 smp_r, smp_g, smp_b;
 
 	smp_r = _mm_setzero_ps();
 	smp_g = _mm_setzero_ps();
 	smp_b = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f for R: shift left, insert new value at position 3 */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(s2l_map[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(s2l_map[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(s2l_map[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_r = oil_push_f_avx2(smp_r, s2l_map[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, s2l_map[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, s2l_map[in[2]]);
 
 		j = border_buf[i];
 
@@ -751,7 +734,7 @@ static void oil_xscale_up_rgbx_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_x, newval, hi;
+	__m128 smp_r, smp_g, smp_b, smp_x;
 
 	smp_r = _mm_setzero_ps();
 	smp_g = _mm_setzero_ps();
@@ -759,29 +742,10 @@ static void oil_xscale_up_rgbx_avx2(unsigned char *in, int width_in, float *out,
 	smp_x = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f for R */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(s2l_map[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(s2l_map[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(s2l_map[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for X (always 1.0f) */
-		smp_x = (__m128)_mm_srli_si128((__m128i)smp_x, 4);
-		newval = _mm_set_ss(1.0f);
-		hi = _mm_shuffle_ps(smp_x, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_x = _mm_shuffle_ps(smp_x, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_r = oil_push_f_avx2(smp_r, s2l_map[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, s2l_map[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, s2l_map[in[2]]);
+		smp_x = oil_push_f_avx2(smp_x, 1.0f);
 
 		j = border_buf[i];
 
@@ -1567,7 +1531,7 @@ static void oil_xscale_up_rgba_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_a, newval, hi;
+	__m128 smp_r, smp_g, smp_b, smp_a;
 	float *sl;
 
 	sl = s2l_map;
@@ -1579,29 +1543,10 @@ static void oil_xscale_up_rgba_avx2(unsigned char *in, int width_in, float *out,
 	for (i=0; i<width_in; i++) {
 		float alpha_new = i2f_map[in[3]];
 
-		/* push_f for A */
-		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
-		newval = _mm_set_ss(alpha_new);
-		hi = _mm_shuffle_ps(smp_a, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_a = _mm_shuffle_ps(smp_a, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for R: premultiplied by alpha */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G: premultiplied by alpha */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B: premultiplied by alpha */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_a = oil_push_f_avx2(smp_a, alpha_new);
+		smp_r = oil_push_f_avx2(smp_r, alpha_new * sl[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, alpha_new * sl[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, alpha_new * sl[in[2]]);
 
 		j = border_buf[i];
 
@@ -1954,7 +1899,7 @@ static void oil_xscale_up_argb_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_a, newval, hi;
+	__m128 smp_r, smp_g, smp_b, smp_a;
 	float *sl;
 
 	sl = s2l_map;
@@ -1966,29 +1911,10 @@ static void oil_xscale_up_argb_avx2(unsigned char *in, int width_in, float *out,
 	for (i=0; i<width_in; i++) {
 		float alpha_new = i2f_map[in[0]];
 
-		/* push_f for A */
-		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
-		newval = _mm_set_ss(alpha_new);
-		hi = _mm_shuffle_ps(smp_a, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_a = _mm_shuffle_ps(smp_a, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for R: premultiplied by alpha */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[1]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G: premultiplied by alpha */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[2]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B: premultiplied by alpha */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(alpha_new * sl[in[3]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_a = oil_push_f_avx2(smp_a, alpha_new);
+		smp_r = oil_push_f_avx2(smp_r, alpha_new * sl[in[1]]);
+		smp_g = oil_push_f_avx2(smp_g, alpha_new * sl[in[2]]);
+		smp_b = oil_push_f_avx2(smp_b, alpha_new * sl[in[3]]);
 
 		j = border_buf[i];
 
@@ -2548,27 +2474,16 @@ static void oil_xscale_up_rgb_nogamma_avx2(unsigned char *in, int width_in, floa
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, newval, hi;
+	__m128 smp_r, smp_g, smp_b;
 
 	smp_r = _mm_setzero_ps();
 	smp_g = _mm_setzero_ps();
 	smp_b = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(i2f_map[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(i2f_map[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(i2f_map[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_r = oil_push_f_avx2(smp_r, i2f_map[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, i2f_map[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, i2f_map[in[2]]);
 
 		j = border_buf[i];
 
@@ -3187,7 +3102,7 @@ static void oil_xscale_up_rgba_nogamma_avx2(unsigned char *in, int width_in, flo
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_a, newval, hi;
+	__m128 smp_r, smp_g, smp_b, smp_a;
 	float *lut;
 
 	lut = i2f_map;
@@ -3199,29 +3114,10 @@ static void oil_xscale_up_rgba_nogamma_avx2(unsigned char *in, int width_in, flo
 	for (i=0; i<width_in; i++) {
 		float alpha_new = lut[in[3]];
 
-		/* push_f for A */
-		smp_a = (__m128)_mm_srli_si128((__m128i)smp_a, 4);
-		newval = _mm_set_ss(alpha_new);
-		hi = _mm_shuffle_ps(smp_a, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_a = _mm_shuffle_ps(smp_a, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for R: premultiplied by alpha */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(alpha_new * lut[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G: premultiplied by alpha */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(alpha_new * lut[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B: premultiplied by alpha */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(alpha_new * lut[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_a = oil_push_f_avx2(smp_a, alpha_new);
+		smp_r = oil_push_f_avx2(smp_r, alpha_new * lut[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, alpha_new * lut[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, alpha_new * lut[in[2]]);
 
 		j = border_buf[i];
 
@@ -3550,7 +3446,7 @@ static void oil_xscale_up_rgbx_nogamma_avx2(unsigned char *in, int width_in, flo
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_x, newval, hi;
+	__m128 smp_r, smp_g, smp_b, smp_x;
 	float *lut;
 
 	lut = i2f_map;
@@ -3560,29 +3456,10 @@ static void oil_xscale_up_rgbx_nogamma_avx2(unsigned char *in, int width_in, flo
 	smp_x = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
-		/* push_f for R */
-		smp_r = (__m128)_mm_srli_si128((__m128i)smp_r, 4);
-		newval = _mm_set_ss(lut[in[0]]);
-		hi = _mm_shuffle_ps(smp_r, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_r = _mm_shuffle_ps(smp_r, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for G */
-		smp_g = (__m128)_mm_srli_si128((__m128i)smp_g, 4);
-		newval = _mm_set_ss(lut[in[1]]);
-		hi = _mm_shuffle_ps(smp_g, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_g = _mm_shuffle_ps(smp_g, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for B */
-		smp_b = (__m128)_mm_srli_si128((__m128i)smp_b, 4);
-		newval = _mm_set_ss(lut[in[2]]);
-		hi = _mm_shuffle_ps(smp_b, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_b = _mm_shuffle_ps(smp_b, hi, _MM_SHUFFLE(2, 0, 1, 0));
-
-		/* push_f for X (always 1.0f) */
-		smp_x = (__m128)_mm_srli_si128((__m128i)smp_x, 4);
-		newval = _mm_set_ss(1.0f);
-		hi = _mm_shuffle_ps(smp_x, newval, _MM_SHUFFLE(0, 0, 3, 2));
-		smp_x = _mm_shuffle_ps(smp_x, hi, _MM_SHUFFLE(2, 0, 1, 0));
+		smp_r = oil_push_f_avx2(smp_r, lut[in[0]]);
+		smp_g = oil_push_f_avx2(smp_g, lut[in[1]]);
+		smp_b = oil_push_f_avx2(smp_b, lut[in[2]]);
+		smp_x = oil_push_f_avx2(smp_x, 1.0f);
 
 		j = border_buf[i];
 
