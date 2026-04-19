@@ -651,61 +651,52 @@ void oil_xscale_up_rgb_avx2(unsigned char *in, int width_in, float *out,
 	}
 }
 
+/* The X slot emitted here is unused downstream: both y-path consumers
+ * (oil_yscale_up_rgbx_avx2 and its nogamma variant) overwrite it with 255.
+ * We pack t2_b into the X lane as a harmless finite filler and skip the
+ * smp_x push + dot product entirely.
+ */
 static inline __attribute__((always_inline))
 void oil_xscale_up_rgbx_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf, float *lut)
 {
 	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_x;
+	__m128 smp_r, smp_g, smp_b;
 
 	smp_r = _mm_setzero_ps();
 	smp_g = _mm_setzero_ps();
 	smp_b = _mm_setzero_ps();
-	smp_x = _mm_setzero_ps();
 
 	for (i=0; i<width_in; i++) {
 		smp_r = oil_push_f_avx2(smp_r, lut[in[0]]);
 		smp_g = oil_push_f_avx2(smp_g, lut[in[1]]);
 		smp_b = oil_push_f_avx2(smp_b, lut[in[2]]);
-		smp_x = oil_push_f_avx2(smp_x, 1.0f);
 
 		j = border_buf[i];
 
-		/* process pairs of outputs */
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
 			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
 			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
 			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
-			__m128 t2_x = oil_dot2_f_avx2(smp_x, c0, c1);
 
-			/* Store interleaved: [R0, G0, B0, X0, R1, G1, B1, X1] */
-			out[0] = _mm_cvtss_f32(t2_r);
-			out[1] = _mm_cvtss_f32(t2_g);
-			out[2] = _mm_cvtss_f32(t2_b);
-			out[3] = _mm_cvtss_f32(t2_x);
-			out[4] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_r, t2_r, _MM_SHUFFLE(1,1,1,1)));
-			out[5] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_g, t2_g, _MM_SHUFFLE(1,1,1,1)));
-			out[6] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_b, t2_b, _MM_SHUFFLE(1,1,1,1)));
-			out[7] = _mm_cvtss_f32(
-				_mm_shuffle_ps(t2_x, t2_x, _MM_SHUFFLE(1,1,1,1)));
+			__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
+			__m128 bx = _mm_unpacklo_ps(t2_b, t2_b);
+			_mm_storeu_ps(out, _mm_movelh_ps(rg, bx));
+			_mm_storeu_ps(out + 4, _mm_movehl_ps(bx, rg));
 
 			out += 8;
 			coeff_buf += 8;
 			j -= 2;
 		}
 
-		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
 			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
 			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
 			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
-			out[3] = oil_dot1_f_avx2(smp_x, coeffs);
+			out[3] = 1.0f;
 			out += 4;
 			coeff_buf += 4;
 		}
