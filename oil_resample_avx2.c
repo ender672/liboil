@@ -106,6 +106,46 @@ static inline __m128i oil_unpremul_ga_pair_idx_avx2(__m128 sum,
 	return _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
 }
 
+/* Build the 256-bit y-coefficient vectors used by oil_yacc_fma4_avx2. The
+ * y-coefficients are permuted so each physical ring-buffer slot (0..3) receives
+ * the matching coefficient for the current tap phase. Returns two __m256s:
+ * cy_lo broadcasts coeffs for slots 0,1; cy_hi broadcasts for slots 2,3.
+ */
+static inline void oil_yacc_build_coeffs_avx2(float *coeffs_y_f, int tap,
+	__m256 *cy_lo, __m256 *cy_hi)
+{
+	float cy[4];
+	cy[tap & 3] = coeffs_y_f[0];
+	cy[(tap + 1) & 3] = coeffs_y_f[1];
+	cy[(tap + 2) & 3] = coeffs_y_f[2];
+	cy[(tap + 3) & 3] = coeffs_y_f[3];
+	*cy_lo = _mm256_set_m128(_mm_set1_ps(cy[1]), _mm_set1_ps(cy[0]));
+	*cy_hi = _mm256_set_m128(_mm_set1_ps(cy[3]), _mm_set1_ps(cy[2]));
+}
+
+/* Vertical FMA accumulate for a 4-channel output pixel. s0..s3 each hold the
+ * horizontal sum for one channel in lane 0; the four lane-0 values are packed
+ * into a single 4-float channel vector and FMA'd into the 16-float ring-buffer
+ * slice at sums_y_out, using the precomputed per-slot y-coefficients.
+ */
+static inline __attribute__((always_inline))
+void oil_yacc_fma4_avx2(float *sums_y_out, __m128 s0, __m128 s1, __m128 s2,
+	__m128 s3, __m256 cy_lo, __m256 cy_hi)
+{
+	__m128 ab, cd, pix;
+	__m256 pix256, sy_lo, sy_hi;
+	ab = _mm_unpacklo_ps(s0, s1);
+	cd = _mm_unpacklo_ps(s2, s3);
+	pix = _mm_movelh_ps(ab, cd);
+	pix256 = _mm256_set_m128(pix, pix);
+	sy_lo = _mm256_loadu_ps(sums_y_out);
+	sy_hi = _mm256_loadu_ps(sums_y_out + 8);
+	sy_lo = _mm256_fmadd_ps(cy_lo, pix256, sy_lo);
+	sy_hi = _mm256_fmadd_ps(cy_hi, pix256, sy_hi);
+	_mm256_storeu_ps(sums_y_out, sy_lo);
+	_mm256_storeu_ps(sums_y_out + 8, sy_hi);
+}
+
 /* Unpremultiply a premultiplied RGBA sum (alpha in lane 3), clamp RGB and
  * alpha to [0,1], then scale to 0..255 (with rounding) for byte packing.
  * Lane 3 of the result contains the clamped alpha byte, not the reciprocal.
@@ -1362,26 +1402,14 @@ void oil_scale_down_rgba_avx2(unsigned char *in, float *sums_y_out,
 	__m128 coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
 	__m128 sum_r, sum_g, sum_b, sum_a;
 	__m128 sum_r2, sum_g2, sum_b2, sum_a2;
-	__m256 cy256_lo, cy256_hi;
+	__m256 cy_lo, cy_hi;
 
 	a_sh = a_off * 8;
 	r_sh = rgb_off * 8;
 	g_sh = r_sh + 8;
 	b_sh = r_sh + 16;
 
-	{
-		float cy_phys[4];
-		cy_phys[tap & 3] = coeffs_y_f[0];
-		cy_phys[(tap + 1) & 3] = coeffs_y_f[1];
-		cy_phys[(tap + 2) & 3] = coeffs_y_f[2];
-		cy_phys[(tap + 3) & 3] = coeffs_y_f[3];
-		cy256_lo = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[1]),
-			_mm_set1_ps(cy_phys[0]));
-		cy256_hi = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[3]),
-			_mm_set1_ps(cy_phys[2]));
-	}
+	oil_yacc_build_coeffs_avx2(coeffs_y_f, tap, &cy_lo, &cy_hi);
 
 	sum_r = _mm_setzero_ps();
 	sum_g = _mm_setzero_ps();
@@ -1479,24 +1507,9 @@ void oil_scale_down_rgba_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using 256-bit AVX2 */
-		{
-			__m128 rg, ba, rgba;
-			__m256 rgba256, sy_lo, sy_hi;
-
-			rg = _mm_unpacklo_ps(sum_r, sum_g);
-			ba = _mm_unpacklo_ps(sum_b, sum_a);
-			rgba = _mm_movelh_ps(rg, ba);
-
-			rgba256 = _mm256_set_m128(rgba, rgba);
-			sy_lo = _mm256_loadu_ps(sums_y_out);
-			sy_hi = _mm256_loadu_ps(sums_y_out + 8);
-			sy_lo = _mm256_fmadd_ps(cy256_lo, rgba256, sy_lo);
-			sy_hi = _mm256_fmadd_ps(cy256_hi, rgba256, sy_hi);
-			_mm256_storeu_ps(sums_y_out, sy_lo);
-			_mm256_storeu_ps(sums_y_out + 8, sy_hi);
-			sums_y_out += 16;
-		}
+		oil_yacc_fma4_avx2(sums_y_out, sum_r, sum_g, sum_b, sum_a,
+			cy_lo, cy_hi);
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_avx2(sum_r);
 		sum_g = oil_shift_f_left_avx2(sum_g);
@@ -1543,21 +1556,9 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 	int i, j;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_c, sum_m, sum_y, sum_k;
 	__m128 sum_c2, sum_m2, sum_y2, sum_k2;
-	__m256 cy256_lo, cy256_hi;
+	__m256 cy_lo, cy_hi;
 
-	{
-		float cy_phys[4];
-		cy_phys[tap & 3] = coeffs_y_f[0];
-		cy_phys[(tap + 1) & 3] = coeffs_y_f[1];
-		cy_phys[(tap + 2) & 3] = coeffs_y_f[2];
-		cy_phys[(tap + 3) & 3] = coeffs_y_f[3];
-		cy256_lo = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[1]),
-			_mm_set1_ps(cy_phys[0]));
-		cy256_hi = _mm256_set_m128(
-			_mm_set1_ps(cy_phys[3]),
-			_mm_set1_ps(cy_phys[2]));
-	}
+	oil_yacc_build_coeffs_avx2(coeffs_y_f, tap, &cy_lo, &cy_hi);
 
 	sum_c = _mm_setzero_ps();
 	sum_m = _mm_setzero_ps();
@@ -1647,23 +1648,9 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		{
-			__m128 cm, yk, cmyk;
-			__m256 cmyk256, sy_lo, sy_hi;
-
-			cm = _mm_unpacklo_ps(sum_c, sum_m);
-			yk = _mm_unpacklo_ps(sum_y, sum_k);
-			cmyk = _mm_movelh_ps(cm, yk);
-
-			cmyk256 = _mm256_set_m128(cmyk, cmyk);
-			sy_lo = _mm256_loadu_ps(sums_y_out);
-			sy_hi = _mm256_loadu_ps(sums_y_out + 8);
-			sy_lo = _mm256_fmadd_ps(cy256_lo, cmyk256, sy_lo);
-			sy_hi = _mm256_fmadd_ps(cy256_hi, cmyk256, sy_hi);
-			_mm256_storeu_ps(sums_y_out, sy_lo);
-			_mm256_storeu_ps(sums_y_out + 8, sy_hi);
-			sums_y_out += 16;
-		}
+		oil_yacc_fma4_avx2(sums_y_out, sum_c, sum_m, sum_y, sum_k,
+			cy_lo, cy_hi);
+		sums_y_out += 16;
 
 		sum_c = oil_shift_f_left_avx2(sum_c);
 		sum_m = oil_shift_f_left_avx2(sum_m);
@@ -1681,19 +1668,7 @@ static void oil_scale_down_rgbx_avx2(unsigned char *in, float *sums_y_out,
 	__m128 sum_r2, sum_g2, sum_b2;
 	__m256 cy_lo, cy_hi;
 
-	/* Precompute 256-bit coefficient vectors ordered by physical slot */
-	{
-		float cy_slot[4];
-		int k;
-		for (k = 0; k < 4; k++)
-			cy_slot[k] = coeffs_y_f[(k - tap + 4) & 3];
-		cy_lo = _mm256_set_m128(
-			_mm_set1_ps(cy_slot[1]),
-			_mm_set1_ps(cy_slot[0]));
-		cy_hi = _mm256_set_m128(
-			_mm_set1_ps(cy_slot[3]),
-			_mm_set1_ps(cy_slot[2]));
-	}
+	oil_yacc_build_coeffs_avx2(coeffs_y_f, tap, &cy_lo, &cy_hi);
 
 	sum_r = _mm_setzero_ps();
 	sum_g = _mm_setzero_ps();
@@ -1775,29 +1750,12 @@ static void oil_scale_down_rgbx_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using 256-bit AVX2 */
-		{
-			__m128 rg, bx, rgbx;
-			__m256 rgbx256, sy;
-
-			_mm_prefetch((const char *)(sums_y_out + 16), _MM_HINT_T0);
-
-			rg = _mm_unpacklo_ps(sum_r, sum_g);
-			bx = _mm_unpacklo_ps(sum_b, sum_b);
-			rgbx = _mm_movelh_ps(rg, bx);
-
-			rgbx256 = _mm256_set_m128(rgbx, rgbx);
-
-			sy = _mm256_loadu_ps(sums_y_out);
-			sy = _mm256_fmadd_ps(cy_lo, rgbx256, sy);
-			_mm256_storeu_ps(sums_y_out, sy);
-
-			sy = _mm256_loadu_ps(sums_y_out + 8);
-			sy = _mm256_fmadd_ps(cy_hi, rgbx256, sy);
-			_mm256_storeu_ps(sums_y_out + 8, sy);
-
-			sums_y_out += 16;
-		}
+		/* X slot is unused downstream (overwritten to 255), so feed
+		 * sum_b again rather than computing a distinct sum_x.
+		 */
+		oil_yacc_fma4_avx2(sums_y_out, sum_r, sum_g, sum_b, sum_b,
+			cy_lo, cy_hi);
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_avx2(sum_r);
 		sum_g = oil_shift_f_left_avx2(sum_g);
