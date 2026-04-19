@@ -40,6 +40,26 @@ static inline __m128 oil_push_f_avx2(__m128 smp, float v)
 	return _mm_shuffle_ps(smp, hi, _MM_SHUFFLE(2, 0, 1, 0));
 }
 
+/* Horizontal dot products dot(smp, c0) and dot(smp, c1) into lanes [0, 1]. */
+static inline __m128 oil_dot2_f_avx2(__m128 smp, __m128 c0, __m128 c1)
+{
+	__m128 p0 = _mm_mul_ps(smp, c0);
+	__m128 p1 = _mm_mul_ps(smp, c1);
+	__m128 lo = _mm_unpacklo_ps(p0, p1);
+	__m128 hh = _mm_unpackhi_ps(p0, p1);
+	__m128 sum = _mm_add_ps(lo, hh);
+	return _mm_add_ps(sum, _mm_movehl_ps(sum, sum));
+}
+
+/* Horizontal dot product dot(smp, coeffs) as a scalar float. */
+static inline float oil_dot1_f_avx2(__m128 smp, __m128 coeffs)
+{
+	__m128 prod = _mm_mul_ps(smp, coeffs);
+	__m128 t2 = _mm_add_ps(prod, _mm_movehl_ps(prod, prod));
+	t2 = _mm_add_ss(t2, _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1)));
+	return _mm_cvtss_f32(t2);
+}
+
 static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *out)
 {
 	int i;
@@ -259,7 +279,7 @@ static void oil_xscale_up_g_avx2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	int i, j;
-	__m128 smp, coeffs, prod, t1, t2;
+	__m128 smp;
 
 	smp = _mm_setzero_ps();
 
@@ -270,15 +290,9 @@ static void oil_xscale_up_g_avx2(unsigned char *in, int width_in, float *out,
 
 		/* process pairs of outputs */
 		while (j >= 2) {
-			__m128 c0 = _mm_load_ps(coeff_buf);
-			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-			__m128 p0 = _mm_mul_ps(smp, c0);
-			__m128 p1 = _mm_mul_ps(smp, c1);
-			__m128 lo = _mm_unpacklo_ps(p0, p1);
-			__m128 hh = _mm_unpackhi_ps(p0, p1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			t2 = _mm_add_ps(sum, t1);
+			__m128 t2 = oil_dot2_f_avx2(smp,
+				_mm_load_ps(coeff_buf),
+				_mm_load_ps(coeff_buf + 4));
 			out[0] = _mm_cvtss_f32(t2);
 			out[1] = _mm_cvtss_f32(
 				_mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1)));
@@ -289,13 +303,7 @@ static void oil_xscale_up_g_avx2(unsigned char *in, int width_in, float *out,
 
 		/* process remaining single output */
 		if (j) {
-			coeffs = _mm_load_ps(coeff_buf);
-			prod = _mm_mul_ps(smp, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
+			out[0] = oil_dot1_f_avx2(smp, _mm_load_ps(coeff_buf));
 			out += 1;
 			coeff_buf += 4;
 		}
@@ -322,24 +330,8 @@ static void oil_xscale_up_ga_avx2(unsigned char *in, int width_in, float *out,
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* gray dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			__m128 lo = _mm_unpacklo_ps(pg0, pg1);
-			__m128 hh = _mm_unpackhi_ps(pg0, pg1);
-			__m128 sum_g = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum_g, sum_g);
-			__m128 t2_g = _mm_add_ps(sum_g, t1);
-
-			/* alpha dot products for 2 outputs */
-			__m128 pa0 = _mm_mul_ps(smp_a, c0);
-			__m128 pa1 = _mm_mul_ps(smp_a, c1);
-			lo = _mm_unpacklo_ps(pa0, pa1);
-			hh = _mm_unpackhi_ps(pa0, pa1);
-			__m128 sum_a = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum_a, sum_a);
-			__m128 t2_a = _mm_add_ps(sum_a, t1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_a = oil_dot2_f_avx2(smp_a, c0, c1);
 
 			/* interleave: [gray0, alpha0, gray1, alpha1] */
 			_mm_storeu_ps(out, _mm_unpacklo_ps(t2_g, t2_a));
@@ -351,21 +343,8 @@ static void oil_xscale_up_ga_avx2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod_g = _mm_mul_ps(smp_g, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod_g, prod_g);
-			__m128 t2 = _mm_add_ps(prod_g, t1);
-			prod_g = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod_g);
-			out[0] = _mm_cvtss_f32(t2);
-
-			__m128 prod_a = _mm_mul_ps(smp_a, coeffs);
-			t1 = _mm_movehl_ps(prod_a, prod_a);
-			t2 = _mm_add_ps(prod_a, t1);
-			prod_a = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod_a);
-			out[1] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_a, coeffs);
 			out += 2;
 			coeff_buf += 4;
 		}
@@ -653,33 +632,9 @@ static void oil_xscale_up_rgb_avx2(unsigned char *in, int width_in, float *out,
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, R1, G1, B1] */
 			out[0] = _mm_cvtss_f32(t2_r);
@@ -700,28 +655,9 @@ static void oil_xscale_up_rgb_avx2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
 			out += 3;
 			coeff_buf += 4;
 		}
@@ -753,42 +689,10 @@ static void oil_xscale_up_rgbx_avx2(unsigned char *in, int width_in, float *out,
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
-
-			/* X dot products for 2 outputs */
-			__m128 px0 = _mm_mul_ps(smp_x, c0);
-			__m128 px1 = _mm_mul_ps(smp_x, c1);
-			lo = _mm_unpacklo_ps(px0, px1);
-			hh = _mm_unpackhi_ps(px0, px1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_x = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
+			__m128 t2_x = oil_dot2_f_avx2(smp_x, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, X0, R1, G1, B1, X1] */
 			out[0] = _mm_cvtss_f32(t2_r);
@@ -812,35 +716,10 @@ static void oil_xscale_up_rgbx_avx2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_x, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
+			out[3] = oil_dot1_f_avx2(smp_x, coeffs);
 			out += 4;
 			coeff_buf += 4;
 		}
@@ -1554,42 +1433,10 @@ static void oil_xscale_up_rgba_avx2(unsigned char *in, int width_in, float *out,
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
-
-			/* A dot products for 2 outputs */
-			__m128 pa0 = _mm_mul_ps(smp_a, c0);
-			__m128 pa1 = _mm_mul_ps(smp_a, c1);
-			lo = _mm_unpacklo_ps(pa0, pa1);
-			hh = _mm_unpackhi_ps(pa0, pa1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_a = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
+			__m128 t2_a = oil_dot2_f_avx2(smp_a, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
 			{
@@ -1607,35 +1454,10 @@ static void oil_xscale_up_rgba_avx2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_a, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
+			out[3] = oil_dot1_f_avx2(smp_a, coeffs);
 			out += 4;
 			coeff_buf += 4;
 		}
@@ -1922,42 +1744,10 @@ static void oil_xscale_up_argb_avx2(unsigned char *in, int width_in, float *out,
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
-
-			/* A dot products for 2 outputs */
-			__m128 pa0 = _mm_mul_ps(smp_a, c0);
-			__m128 pa1 = _mm_mul_ps(smp_a, c1);
-			lo = _mm_unpacklo_ps(pa0, pa1);
-			hh = _mm_unpackhi_ps(pa0, pa1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_a = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
+			__m128 t2_a = oil_dot2_f_avx2(smp_a, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
 			{
@@ -1975,35 +1765,10 @@ static void oil_xscale_up_argb_avx2(unsigned char *in, int width_in, float *out,
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_a, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
+			out[3] = oil_dot1_f_avx2(smp_a, coeffs);
 			out += 4;
 			coeff_buf += 4;
 		}
@@ -2490,30 +2255,9 @@ static void oil_xscale_up_rgb_nogamma_avx2(unsigned char *in, int width_in, floa
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
 
 			__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
 			_mm_storel_pi((__m64 *)out, rg);
@@ -2529,28 +2273,9 @@ static void oil_xscale_up_rgb_nogamma_avx2(unsigned char *in, int width_in, floa
 
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
 			out += 3;
 			coeff_buf += 4;
 		}
@@ -3125,42 +2850,10 @@ static void oil_xscale_up_rgba_nogamma_avx2(unsigned char *in, int width_in, flo
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
-
-			/* A dot products for 2 outputs */
-			__m128 pa0 = _mm_mul_ps(smp_a, c0);
-			__m128 pa1 = _mm_mul_ps(smp_a, c1);
-			lo = _mm_unpacklo_ps(pa0, pa1);
-			hh = _mm_unpackhi_ps(pa0, pa1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_a = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
+			__m128 t2_a = oil_dot2_f_avx2(smp_a, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
 			{
@@ -3178,35 +2871,10 @@ static void oil_xscale_up_rgba_nogamma_avx2(unsigned char *in, int width_in, flo
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_a, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
+			out[3] = oil_dot1_f_avx2(smp_a, coeffs);
 			out += 4;
 			coeff_buf += 4;
 		}
@@ -3467,42 +3135,10 @@ static void oil_xscale_up_rgbx_nogamma_avx2(unsigned char *in, int width_in, flo
 		while (j >= 2) {
 			__m128 c0 = _mm_load_ps(coeff_buf);
 			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-
-			/* R dot products for 2 outputs */
-			__m128 pr0 = _mm_mul_ps(smp_r, c0);
-			__m128 pr1 = _mm_mul_ps(smp_r, c1);
-			__m128 lo = _mm_unpacklo_ps(pr0, pr1);
-			__m128 hh = _mm_unpackhi_ps(pr0, pr1);
-			__m128 sum = _mm_add_ps(lo, hh);
-			__m128 t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_r = _mm_add_ps(sum, t1);
-
-			/* G dot products for 2 outputs */
-			__m128 pg0 = _mm_mul_ps(smp_g, c0);
-			__m128 pg1 = _mm_mul_ps(smp_g, c1);
-			lo = _mm_unpacklo_ps(pg0, pg1);
-			hh = _mm_unpackhi_ps(pg0, pg1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_g = _mm_add_ps(sum, t1);
-
-			/* B dot products for 2 outputs */
-			__m128 pb0 = _mm_mul_ps(smp_b, c0);
-			__m128 pb1 = _mm_mul_ps(smp_b, c1);
-			lo = _mm_unpacklo_ps(pb0, pb1);
-			hh = _mm_unpackhi_ps(pb0, pb1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_b = _mm_add_ps(sum, t1);
-
-			/* X dot products for 2 outputs */
-			__m128 px0 = _mm_mul_ps(smp_x, c0);
-			__m128 px1 = _mm_mul_ps(smp_x, c1);
-			lo = _mm_unpacklo_ps(px0, px1);
-			hh = _mm_unpackhi_ps(px0, px1);
-			sum = _mm_add_ps(lo, hh);
-			t1 = _mm_movehl_ps(sum, sum);
-			__m128 t2_x = _mm_add_ps(sum, t1);
+			__m128 t2_r = oil_dot2_f_avx2(smp_r, c0, c1);
+			__m128 t2_g = oil_dot2_f_avx2(smp_g, c0, c1);
+			__m128 t2_b = oil_dot2_f_avx2(smp_b, c0, c1);
+			__m128 t2_x = oil_dot2_f_avx2(smp_x, c0, c1);
 
 			/* Store interleaved: [R0, G0, B0, X0, R1, G1, B1, X1] */
 			out[0] = _mm_cvtss_f32(t2_r);
@@ -3526,35 +3162,10 @@ static void oil_xscale_up_rgbx_nogamma_avx2(unsigned char *in, int width_in, flo
 		/* process remaining single output */
 		if (j) {
 			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 prod = _mm_mul_ps(smp_r, coeffs);
-			__m128 t1 = _mm_movehl_ps(prod, prod);
-			__m128 t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[0] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_g, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[1] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_b, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[2] = _mm_cvtss_f32(t2);
-
-			prod = _mm_mul_ps(smp_x, coeffs);
-			t1 = _mm_movehl_ps(prod, prod);
-			t2 = _mm_add_ps(prod, t1);
-			prod = _mm_shuffle_ps(t2, t2, _MM_SHUFFLE(1,1,1,1));
-			t2 = _mm_add_ss(t2, prod);
-			out[3] = _mm_cvtss_f32(t2);
-
+			out[0] = oil_dot1_f_avx2(smp_r, coeffs);
+			out[1] = oil_dot1_f_avx2(smp_g, coeffs);
+			out[2] = oil_dot1_f_avx2(smp_b, coeffs);
+			out[3] = oil_dot1_f_avx2(smp_x, coeffs);
 			out += 4;
 			coeff_buf += 4;
 		}
