@@ -258,6 +258,29 @@ void run_bench(char *path, char *cs_arg, int iterations, int filter,
 	}
 }
 
+static void print_help(char *prog)
+{
+	printf("Usage: %s [options] <path> [colorspace]\n", prog);
+	printf("\n");
+	printf("Benchmark oil_resample on an RGBA PNG image.\n");
+	printf("\n");
+	printf("Options:\n");
+	printf("  --down            Benchmark downscale ratios only\n");
+	printf("  --up              Benchmark upscale ratios only\n");
+	printf("  --scalar          Run scalar implementation only\n");
+	printf("  --sse2            Run SSE2 implementation only (x86_64)\n");
+	printf("  --avx2            Run AVX2 implementation only (x86_64)\n");
+	printf("  --neon            Run NEON implementation only (AArch64)\n");
+	printf("  -h, --help        Show this help message and exit\n");
+	printf("\n");
+	printf("Colorspaces: G, GA, RGB, RGBX, RGBA, ARGB, CMYK,\n");
+	printf("             RGB_NOGAMMA, RGBA_NOGAMMA, RGBX_NOGAMMA\n");
+	printf("If omitted, all colorspaces are benchmarked.\n");
+	printf("\n");
+	printf("Environment:\n");
+	printf("  OILITERATIONS    Number of iterations per benchmark (default 100)\n");
+}
+
 int main(int argc, char *argv[])
 {
 	int iterations, filter, arg_pos, impl_mode; /* 0=all,1=scalar,3=sse2,4=avx2,5=neon */
@@ -283,6 +306,10 @@ int main(int argc, char *argv[])
 			impl_mode = 4;
 		} else if (strcmp(argv[arg_pos], "--neon") == 0) {
 			impl_mode = 5;
+		} else if (strcmp(argv[arg_pos], "--help") == 0 ||
+			strcmp(argv[arg_pos], "-h") == 0) {
+			print_help(argv[0]);
+			return 0;
 		} else {
 			fprintf(stderr, "Unknown option: %s\n", argv[arg_pos]);
 			return 1;
@@ -293,6 +320,7 @@ int main(int argc, char *argv[])
 	if (argc - arg_pos < 1 || argc - arg_pos > 2) {
 		fprintf(stderr, "Usage: %s [--up|--down] [--scalar|--sse2|--avx2|--neon] <path> [colorspace]\n",
 			argv[0]);
+		fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
 		return 1;
 	}
 
