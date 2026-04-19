@@ -24,10 +24,15 @@
 #include <immintrin.h>
 #include <string.h>
 
+/* Shift smp left by one float lane, zero-filling the top lane. */
+static inline __m128 oil_shift_f_left_avx2(__m128 v)
+{
+	return (__m128)_mm_srli_si128(_mm_castps_si128(v), 4);
+}
+
 static void oil_shift_left_f_avx2(float *f)
 {
-	__m128i v = _mm_load_si128((__m128i *)f);
-	_mm_store_si128((__m128i *)f, _mm_srli_si128(v, 4));
+	_mm_store_ps(f, oil_shift_f_left_avx2(_mm_load_ps(f)));
 }
 
 /* Shift smp left by one lane and place v into the now-empty top lane. */
@@ -104,22 +109,14 @@ static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *o
 		idx = _mm_packus_epi16(idx, idx);
 		_mm_storel_epi64((__m128i *)(out + i), idx);
 
-		_mm_store_si128((__m128i *)sums,
-			_mm_srli_si128(_mm_castps_si128(f0), 4));
-		_mm_store_si128((__m128i *)(sums + 4),
-			_mm_srli_si128(_mm_castps_si128(f1), 4));
-		_mm_store_si128((__m128i *)(sums + 8),
-			_mm_srli_si128(_mm_castps_si128(f2), 4));
-		_mm_store_si128((__m128i *)(sums + 12),
-			_mm_srli_si128(_mm_castps_si128(f3), 4));
-		_mm_store_si128((__m128i *)(sums + 16),
-			_mm_srli_si128(_mm_castps_si128(g0), 4));
-		_mm_store_si128((__m128i *)(sums + 20),
-			_mm_srli_si128(_mm_castps_si128(g1), 4));
-		_mm_store_si128((__m128i *)(sums + 24),
-			_mm_srli_si128(_mm_castps_si128(g2), 4));
-		_mm_store_si128((__m128i *)(sums + 28),
-			_mm_srli_si128(_mm_castps_si128(g3), 4));
+		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
+		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
+		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
+		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
+		_mm_store_ps(sums + 16, oil_shift_f_left_avx2(g0));
+		_mm_store_ps(sums + 20, oil_shift_f_left_avx2(g1));
+		_mm_store_ps(sums + 24, oil_shift_f_left_avx2(g2));
+		_mm_store_ps(sums + 28, oil_shift_f_left_avx2(g3));
 
 		sums += 32;
 	}
@@ -141,14 +138,10 @@ static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *o
 		idx = _mm_packus_epi16(idx, idx);
 		*(int *)(out + i) = _mm_cvtsi128_si32(idx);
 
-		_mm_store_si128((__m128i *)sums,
-			_mm_srli_si128(_mm_castps_si128(f0), 4));
-		_mm_store_si128((__m128i *)(sums + 4),
-			_mm_srli_si128(_mm_castps_si128(f1), 4));
-		_mm_store_si128((__m128i *)(sums + 8),
-			_mm_srli_si128(_mm_castps_si128(f2), 4));
-		_mm_store_si128((__m128i *)(sums + 12),
-			_mm_srli_si128(_mm_castps_si128(f3), 4));
+		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
+		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
+		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
+		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
 
 		sums += 16;
 	}
@@ -190,14 +183,10 @@ static void oil_yscale_out_linear_avx2(float *sums, int len, unsigned char *out)
 		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
 		out[i+3] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
 
-		_mm_store_si128((__m128i *)sums,
-			_mm_srli_si128(_mm_castps_si128(f0), 4));
-		_mm_store_si128((__m128i *)(sums + 4),
-			_mm_srli_si128(_mm_castps_si128(f1), 4));
-		_mm_store_si128((__m128i *)(sums + 8),
-			_mm_srli_si128(_mm_castps_si128(f2), 4));
-		_mm_store_si128((__m128i *)(sums + 12),
-			_mm_srli_si128(_mm_castps_si128(f3), 4));
+		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
+		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
+		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
+		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
 
 		sums += 16;
 	}
@@ -233,10 +222,8 @@ static void oil_yscale_out_ga_avx2(float *sums, int width, unsigned char *out)
 		out[0] = (int)(gray * 255.0f + 0.5f);
 		out[1] = (int)(alpha * 255.0f + 0.5f);
 
-		_mm_store_si128((__m128i *)sums,
-			_mm_srli_si128(_mm_castps_si128(v0), 4));
-		_mm_store_si128((__m128i *)(sums + 4),
-			_mm_srli_si128(_mm_castps_si128(v1), 4));
+		_mm_store_ps(sums,     oil_shift_f_left_avx2(v0));
+		_mm_store_ps(sums + 4, oil_shift_f_left_avx2(v1));
 
 		sums += 8;
 		out += 2;
@@ -974,7 +961,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 		}
 		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
 		result_lo = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 
 		sum2 = _mm_setzero_ps();
 		sum3 = _mm_setzero_ps();
@@ -1008,7 +995,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 		}
 		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
 		result_hi = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 
 		sums_y256 = _mm256_loadu_ps(sums_y_out);
 		sample_y256 = _mm256_set_m128(result_hi, result_lo);
@@ -1056,7 +1043,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 	}
 }
 
@@ -1080,7 +1067,7 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 			coeffs_x_f += 4;
 		}
 		result_lo = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 
 		for (j=0; j<border_buf[i+1]; j++) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
@@ -1090,7 +1077,7 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 			coeffs_x_f += 4;
 		}
 		result_hi = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 
 		sums_y256 = _mm256_loadu_ps(sums_y_out);
 		sample_y256 = _mm256_set_m128(result_hi, result_lo);
@@ -1114,7 +1101,7 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
-		sum = (__m128)_mm_srli_si128(_mm_castps_si128(sum), 4);
+		sum = oil_shift_f_left_avx2(sum);
 	}
 }
 
@@ -1195,8 +1182,8 @@ static void oil_scale_down_ga_avx2(unsigned char *in, float *sums_y_out,
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_a = (__m128)_mm_srli_si128(_mm_castps_si128(sum_a), 4);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_a = oil_shift_f_left_avx2(sum_a);
 	}
 }
 
@@ -1301,9 +1288,9 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
 	}
 }
 
@@ -1611,10 +1598,10 @@ static void oil_scale_down_rgba_avx2(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
-		sum_a = (__m128)_mm_srli_si128(_mm_castps_si128(sum_a), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
+		sum_a = oil_shift_f_left_avx2(sum_a);
 	}
 }
 
@@ -1923,10 +1910,10 @@ static void oil_scale_down_argb_avx2(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
-		sum_a = (__m128)_mm_srli_si128(_mm_castps_si128(sum_a), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
+		sum_a = oil_shift_f_left_avx2(sum_a);
 	}
 }
 
@@ -2094,10 +2081,10 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_c = (__m128)_mm_srli_si128(_mm_castps_si128(sum_c), 4);
-		sum_m = (__m128)_mm_srli_si128(_mm_castps_si128(sum_m), 4);
-		sum_y = (__m128)_mm_srli_si128(_mm_castps_si128(sum_y), 4);
-		sum_k = (__m128)_mm_srli_si128(_mm_castps_si128(sum_k), 4);
+		sum_c = oil_shift_f_left_avx2(sum_c);
+		sum_m = oil_shift_f_left_avx2(sum_m);
+		sum_y = oil_shift_f_left_avx2(sum_y);
+		sum_k = oil_shift_f_left_avx2(sum_k);
 	}
 }
 
@@ -2229,9 +2216,9 @@ static void oil_scale_down_rgbx_avx2(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
 	}
 }
 
@@ -2488,9 +2475,9 @@ static void oil_scale_down_rgbx_nogamma_avx2(unsigned char *in, float *sums_y_ou
 			sums_y_out += 16;
 		}
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
 	}
 }
 
@@ -2595,9 +2582,9 @@ static void oil_scale_down_rgb_nogamma_avx2(unsigned char *in, float *sums_y_out
 		_mm_store_ps(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
 	}
 }
 
@@ -3029,10 +3016,10 @@ static void oil_scale_down_rgba_nogamma_avx2(unsigned char *in, float *sums_y_ou
 			sums_y_out += 16;
 		}
 
-		sum_r = (__m128)_mm_srli_si128(_mm_castps_si128(sum_r), 4);
-		sum_g = (__m128)_mm_srli_si128(_mm_castps_si128(sum_g), 4);
-		sum_b = (__m128)_mm_srli_si128(_mm_castps_si128(sum_b), 4);
-		sum_a = (__m128)_mm_srli_si128(_mm_castps_si128(sum_a), 4);
+		sum_r = oil_shift_f_left_avx2(sum_r);
+		sum_g = oil_shift_f_left_avx2(sum_g);
+		sum_b = oil_shift_f_left_avx2(sum_b);
+		sum_a = oil_shift_f_left_avx2(sum_a);
 	}
 }
 
