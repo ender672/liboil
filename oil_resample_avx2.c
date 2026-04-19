@@ -2242,11 +2242,12 @@ static void oil_yscale_out_cmyk_avx2(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
-	__m128 scale, vals, one, zero;
+	__m128 scale, half, vals, one, zero;
 	__m128i idx, clamped, z;
 
 	tap_off = tap * 4;
 	scale = _mm_set1_ps(255.0f);
+	half = _mm_set1_ps(0.5f);
 	one = _mm_set1_ps(1.0f);
 	zero = _mm_setzero_ps();
 	z = _mm_setzero_si128();
@@ -2254,7 +2255,7 @@ static void oil_yscale_out_cmyk_avx2(float *sums, int width, unsigned char *out,
 	for (i=0; i<width; i++) {
 		vals = _mm_load_ps(sums + tap_off);
 		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), _mm_set1_ps(0.5f)));
+		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
 
 		clamped = _mm_packs_epi32(idx, idx);
 		clamped = _mm_packus_epi16(clamped, clamped);
