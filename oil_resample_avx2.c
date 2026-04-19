@@ -65,6 +65,32 @@ static inline float oil_dot1_f_avx2(__m128 smp, __m128 coeffs)
 	return _mm_cvtss_f32(t2);
 }
 
+/* Unpremultiply a pair of packed GA samples [g0, a0, g1, a1], clamping alpha
+ * to [0,1] and handling alpha==0 as passthrough-with-zero-gray. Returns the
+ * four components scaled to byte-rounded int32 lanes.
+ */
+static inline __m128i oil_unpremul_ga_pair_idx_avx2(__m128 sum,
+	__m128 zero, __m128 one, __m128 scale, __m128 half)
+{
+	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped, result;
+	__m128 blend_mask;
+
+	/* mask: 0 for gray lanes (0,2), all-ones for alpha lanes (1,3) */
+	blend_mask = _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, 0));
+	alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
+	alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
+	nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
+	safe_alpha = _mm_or_ps(
+		_mm_and_ps(nz_mask, alpha_spread),
+		_mm_andnot_ps(nz_mask, one));
+	divided = _mm_div_ps(sum, safe_alpha);
+	gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+	result = _mm_or_ps(
+		_mm_andnot_ps(blend_mask, gray_clamped),
+		_mm_and_ps(blend_mask, alpha_spread));
+	return _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
+}
+
 /* Unpremultiply a premultiplied RGBA sum (alpha in lane 3), clamp RGB and
  * alpha to [0,1], then scale to 0..255 (with rounding) for byte packing.
  * Lane 3 of the result contains the clamped alpha byte, not the reciprocal.
@@ -365,9 +391,7 @@ static void oil_yscale_up_ga_avx2(float **in, int len, float *coeffs,
 	__m128 c0, c1, c2, c3;
 	__m128 v0, v1, v2, v3, sum, sum2;
 	__m128 scale, half, zero, one;
-	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped, result;
-	__m128 blend_mask;
-	__m128i idx;
+	__m128i idx, idx2;
 
 	c0 = _mm_set1_ps(coeffs[0]);
 	c1 = _mm_set1_ps(coeffs[1]);
@@ -377,8 +401,6 @@ static void oil_yscale_up_ga_avx2(float **in, int len, float *coeffs,
 	half = _mm_set1_ps(0.5f);
 	zero = _mm_setzero_ps();
 	one = _mm_set1_ps(1.0f);
-	/* mask: 0 for gray positions (0,2), all-ones for alpha positions (1,3) */
-	blend_mask = _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, 0));
 
 	/* Process 4 GA pixels (8 floats) at a time */
 	for (i=0; i+7<len; i+=8) {
@@ -398,38 +420,9 @@ static void oil_yscale_up_ga_avx2(float **in, int len, float *coeffs,
 			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
 			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 
-		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
+		idx = oil_unpremul_ga_pair_idx_avx2(sum, zero, one, scale, half);
+		idx2 = oil_unpremul_ga_pair_idx_avx2(sum2, zero, one, scale, half);
 
-		/* Process first pair: spread alpha to both lanes */
-		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
-
-		/* Process second pair */
-		alpha_spread = _mm_shuffle_ps(sum2, sum2, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum2, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
-		__m128i idx2 = _mm_cvttps_epi32(
-			_mm_add_ps(_mm_mul_ps(result, scale), half));
-
-		/* Pack 8 ints -> 8 bytes */
 		idx = _mm_packs_epi32(idx, idx2);
 		idx = _mm_packus_epi16(idx, idx);
 		_mm_storel_epi64((__m128i *)(out + i), idx);
@@ -445,18 +438,7 @@ static void oil_yscale_up_ga_avx2(float **in, int len, float *coeffs,
 			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
 			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 
-		alpha_spread = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 1, 1));
-		alpha_spread = _mm_min_ps(_mm_max_ps(alpha_spread, zero), one);
-		nz_mask = _mm_cmpneq_ps(alpha_spread, zero);
-		safe_alpha = _mm_or_ps(
-			_mm_and_ps(nz_mask, alpha_spread),
-			_mm_andnot_ps(nz_mask, one));
-		divided = _mm_div_ps(sum, safe_alpha);
-		gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
-		result = _mm_or_ps(
-			_mm_andnot_ps(blend_mask, gray_clamped),
-			_mm_and_ps(blend_mask, alpha_spread));
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
+		idx = oil_unpremul_ga_pair_idx_avx2(sum, zero, one, scale, half);
 		idx = _mm_packs_epi32(idx, idx);
 		idx = _mm_packus_epi16(idx, idx);
 		*(int *)(out + i) = _mm_cvtsi128_si32(idx);
