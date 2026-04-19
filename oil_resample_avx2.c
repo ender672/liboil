@@ -1212,15 +1212,43 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 	}
 }
 
+/* Unpremultiply a premultiplied RGBA sum (alpha in lane 3) and emit one
+ * output pixel: alpha as a rounded byte, RGB via the linear-to-sRGB LUT.
+ * a_off/rgb_off select RGBA vs ARGB output layout.
+ */
+static inline __attribute__((always_inline))
+void oil_unpremul_rgba_lut_avx2(__m128 vals, __m128 zero, __m128 one,
+	__m128 scale, unsigned char *lut, unsigned char *out,
+	int a_off, int rgb_off)
+{
+	__m128 alpha_v;
+	__m128i idx;
+	float alpha;
+
+	alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
+	alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
+	alpha = _mm_cvtss_f32(alpha_v);
+
+	if (alpha != 0) {
+		vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
+	}
+
+	vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
+	idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
+
+	out[a_off]       = (int)(alpha * 255.0f + 0.5f);
+	out[rgb_off]     = lut[_mm_cvtsi128_si32(idx)];
+	out[rgb_off + 1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+	out[rgb_off + 2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+}
+
 static inline __attribute__((always_inline))
 void oil_yscale_out_rgba_avx2(float *sums, int width, unsigned char *out,
 	int tap, int a_off, int rgb_off)
 {
 	int i, tap_off;
 	__m128 scale, one, zero;
-	__m128 vals, alpha_v;
-	__m128i idx, z;
-	float alpha;
+	__m128i z;
 	unsigned char *lut;
 
 	lut = l2s_map;
@@ -1231,31 +1259,9 @@ void oil_yscale_out_rgba_avx2(float *sums, int width, unsigned char *out,
 	z = _mm_setzero_si128();
 
 	for (i=0; i<width; i++) {
-		/* Read only the current tap */
-		vals = _mm_load_ps(sums + tap_off);
-
-		/* Clamp alpha to [0, 1] */
-		alpha_v = _mm_shuffle_ps(vals, vals, _MM_SHUFFLE(3, 3, 3, 3));
-		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
-		alpha = _mm_cvtss_f32(alpha_v);
-
-		/* Divide RGB by alpha (skip if alpha == 0) */
-		if (alpha != 0) {
-			vals = _mm_mul_ps(vals, _mm_rcp_ps(alpha_v));
-		}
-
-		/* Clamp RGB to [0, 1] and compute l2s_map indices */
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
-
-		out[a_off]       = (int)(alpha * 255.0f + 0.5f);
-		out[rgb_off]     = lut[_mm_cvtsi128_si32(idx)];
-		out[rgb_off + 1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[rgb_off + 2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
-
-		/* Zero consumed tap */
+		oil_unpremul_rgba_lut_avx2(_mm_load_ps(sums + tap_off),
+			zero, one, scale, lut, out, a_off, rgb_off);
 		_mm_store_si128((__m128i *)(sums + tap_off), z);
-
 		sums += 16;
 		out += 4;
 	}
@@ -1269,10 +1275,7 @@ void oil_yscale_up_rgba_avx2(float **in, int len, float *coeffs,
 	__m128 c0, c1, c2, c3;
 	__m128 sum;
 	__m128 scale, one, zero;
-	__m128 alpha_v, clamped;
-	__m128i idx;
 	unsigned char *lut;
-	float alpha;
 
 	c0 = _mm_set1_ps(coeffs[0]);
 	c1 = _mm_set1_ps(coeffs[1]);
@@ -1285,25 +1288,8 @@ void oil_yscale_up_rgba_avx2(float **in, int len, float *coeffs,
 
 	for (i=0; i<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
-
-		/* Clamp alpha to [0, 1] */
-		alpha_v = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 3, 3));
-		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
-		alpha = _mm_cvtss_f32(alpha_v);
-
-		/* Divide RGB by alpha (skip if alpha == 0) */
-		if (alpha != 0) {
-			sum = _mm_mul_ps(sum, _mm_rcp_ps(alpha_v));
-		}
-
-		/* Clamp to [0, 1] and compute l2s_map indices */
-		clamped = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx = _mm_cvttps_epi32(_mm_mul_ps(clamped, scale));
-
-		out[i + a_off]       = (int)(alpha * 255.0f + 0.5f);
-		out[i + rgb_off]     = lut[_mm_cvtsi128_si32(idx)];
-		out[i + rgb_off + 1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i + rgb_off + 2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		oil_unpremul_rgba_lut_avx2(sum, zero, one, scale, lut,
+			out + i, a_off, rgb_off);
 	}
 }
 
