@@ -1541,19 +1541,23 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 	int tap)
 {
 	int i, j;
-	int off0, off1, off2, off3;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_c, sum_m, sum_y, sum_k;
 	__m128 sum_c2, sum_m2, sum_y2, sum_k2;
-	__m128 cy0, cy1, cy2, cy3;
+	__m256 cy256_lo, cy256_hi;
 
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
-	cy0 = _mm_set1_ps(coeffs_y_f[0]);
-	cy1 = _mm_set1_ps(coeffs_y_f[1]);
-	cy2 = _mm_set1_ps(coeffs_y_f[2]);
-	cy3 = _mm_set1_ps(coeffs_y_f[3]);
+	{
+		float cy_phys[4];
+		cy_phys[tap & 3] = coeffs_y_f[0];
+		cy_phys[(tap + 1) & 3] = coeffs_y_f[1];
+		cy_phys[(tap + 2) & 3] = coeffs_y_f[2];
+		cy_phys[(tap + 3) & 3] = coeffs_y_f[3];
+		cy256_lo = _mm256_set_m128(
+			_mm_set1_ps(cy_phys[1]),
+			_mm_set1_ps(cy_phys[0]));
+		cy256_hi = _mm256_set_m128(
+			_mm_set1_ps(cy_phys[3]),
+			_mm_set1_ps(cy_phys[2]));
+	}
 
 	sum_c = _mm_setzero_ps();
 	sum_m = _mm_setzero_ps();
@@ -1644,28 +1648,20 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 		}
 
 		{
-			__m128 cm, yk, cmyk, sy;
+			__m128 cm, yk, cmyk;
+			__m256 cmyk256, sy_lo, sy_hi;
 
 			cm = _mm_unpacklo_ps(sum_c, sum_m);
 			yk = _mm_unpacklo_ps(sum_y, sum_k);
 			cmyk = _mm_movelh_ps(cm, yk);
 
-			sy = _mm_load_ps(sums_y_out + off0);
-			sy = _mm_add_ps(_mm_mul_ps(cy0, cmyk), sy);
-			_mm_store_ps(sums_y_out + off0, sy);
-
-			sy = _mm_load_ps(sums_y_out + off1);
-			sy = _mm_add_ps(_mm_mul_ps(cy1, cmyk), sy);
-			_mm_store_ps(sums_y_out + off1, sy);
-
-			sy = _mm_load_ps(sums_y_out + off2);
-			sy = _mm_add_ps(_mm_mul_ps(cy2, cmyk), sy);
-			_mm_store_ps(sums_y_out + off2, sy);
-
-			sy = _mm_load_ps(sums_y_out + off3);
-			sy = _mm_add_ps(_mm_mul_ps(cy3, cmyk), sy);
-			_mm_store_ps(sums_y_out + off3, sy);
-
+			cmyk256 = _mm256_set_m128(cmyk, cmyk);
+			sy_lo = _mm256_loadu_ps(sums_y_out);
+			sy_hi = _mm256_loadu_ps(sums_y_out + 8);
+			sy_lo = _mm256_fmadd_ps(cy256_lo, cmyk256, sy_lo);
+			sy_hi = _mm256_fmadd_ps(cy256_hi, cmyk256, sy_hi);
+			_mm256_storeu_ps(sums_y_out, sy_lo);
+			_mm256_storeu_ps(sums_y_out + 8, sy_hi);
 			sums_y_out += 16;
 		}
 
