@@ -381,89 +381,37 @@ static void oil_yscale_out_argb_neon(float *sums, int width, unsigned char *out,
 	}
 }
 
-static void oil_yscale_out_cmyk_neon(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_cmyk_neon(float *sums, int width, unsigned char *out,
+	int tap)
 {
-	int i;
-	float32x4_t scale_v, vals, vals2, f0, f1, f2, f3, g0, g1, g2, g3;
-	float32x4_t zero, one, half;
-	int32x4_t idx, idx2;
-	int16x4_t narrowed16, narrowed16b;
+	int i, tap_off;
+	float32x4_t scale_v, vals, zero, one, half, z;
+	int32x4_t idx;
+	int16x4_t narrowed16;
 	uint8x8_t narrowed8;
 
+	tap_off = tap * 4;
 	scale_v = vdupq_n_f32(255.0f);
 	zero = vdupq_n_f32(0.0f);
 	one = vdupq_n_f32(1.0f);
 	half = vdupq_n_f32(0.5f);
+	z = vdupq_n_f32(0.0f);
 
-	for (i=0; i+7<len; i+=8) {
-		f0 = vld1q_f32(sums);
-		f1 = vld1q_f32(sums + 4);
-		f2 = vld1q_f32(sums + 8);
-		f3 = vld1q_f32(sums + 12);
-		g0 = vld1q_f32(sums + 16);
-		g1 = vld1q_f32(sums + 20);
-		g2 = vld1q_f32(sums + 24);
-		g3 = vld1q_f32(sums + 28);
-
-		vals = gather_lane0(f0, f1, f2, f3);
-		vals2 = gather_lane0(g0, g1, g2, g3);
-
-		vals = vminq_f32(vmaxq_f32(vals, zero), one);
-		vals2 = vminq_f32(vmaxq_f32(vals2, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
-		idx2 = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals2, scale_v), half));
-
-		narrowed16 = vqmovn_s32(idx);
-		narrowed16b = vqmovn_s32(idx2);
-		narrowed8 = vqmovun_s16(vcombine_s16(narrowed16, narrowed16b));
-
-		/* Store 8 bytes */
-		vst1_u8(&out[i], narrowed8);
-
-		vst1q_f32(sums,      shift_right_1(f0));
-		vst1q_f32(sums + 4,  shift_right_1(f1));
-		vst1q_f32(sums + 8,  shift_right_1(f2));
-		vst1q_f32(sums + 12, shift_right_1(f3));
-		vst1q_f32(sums + 16, shift_right_1(g0));
-		vst1q_f32(sums + 20, shift_right_1(g1));
-		vst1q_f32(sums + 24, shift_right_1(g2));
-		vst1q_f32(sums + 28, shift_right_1(g3));
-
-		sums += 32;
-	}
-
-	for (; i+3<len; i+=4) {
-		f0 = vld1q_f32(sums);
-		f1 = vld1q_f32(sums + 4);
-		f2 = vld1q_f32(sums + 8);
-		f3 = vld1q_f32(sums + 12);
-
-		vals = gather_lane0(f0, f1, f2, f3);
-
+	for (i=0; i<width; i++) {
+		vals = vld1q_f32(sums + tap_off);
 		vals = vminq_f32(vmaxq_f32(vals, zero), one);
 		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
 
 		narrowed16 = vqmovn_s32(idx);
 		narrowed8 = vqmovun_s16(vcombine_s16(narrowed16, narrowed16));
 
-		vst1_lane_u32((uint32_t *)&out[i],
+		vst1_lane_u32((uint32_t *)out,
 			vreinterpret_u32_u8(narrowed8), 0);
 
-		vst1q_f32(sums,      shift_right_1(f0));
-		vst1q_f32(sums + 4,  shift_right_1(f1));
-		vst1q_f32(sums + 8,  shift_right_1(f2));
-		vst1q_f32(sums + 12, shift_right_1(f3));
+		vst1q_f32(sums + tap_off, z);
 
 		sums += 16;
-	}
-
-	for (; i<len; i++) {
-		float v = *sums;
-		if (v < 0.0f) v = 0.0f;
-		if (v > 1.0f) v = 1.0f;
-		out[i] = (int)(v * 255.0f + 0.5f);
-		oil_shift_left_f_neon(sums);
-		sums += 4;
+		out += 4;
 	}
 }
 
@@ -2745,16 +2693,25 @@ static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 }
 
 static void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	int tap)
 {
 	int i, j;
+	int off0, off1, off2, off3;
 	float32x4_t coeffs_x, coeffs_x2, sum_c, sum_m, sum_y, sum_k;
 	float32x4_t sum_c2, sum_m2, sum_y2, sum_k2;
-	float32x4_t coeffs_y, sums_yv;
+	float32x4_t cy0, cy1, cy2, cy3;
 	float32x4_t pix1, pix2;
 	float32x4_t inv255 = vdupq_n_f32(1.0f / 255.0f);
 
-	coeffs_y = vld1q_f32(coeffs_y_f);
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
+	cy0 = vdupq_n_f32(coeffs_y_f[0]);
+	cy1 = vdupq_n_f32(coeffs_y_f[1]);
+	cy2 = vdupq_n_f32(coeffs_y_f[2]);
+	cy3 = vdupq_n_f32(coeffs_y_f[3]);
 
 	sum_c = vdupq_n_f32(0.0f);
 	sum_m = vdupq_n_f32(0.0f);
@@ -2836,25 +2793,32 @@ static void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		sums_yv = vld1q_f32(sums_y_out);
-		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_c, 0);
-		vst1q_f32(sums_y_out, sums_yv);
-		sums_y_out += 4;
+		{
+			float32x4_t cmyk, sy;
 
-		sums_yv = vld1q_f32(sums_y_out);
-		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_m, 0);
-		vst1q_f32(sums_y_out, sums_yv);
-		sums_y_out += 4;
+			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_c, 0), vdupq_n_f32(0), 0);
+			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_m, 0), cmyk, 1);
+			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_y, 0), cmyk, 2);
+			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_k, 0), cmyk, 3);
 
-		sums_yv = vld1q_f32(sums_y_out);
-		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_y, 0);
-		vst1q_f32(sums_y_out, sums_yv);
-		sums_y_out += 4;
+			sy = vld1q_f32(sums_y_out + off0);
+			sy = vfmaq_f32(sy, cy0, cmyk);
+			vst1q_f32(sums_y_out + off0, sy);
 
-		sums_yv = vld1q_f32(sums_y_out);
-		sums_yv = vfmaq_laneq_f32(sums_yv, coeffs_y, sum_k, 0);
-		vst1q_f32(sums_y_out, sums_yv);
-		sums_y_out += 4;
+			sy = vld1q_f32(sums_y_out + off1);
+			sy = vfmaq_f32(sy, cy1, cmyk);
+			vst1q_f32(sums_y_out + off1, sy);
+
+			sy = vld1q_f32(sums_y_out + off2);
+			sy = vfmaq_f32(sy, cy2, cmyk);
+			vst1q_f32(sums_y_out + off2, sy);
+
+			sy = vld1q_f32(sums_y_out + off3);
+			sy = vfmaq_f32(sy, cy3, cmyk);
+			vst1q_f32(sums_y_out + off3, sy);
+
+			sums_y_out += 16;
+		}
 
 		sum_c = vextq_f32(sum_c, vdupq_n_f32(0), 1);
 		sum_m = vextq_f32(sum_m, vdupq_n_f32(0), 1);
@@ -4026,7 +3990,7 @@ static void yscale_out_neon(float *sums, int width, unsigned char *out,
 		oil_yscale_out_nonlinear_neon(sums, sl_len, out);
 		break;
 	case OIL_CS_CMYK:
-		oil_yscale_out_cmyk_neon(sums, sl_len, out);
+		oil_yscale_out_cmyk_neon(sums, width, out, tap);
 		break;
 	case OIL_CS_GA:
 		oil_yscale_out_ga_neon(sums, width, out);
@@ -4147,7 +4111,7 @@ static void down_scale_in_neon(struct oil_scale *os, unsigned char *in)
 		oil_scale_down_g_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_CMYK:
-		oil_scale_down_cmyk_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_cmyk_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBA:
 		oil_scale_down_rgba_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);

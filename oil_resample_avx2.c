@@ -2238,65 +2238,54 @@ static void oil_scale_down_argb_avx2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void oil_yscale_out_cmyk_avx2(float *sums, int len, unsigned char *out)
+static void oil_yscale_out_cmyk_avx2(float *sums, int width, unsigned char *out,
+	int tap)
 {
-	int i;
-	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
-	__m128i idx, clamped, v0, v1, v2, v3;
+	int i, tap_off;
+	__m128 scale, vals, one, zero;
+	__m128i idx, clamped, z;
 
+	tap_off = tap * 4;
 	scale = _mm_set1_ps(255.0f);
+	one = _mm_set1_ps(1.0f);
+	zero = _mm_setzero_ps();
+	z = _mm_setzero_si128();
 
-	for (i=0; i+3<len; i+=4) {
-		v0 = _mm_load_si128((__m128i *)sums);
-		v1 = _mm_load_si128((__m128i *)(sums + 4));
-		v2 = _mm_load_si128((__m128i *)(sums + 8));
-		v3 = _mm_load_si128((__m128i *)(sums + 12));
-
-		f0 = _mm_castsi128_ps(v0);
-		f1 = _mm_castsi128_ps(v1);
-		f2 = _mm_castsi128_ps(v2);
-		f3 = _mm_castsi128_ps(v3);
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
-
-		/* clamp to [0, 1] then scale to [0, 255] */
-		vals = _mm_min_ps(_mm_max_ps(vals, _mm_setzero_ps()), _mm_set1_ps(1.0f));
+	for (i=0; i<width; i++) {
+		vals = _mm_load_ps(sums + tap_off);
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), _mm_set1_ps(0.5f)));
 
-		/* Pack 32-bit ints to 16-bit then to 8-bit */
 		clamped = _mm_packs_epi32(idx, idx);
 		clamped = _mm_packus_epi16(clamped, clamped);
 
-		*(int *)&out[i] = _mm_cvtsi128_si32(clamped);
+		*(int *)out = _mm_cvtsi128_si32(clamped);
 
-		_mm_store_si128((__m128i *)sums, _mm_srli_si128(v0, 4));
-		_mm_store_si128((__m128i *)(sums + 4), _mm_srli_si128(v1, 4));
-		_mm_store_si128((__m128i *)(sums + 8), _mm_srli_si128(v2, 4));
-		_mm_store_si128((__m128i *)(sums + 12), _mm_srli_si128(v3, 4));
+		_mm_store_si128((__m128i *)(sums + tap_off), z);
 
 		sums += 16;
-	}
-
-	for (; i<len; i++) {
-		float v = *sums;
-		if (v < 0.0f) v = 0.0f;
-		if (v > 1.0f) v = 1.0f;
-		out[i] = (int)(v * 255.0f + 0.5f);
-		oil_shift_left_f_avx2(sums);
-		sums += 4;
+		out += 4;
 	}
 }
 
 static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	int tap)
 {
 	int i, j;
+	int off0, off1, off2, off3;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_c, sum_m, sum_y, sum_k;
 	__m128 sum_c2, sum_m2, sum_y2, sum_k2;
-	__m128 coeffs_y, sums_y, sample_y;
+	__m128 cy0, cy1, cy2, cy3;
 
-	coeffs_y = _mm_load_ps(coeffs_y_f);
+	off0 = tap * 4;
+	off1 = ((tap + 1) & 3) * 4;
+	off2 = ((tap + 2) & 3) * 4;
+	off3 = ((tap + 3) & 3) * 4;
+	cy0 = _mm_set1_ps(coeffs_y_f[0]);
+	cy1 = _mm_set1_ps(coeffs_y_f[1]);
+	cy2 = _mm_set1_ps(coeffs_y_f[2]);
+	cy3 = _mm_set1_ps(coeffs_y_f[3]);
 
 	sum_c = _mm_setzero_ps();
 	sum_m = _mm_setzero_ps();
@@ -2386,29 +2375,31 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_c, sum_c, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+		{
+			__m128 cm, yk, cmyk, sy;
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_m, sum_m, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+			cm = _mm_unpacklo_ps(sum_c, sum_m);
+			yk = _mm_unpacklo_ps(sum_y, sum_k);
+			cmyk = _mm_movelh_ps(cm, yk);
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_y, sum_y, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+			sy = _mm_load_ps(sums_y_out + off0);
+			sy = _mm_add_ps(_mm_mul_ps(cy0, cmyk), sy);
+			_mm_store_ps(sums_y_out + off0, sy);
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_k, sum_k, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+			sy = _mm_load_ps(sums_y_out + off1);
+			sy = _mm_add_ps(_mm_mul_ps(cy1, cmyk), sy);
+			_mm_store_ps(sums_y_out + off1, sy);
+
+			sy = _mm_load_ps(sums_y_out + off2);
+			sy = _mm_add_ps(_mm_mul_ps(cy2, cmyk), sy);
+			_mm_store_ps(sums_y_out + off2, sy);
+
+			sy = _mm_load_ps(sums_y_out + off3);
+			sy = _mm_add_ps(_mm_mul_ps(cy3, cmyk), sy);
+			_mm_store_ps(sums_y_out + off3, sy);
+
+			sums_y_out += 16;
+		}
 
 		sum_c = (__m128)_mm_srli_si128(_mm_castps_si128(sum_c), 4);
 		sum_m = (__m128)_mm_srli_si128(_mm_castps_si128(sum_m), 4);
@@ -3714,7 +3705,7 @@ static void yscale_out_avx2(float *sums, int width, unsigned char *out,
 		oil_yscale_out_nonlinear_avx2(sums, sl_len, out);
 		break;
 	case OIL_CS_CMYK:
-		oil_yscale_out_cmyk_avx2(sums, sl_len, out);
+		oil_yscale_out_cmyk_avx2(sums, width, out, tap);
 		break;
 	case OIL_CS_GA:
 		oil_yscale_out_ga_avx2(sums, width, out);
@@ -3839,7 +3830,7 @@ static void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 		}
 		break;
 	case OIL_CS_CMYK:
-		oil_scale_down_cmyk_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_cmyk_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBA:
 		oil_scale_down_rgba_avx2(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);

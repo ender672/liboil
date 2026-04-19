@@ -278,6 +278,21 @@ static void yscale_out_ga(float *sums, int width, unsigned char *out)
 	}
 }
 
+static void yscale_out_cmyk(float *sums, int width, unsigned char *out, int tap)
+{
+	int i, j, tap_off;
+
+	tap_off = tap * 4;
+	for (i=0; i<width; i++) {
+		for (j=0; j<4; j++) {
+			out[j] = clamp8(sums[tap_off + j]);
+			sums[tap_off + j] = 0.0f;
+		}
+		sums += 16;
+		out += 4;
+	}
+}
+
 static void yscale_out_rgba(float *sums, int width, unsigned char *out, int tap)
 {
 	int i, j, tap_off;
@@ -396,7 +411,7 @@ static void yscale_out(float *sums, int width, unsigned char *out,
 		yscale_out_nonlinear(sums, sl_len, out);
 		break;
 	case OIL_CS_CMYK:
-		yscale_out_nonlinear(sums, sl_len, out);
+		yscale_out_cmyk(sums, width, out, tap);
 		break;
 	case OIL_CS_GA:
 		yscale_out_ga(sums, width, out);
@@ -839,7 +854,7 @@ static void scale_down_g(unsigned char *in, float *sums_y, int out_width, float 
 }
 
 static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, float *coeffs_x,
-	int *border_buf, float *coeffs_y)
+	int *border_buf, float *coeffs_y, int tap)
 {
 	int i, j;
 	float sum[4][4] = {{ 0.0f }};
@@ -856,10 +871,21 @@ static void scale_down_cmyk(unsigned char *in, float *sums_y, int out_width, flo
 			coeffs_x += 4;
 		}
 
-		for (j=0; j<4; j++) {
-			add_sample_to_sum_f(sum[j][0], coeffs_y, sums_y);
-			shift_left_f(sum[j]);
-			sums_y += 4;
+		{
+			float samples[4];
+			for (j=0; j<4; j++) {
+				samples[j] = sum[j][0];
+				shift_left_f(sum[j]);
+			}
+			for (j=0; j<4; j++) {
+				float cy = coeffs_y[j];
+				int off = ((tap + j) & 3) * 4;
+				sums_y[off + 0] += samples[0] * cy;
+				sums_y[off + 1] += samples[1] * cy;
+				sums_y[off + 2] += samples[2] * cy;
+				sums_y[off + 3] += samples[3] * cy;
+			}
+			sums_y += 16;
 		}
 	}
 }
@@ -1558,7 +1584,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		scale_down_g(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
 		break;
 	case OIL_CS_CMYK:
-		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		scale_down_cmyk(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBA:
 		scale_down_rgba(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
