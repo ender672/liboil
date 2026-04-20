@@ -71,6 +71,24 @@ static inline float32x4_t gather_lane0(float32x4_t f0, float32x4_t f1,
 	return vals;
 }
 
+/* Accumulate `px` into four ring-buffer slots at off0..off3 via FMA with
+ * per-slot coefficient vectors cy0..cy3: sums_y_out[offK] += cyK * px.
+ */
+static inline void oil_scatter_ring_fma_neon(float *sums_y_out,
+	int off0, int off1, int off2, int off3,
+	float32x4_t cy0, float32x4_t cy1, float32x4_t cy2, float32x4_t cy3,
+	float32x4_t px)
+{
+	vst1q_f32(sums_y_out + off0,
+		vfmaq_f32(vld1q_f32(sums_y_out + off0), cy0, px));
+	vst1q_f32(sums_y_out + off1,
+		vfmaq_f32(vld1q_f32(sums_y_out + off1), cy1, px));
+	vst1q_f32(sums_y_out + off2,
+		vfmaq_f32(vld1q_f32(sums_y_out + off2), cy2, px));
+	vst1q_f32(sums_y_out + off3,
+		vfmaq_f32(vld1q_f32(sums_y_out + off3), cy3, px));
+}
+
 /* Consume one output pixel across 4 stride-4 channel ring-buffer slots:
  * gather lane 0 from each of sums[0..3], sums[4..7], sums[8..11], sums[12..15]
  * into a single packed vector, then shift each slot left (discarding the
@@ -1666,33 +1684,10 @@ void scale_down_alpha_neon_impl(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			float32x4_t rgba, sy;
-
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_r, 0), vdupq_n_f32(0), 0);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_g, 0), rgba, 1);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_b, 0), rgba, 2);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_a, 0), rgba, 3);
-
-			sy = vld1q_f32(sums_y_out + off0);
-			sy = vfmaq_f32(sy, cy0, rgba);
-			vst1q_f32(sums_y_out + off0, sy);
-
-			sy = vld1q_f32(sums_y_out + off1);
-			sy = vfmaq_f32(sy, cy1, rgba);
-			vst1q_f32(sums_y_out + off1, sy);
-
-			sy = vld1q_f32(sums_y_out + off2);
-			sy = vfmaq_f32(sy, cy2, rgba);
-			vst1q_f32(sums_y_out + off2, sy);
-
-			sy = vld1q_f32(sums_y_out + off3);
-			sy = vfmaq_f32(sy, cy3, rgba);
-			vst1q_f32(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		oil_scatter_ring_fma_neon(sums_y_out, off0, off1, off2, off3,
+			cy0, cy1, cy2, cy3,
+			gather_lane0(sum_r, sum_g, sum_b, sum_a));
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_neon(sum_r);
 		sum_g = oil_shift_f_left_neon(sum_g);
@@ -1828,32 +1823,10 @@ void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			float32x4_t rgbx, sy;
-
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_r, 0), vdupq_n_f32(0), 0);
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_g, 0), rgbx, 1);
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_b, 0), rgbx, 2);
-
-			sy = vld1q_f32(sums_y_out + off0);
-			sy = vfmaq_f32(sy, cy0, rgbx);
-			vst1q_f32(sums_y_out + off0, sy);
-
-			sy = vld1q_f32(sums_y_out + off1);
-			sy = vfmaq_f32(sy, cy1, rgbx);
-			vst1q_f32(sums_y_out + off1, sy);
-
-			sy = vld1q_f32(sums_y_out + off2);
-			sy = vfmaq_f32(sy, cy2, rgbx);
-			vst1q_f32(sums_y_out + off2, sy);
-
-			sy = vld1q_f32(sums_y_out + off3);
-			sy = vfmaq_f32(sy, cy3, rgbx);
-			vst1q_f32(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		oil_scatter_ring_fma_neon(sums_y_out, off0, off1, off2, off3,
+			cy0, cy1, cy2, cy3,
+			gather_lane0(sum_r, sum_g, sum_b, vdupq_n_f32(0)));
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_neon(sum_r);
 		sum_g = oil_shift_f_left_neon(sum_g);
@@ -1962,32 +1935,10 @@ static void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		{
-			float32x4_t cmyk, sy;
-
-			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_c, 0), vdupq_n_f32(0), 0);
-			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_m, 0), cmyk, 1);
-			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_y, 0), cmyk, 2);
-			cmyk = vsetq_lane_f32(vgetq_lane_f32(sum_k, 0), cmyk, 3);
-
-			sy = vld1q_f32(sums_y_out + off0);
-			sy = vfmaq_f32(sy, cy0, cmyk);
-			vst1q_f32(sums_y_out + off0, sy);
-
-			sy = vld1q_f32(sums_y_out + off1);
-			sy = vfmaq_f32(sy, cy1, cmyk);
-			vst1q_f32(sums_y_out + off1, sy);
-
-			sy = vld1q_f32(sums_y_out + off2);
-			sy = vfmaq_f32(sy, cy2, cmyk);
-			vst1q_f32(sums_y_out + off2, sy);
-
-			sy = vld1q_f32(sums_y_out + off3);
-			sy = vfmaq_f32(sy, cy3, cmyk);
-			vst1q_f32(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		oil_scatter_ring_fma_neon(sums_y_out, off0, off1, off2, off3,
+			cy0, cy1, cy2, cy3,
+			gather_lane0(sum_c, sum_m, sum_y, sum_k));
+		sums_y_out += 16;
 
 		sum_c = oil_shift_f_left_neon(sum_c);
 		sum_m = oil_shift_f_left_neon(sum_m);
