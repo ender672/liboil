@@ -1648,14 +1648,30 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
-	unsigned char *out, int tap)
+/* Per-pixel nogamma y-out conversion: either unpremultiply (RGBA) or clamp
+ * and force the X lane to 255 (RGBX). `is_rgbx` is a compile-time constant
+ * so the branch fully specializes at each call site.
+ */
+static inline __attribute__((always_inline))
+__m128i yscale_out_nogamma_idx_sse2(__m128 vals, __m128 zero, __m128 one,
+	__m128 scale, __m128 half, __m128i rgbx_mask, __m128i rgbx_x_val,
+	int is_rgbx)
+{
+	__m128i idx;
+	if (is_rgbx) {
+		idx = oil_clamp_round_idx_sse2(vals, zero, one, scale, half);
+		return _mm_or_si128(_mm_and_si128(idx, rgbx_mask), rgbx_x_val);
+	}
+	return oil_unpremul_rgba_idx_sse2(vals, zero, one, scale, half);
+}
+
+static inline __attribute__((always_inline))
+void yscale_out_nogamma_sse2_impl(float *sums, int width, unsigned char *out,
+	int tap, int is_rgbx)
 {
 	int i, tap_off;
 	__m128 scale, half, one, zero;
-	__m128 vals;
-	__m128i idx, packed;
-	__m128i z, mask, x_val;
+	__m128i idx, idx2, packed, z, mask, x_val;
 
 	tap_off = tap * 4;
 	scale = _mm_set1_ps(255.0f);
@@ -1667,74 +1683,12 @@ static void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
 	x_val = _mm_set_epi32(255, 0, 0, 0);
 
 	for (i=0; i+1<width; i+=2) {
-		/* Pixel 1: read only the current tap */
-		vals = _mm_load_ps(sums + tap_off);
-		idx = oil_clamp_round_idx_sse2(vals, zero, one, scale, half);
-		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
-
-		/* Zero consumed tap */
+		idx = yscale_out_nogamma_idx_sse2(_mm_load_ps(sums + tap_off),
+			zero, one, scale, half, mask, x_val, is_rgbx);
 		_mm_store_si128((__m128i *)(sums + tap_off), z);
 
-		/* Pixel 2 */
-		{
-			__m128i idx2;
-			__m128 vals2;
-
-			vals2 = _mm_load_ps(sums + 16 + tap_off);
-			idx2 = oil_clamp_round_idx_sse2(vals2, zero, one, scale, half);
-			idx2 = _mm_or_si128(_mm_and_si128(idx2, mask), x_val);
-
-			packed = _mm_packs_epi32(idx, idx2);
-			packed = _mm_packus_epi16(packed, packed);
-			_mm_storel_epi64((__m128i *)out, packed);
-
-			/* Zero consumed tap */
-			_mm_store_si128((__m128i *)(sums + 16 + tap_off), z);
-		}
-
-		sums += 32;
-		out += 8;
-	}
-
-	for (; i<width; i++) {
-		vals = _mm_load_ps(sums + tap_off);
-		idx = oil_clamp_round_idx_sse2(vals, zero, one, scale, half);
-		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
-		packed = _mm_packs_epi32(idx, idx);
-		packed = _mm_packus_epi16(packed, packed);
-		*(int *)out = _mm_cvtsi128_si32(packed);
-
-		_mm_store_si128((__m128i *)(sums + tap_off), z);
-
-		sums += 16;
-		out += 4;
-	}
-}
-
-static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
-	unsigned char *out, int tap)
-{
-	int i, tap_off;
-	__m128 scale, half, one, zero;
-	__m128i idx, packed;
-	__m128i z;
-
-	tap_off = tap * 4;
-	scale = _mm_set1_ps(255.0f);
-	half = _mm_set1_ps(0.5f);
-	one = _mm_set1_ps(1.0f);
-	zero = _mm_setzero_ps();
-	z = _mm_setzero_si128();
-
-	for (i=0; i+1<width; i+=2) {
-		__m128i idx2;
-
-		idx = oil_unpremul_rgba_idx_sse2(_mm_load_ps(sums + tap_off),
-			zero, one, scale, half);
-		_mm_store_si128((__m128i *)(sums + tap_off), z);
-
-		idx2 = oil_unpremul_rgba_idx_sse2(_mm_load_ps(sums + 16 + tap_off),
-			zero, one, scale, half);
+		idx2 = yscale_out_nogamma_idx_sse2(_mm_load_ps(sums + 16 + tap_off),
+			zero, one, scale, half, mask, x_val, is_rgbx);
 		_mm_store_si128((__m128i *)(sums + 16 + tap_off), z);
 
 		packed = _mm_packs_epi32(idx, idx2);
@@ -1746,8 +1700,8 @@ static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
 	}
 
 	for (; i<width; i++) {
-		idx = oil_unpremul_rgba_idx_sse2(_mm_load_ps(sums + tap_off),
-			zero, one, scale, half);
+		idx = yscale_out_nogamma_idx_sse2(_mm_load_ps(sums + tap_off),
+			zero, one, scale, half, mask, x_val, is_rgbx);
 		packed = _mm_packs_epi32(idx, idx);
 		packed = _mm_packus_epi16(packed, packed);
 		*(int *)out = _mm_cvtsi128_si32(packed);
@@ -1757,6 +1711,18 @@ static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
 		sums += 16;
 		out += 4;
 	}
+}
+
+static void oil_yscale_out_rgbx_nogamma_sse2(float *sums, int width,
+	unsigned char *out, int tap)
+{
+	yscale_out_nogamma_sse2_impl(sums, width, out, tap, 1);
+}
+
+static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
+	unsigned char *out, int tap)
+{
+	yscale_out_nogamma_sse2_impl(sums, width, out, tap, 0);
 }
 
 static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
