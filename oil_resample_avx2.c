@@ -99,6 +99,44 @@ static inline __m128 oil_ydot4_load_avx2(float **in, int off,
 		_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
 }
 
+/* Consume one output pixel across 4 stride-4 channel ring-buffer slots:
+ * gather lane 0 from each of sums[0..3], sums[4..7], sums[8..11], sums[12..15]
+ * into a single packed vector, then shift each slot left (discarding the
+ * consumed tap). Used by y-scale output paths that walk a single-channel
+ * ring buffer with shift-left decay.
+ */
+static inline __attribute__((always_inline))
+__m128 oil_consume_ch0_x4_avx2(float *sums)
+{
+	__m128 f0, f1, f2, f3, ab, cd, vals;
+
+	f0 = _mm_load_ps(sums);
+	f1 = _mm_load_ps(sums + 4);
+	f2 = _mm_load_ps(sums + 8);
+	f3 = _mm_load_ps(sums + 12);
+
+	ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
+	cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
+	vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
+
+	_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
+	_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
+	_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
+	_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
+
+	return vals;
+}
+
+/* Clamp v to [0,1], multiply by `scale`, round to nearest, and truncate to
+ * int32. Produces the byte-range index used by sRGB byte packing and LUTs.
+ */
+static inline __m128i oil_clamp_round_idx_avx2(__m128 v,
+	__m128 zero, __m128 one, __m128 scale, __m128 half)
+{
+	v = _mm_min_ps(_mm_max_ps(v, zero), one);
+	return _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v, scale), half));
+}
+
 /* Unpremultiply a pair of packed GA samples [g0, a0, g1, a1], clamping alpha
  * to [0,1] and handling alpha==0 as passthrough-with-zero-gray. Returns the
  * four components scaled to byte-rounded int32 lanes.
@@ -106,7 +144,7 @@ static inline __m128 oil_ydot4_load_avx2(float **in, int off,
 static inline __m128i oil_unpremul_ga_pair_idx_avx2(__m128 sum,
 	__m128 zero, __m128 one, __m128 scale, __m128 half)
 {
-	__m128 alpha_spread, nz_mask, safe_alpha, divided, gray_clamped, result;
+	__m128 alpha_spread, nz_mask, safe_alpha, divided, result;
 	__m128 blend_mask;
 
 	/* mask: 0 for gray lanes (0,2), all-ones for alpha lanes (1,3) */
@@ -118,9 +156,9 @@ static inline __m128i oil_unpremul_ga_pair_idx_avx2(__m128 sum,
 		_mm_and_ps(nz_mask, alpha_spread),
 		_mm_andnot_ps(nz_mask, one));
 	divided = _mm_div_ps(sum, safe_alpha);
-	gray_clamped = _mm_min_ps(_mm_max_ps(divided, zero), one);
+	divided = _mm_min_ps(_mm_max_ps(divided, zero), one);
 	result = _mm_or_ps(
-		_mm_andnot_ps(blend_mask, gray_clamped),
+		_mm_andnot_ps(blend_mask, divided),
 		_mm_and_ps(blend_mask, alpha_spread));
 	return _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
 }
@@ -215,9 +253,9 @@ static inline __m128i oil_unpremul_rgba_idx_avx2(__m128 vals,
 static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *out)
 {
 	int i;
-	__m128 vals, ab, cd, f0, f1, f2, f3;
+	__m128 vals, vals2;
 	__m128 scale, half, zero, one;
-	__m128i idx;
+	__m128i idx, idx2;
 
 	scale = _mm_set1_ps(255.0f);
 	half = _mm_set1_ps(0.5f);
@@ -225,70 +263,26 @@ static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *o
 	one = _mm_set1_ps(1.0f);
 
 	for (i=0; i+7<len; i+=8) {
-		__m128i idx2;
-		__m128 vals2, ab2, cd2, g0, g1, g2, g3;
+		vals = oil_consume_ch0_x4_avx2(sums);
+		idx = oil_clamp_round_idx_avx2(vals, zero, one, scale, half);
 
-		f0 = _mm_load_ps(sums);
-		f1 = _mm_load_ps(sums + 4);
-		f2 = _mm_load_ps(sums + 8);
-		f3 = _mm_load_ps(sums + 12);
-
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
-
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
-
-		g0 = _mm_load_ps(sums + 16);
-		g1 = _mm_load_ps(sums + 20);
-		g2 = _mm_load_ps(sums + 24);
-		g3 = _mm_load_ps(sums + 28);
-
-		ab2 = _mm_shuffle_ps(g0, g1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd2 = _mm_shuffle_ps(g2, g3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals2 = _mm_shuffle_ps(ab2, cd2, _MM_SHUFFLE(2, 0, 2, 0));
-
-		vals2 = _mm_min_ps(_mm_max_ps(vals2, zero), one);
-		idx2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals2, scale), half));
+		vals2 = oil_consume_ch0_x4_avx2(sums + 16);
+		idx2 = oil_clamp_round_idx_avx2(vals2, zero, one, scale, half);
 
 		idx = _mm_packs_epi32(idx, idx2);
 		idx = _mm_packus_epi16(idx, idx);
 		_mm_storel_epi64((__m128i *)(out + i), idx);
 
-		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
-		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
-		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
-		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
-		_mm_store_ps(sums + 16, oil_shift_f_left_avx2(g0));
-		_mm_store_ps(sums + 20, oil_shift_f_left_avx2(g1));
-		_mm_store_ps(sums + 24, oil_shift_f_left_avx2(g2));
-		_mm_store_ps(sums + 28, oil_shift_f_left_avx2(g3));
-
 		sums += 32;
 	}
 
 	for (; i+3<len; i+=4) {
-		f0 = _mm_load_ps(sums);
-		f1 = _mm_load_ps(sums + 4);
-		f2 = _mm_load_ps(sums + 8);
-		f3 = _mm_load_ps(sums + 12);
-
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
-
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
+		vals = oil_consume_ch0_x4_avx2(sums);
+		idx = oil_clamp_round_idx_avx2(vals, zero, one, scale, half);
 
 		idx = _mm_packs_epi32(idx, idx);
 		idx = _mm_packus_epi16(idx, idx);
 		*(int *)(out + i) = _mm_cvtsi128_si32(idx);
-
-		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
-		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
-		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
-		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
 
 		sums += 16;
 	}
@@ -306,7 +300,7 @@ static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *o
 static void oil_yscale_out_linear_avx2(float *sums, int len, unsigned char *out)
 {
 	int i;
-	__m128 scale, vals, ab, cd, f0, f1, f2, f3;
+	__m128 scale, vals;
 	__m128i idx;
 	unsigned char *lut;
 
@@ -314,24 +308,9 @@ static void oil_yscale_out_linear_avx2(float *sums, int len, unsigned char *out)
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i+3<len; i+=4) {
-		f0 = _mm_load_ps(sums);
-		f1 = _mm_load_ps(sums + 4);
-		f2 = _mm_load_ps(sums + 8);
-		f3 = _mm_load_ps(sums + 12);
-
-		ab = _mm_shuffle_ps(f0, f1, _MM_SHUFFLE(0, 0, 0, 0));
-		cd = _mm_shuffle_ps(f2, f3, _MM_SHUFFLE(0, 0, 0, 0));
-		vals = _mm_shuffle_ps(ab, cd, _MM_SHUFFLE(2, 0, 2, 0));
-
+		vals = oil_consume_ch0_x4_avx2(sums);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
-
 		oil_lut_store4_avx2(out + i, idx, lut);
-
-		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
-		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
-		_mm_store_ps(sums + 8,  oil_shift_f_left_avx2(f2));
-		_mm_store_ps(sums + 12, oil_shift_f_left_avx2(f3));
-
 		sums += 16;
 	}
 
@@ -817,20 +796,16 @@ static void oil_yscale_up_g_cmyk_avx2(float **in, int len, float *coeffs,
 		__m128 sum2;
 
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
-		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
+		idx = oil_clamp_round_idx_avx2(sum, zero, one, scale, half);
 
 		sum2 = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
-		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
-		idx2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
+		idx2 = oil_clamp_round_idx_avx2(sum2, zero, one, scale, half);
 
 		sum = oil_ydot4_load_avx2(in, i + 8, c0, c1, c2, c3);
-		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx3 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
+		idx3 = oil_clamp_round_idx_avx2(sum, zero, one, scale, half);
 
 		sum2 = oil_ydot4_load_avx2(in, i + 12, c0, c1, c2, c3);
-		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
-		idx4 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
+		idx4 = oil_clamp_round_idx_avx2(sum2, zero, one, scale, half);
 
 		idx = _mm_packs_epi32(idx, idx2);
 		idx3 = _mm_packs_epi32(idx3, idx4);
@@ -843,12 +818,10 @@ static void oil_yscale_up_g_cmyk_avx2(float **in, int len, float *coeffs,
 		__m128 sum2;
 
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
-		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
+		idx = oil_clamp_round_idx_avx2(sum, zero, one, scale, half);
 
 		sum2 = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
-		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
-		idx2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
+		idx2 = oil_clamp_round_idx_avx2(sum2, zero, one, scale, half);
 
 		idx = _mm_packs_epi32(idx, idx2);
 		idx = _mm_packus_epi16(idx, idx);
@@ -857,8 +830,7 @@ static void oil_yscale_up_g_cmyk_avx2(float **in, int len, float *coeffs,
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
-		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
+		idx = oil_clamp_round_idx_avx2(sum, zero, one, scale, half);
 		idx = _mm_packs_epi32(idx, idx);
 		idx = _mm_packus_epi16(idx, idx);
 		*(int *)(out + i) = _mm_cvtsi128_si32(idx);
@@ -1463,8 +1435,7 @@ static void oil_yscale_out_cmyk_avx2(float *sums, int width, unsigned char *out,
 
 	for (i=0; i<width; i++) {
 		vals = _mm_load_ps(sums + tap_off);
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
+		idx = oil_clamp_round_idx_avx2(vals, zero, one, scale, half);
 
 		clamped = _mm_packs_epi32(idx, idx);
 		clamped = _mm_packus_epi16(clamped, clamped);
@@ -1719,15 +1690,10 @@ static void oil_yscale_out_rgbx_nogamma_avx2(float *sums, int width,
 		v2 = _mm_load_ps(sums + 32 + tap_off);
 		v3 = _mm_load_ps(sums + 48 + tap_off);
 
-		v0 = _mm_min_ps(_mm_max_ps(v0, zero), one);
-		v1 = _mm_min_ps(_mm_max_ps(v1, zero), one);
-		v2 = _mm_min_ps(_mm_max_ps(v2, zero), one);
-		v3 = _mm_min_ps(_mm_max_ps(v3, zero), one);
-
-		i0 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v0, scale), half));
-		i1 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v1, scale), half));
-		i2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v2, scale), half));
-		i3 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(v3, scale), half));
+		i0 = oil_clamp_round_idx_avx2(v0, zero, one, scale, half);
+		i1 = oil_clamp_round_idx_avx2(v1, zero, one, scale, half);
+		i2 = oil_clamp_round_idx_avx2(v2, zero, one, scale, half);
+		i3 = oil_clamp_round_idx_avx2(v3, zero, one, scale, half);
 
 		i0 = _mm_or_si128(_mm_and_si128(i0, mask), x_val);
 		i1 = _mm_or_si128(_mm_and_si128(i1, mask), x_val);
@@ -1750,9 +1716,7 @@ static void oil_yscale_out_rgbx_nogamma_avx2(float *sums, int width,
 
 	for (; i<width; i++) {
 		vals = _mm_load_ps(sums + tap_off);
-
-		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
-		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(vals, scale), half));
+		idx = oil_clamp_round_idx_avx2(vals, zero, one, scale, half);
 		idx = _mm_or_si128(_mm_and_si128(idx, mask), x_val);
 		packed = _mm_packs_epi32(idx, idx);
 		packed = _mm_packus_epi16(packed, packed);
@@ -1891,14 +1855,11 @@ static void oil_yscale_up_rgbx_nogamma_avx2(float **in, int len, float *coeffs,
 		/* Pixel 2 */
 		sum_b = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
 
-		/* Clamp, scale, and force X=255 for pixel 1 */
-		sum_a = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
-		idx_a = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum_a, scale), half));
+		/* Clamp, scale, and force X=255 for each pixel */
+		idx_a = oil_clamp_round_idx_avx2(sum_a, zero, one, scale, half);
 		idx_a = _mm_or_si128(_mm_and_si128(idx_a, mask), x_val);
 
-		/* Clamp, scale, and force X=255 for pixel 2 */
-		sum_b = _mm_min_ps(_mm_max_ps(sum_b, zero), one);
-		idx_b = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum_b, scale), half));
+		idx_b = oil_clamp_round_idx_avx2(sum_b, zero, one, scale, half);
 		idx_b = _mm_or_si128(_mm_and_si128(idx_b, mask), x_val);
 
 		/* Pack both pixels to bytes and store 8 bytes */
@@ -1910,8 +1871,7 @@ static void oil_yscale_up_rgbx_nogamma_avx2(float **in, int len, float *coeffs,
 	for (; i<len; i+=4) {
 		sum_a = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
 
-		sum_a = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
-		idx_a = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum_a, scale), half));
+		idx_a = oil_clamp_round_idx_avx2(sum_a, zero, one, scale, half);
 		idx_a = _mm_or_si128(_mm_and_si128(idx_a, mask), x_val);
 		packed = _mm_packs_epi32(idx_a, idx_a);
 		packed = _mm_packus_epi16(packed, packed);
