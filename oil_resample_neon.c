@@ -654,8 +654,9 @@ static void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 	}
 }
 
-static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
-	unsigned char *out)
+static inline __attribute__((always_inline))
+void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
+	unsigned char *out, int fill_alpha)
 {
 	int i;
 	float32x4_t c0, c1, c2, c3;
@@ -674,6 +675,7 @@ static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 	for (i=0; i+15<len; i+=16) {
 		int32x4_t idx2, idx3, idx4;
 		float32x4_t sum2, sum3, sum4;
+		uint8x16_t bytes;
 
 		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
 		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
@@ -687,26 +689,28 @@ static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 		sum4 = oil_ydot4_load_neon(in, i + 12, c0, c1, c2, c3);
 		idx4 = vcvtq_s32_f32(vmulq_f32(sum4, scale_v));
 
-		{
-			uint8x16_t bytes;
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 0)], vdupq_n_u8(0), 0);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 1)], bytes, 1);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 2)], bytes, 2);
+		bytes = vdupq_n_u8(255);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 0)], bytes, 0);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 1)], bytes, 1);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 2)], bytes, 2);
+		if (!fill_alpha)
 			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 3)], bytes, 3);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 0)], bytes, 4);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 1)], bytes, 5);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 2)], bytes, 6);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 0)], bytes, 4);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 1)], bytes, 5);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 2)], bytes, 6);
+		if (!fill_alpha)
 			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 3)], bytes, 7);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 0)], bytes, 8);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 1)], bytes, 9);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 2)], bytes, 10);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 0)], bytes, 8);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 1)], bytes, 9);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 2)], bytes, 10);
+		if (!fill_alpha)
 			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 3)], bytes, 11);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 0)], bytes, 12);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 1)], bytes, 13);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 2)], bytes, 14);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 0)], bytes, 12);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 1)], bytes, 13);
+		bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 2)], bytes, 14);
+		if (!fill_alpha)
 			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 3)], bytes, 15);
-			vst1q_u8(out + i, bytes);
-		}
+		vst1q_u8(out + i, bytes);
 	}
 
 	for (; i+7<len; i+=8) {
@@ -722,11 +726,11 @@ static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 		out[i]   = lut[vgetq_lane_s32(idx, 0)];
 		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
 		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
-		out[i+3] = lut[vgetq_lane_s32(idx, 3)];
+		out[i+3] = fill_alpha ? 255 : lut[vgetq_lane_s32(idx, 3)];
 		out[i+4] = lut[vgetq_lane_s32(idx2, 0)];
 		out[i+5] = lut[vgetq_lane_s32(idx2, 1)];
 		out[i+6] = lut[vgetq_lane_s32(idx2, 2)];
-		out[i+7] = lut[vgetq_lane_s32(idx2, 3)];
+		out[i+7] = fill_alpha ? 255 : lut[vgetq_lane_s32(idx2, 3)];
 	}
 
 	for (; i+3<len; i+=4) {
@@ -735,100 +739,28 @@ static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
 		out[i]   = lut[vgetq_lane_s32(idx, 0)];
 		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
 		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
-		out[i+3] = lut[vgetq_lane_s32(idx, 3)];
+		out[i+3] = fill_alpha ? 255 : lut[vgetq_lane_s32(idx, 3)];
 	}
 
-	for (; i<len; i++) {
-		out[i] = lut[(int)(
-			(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
-			coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+	if (!fill_alpha) {
+		for (; i<len; i++) {
+			out[i] = lut[(int)(
+				(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+				coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+		}
 	}
+}
+
+static void oil_yscale_up_rgb_neon(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	yscale_up_rgb_neon_impl(in, len, coeffs, out, 0);
 }
 
 static void oil_yscale_up_rgbx_neon(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
-	int i;
-	float32x4_t c0, c1, c2, c3;
-	float32x4_t sum;
-	float32x4_t scale_v;
-	int32x4_t idx;
-	unsigned char *lut;
-
-	c0 = vdupq_n_f32(coeffs[0]);
-	c1 = vdupq_n_f32(coeffs[1]);
-	c2 = vdupq_n_f32(coeffs[2]);
-	c3 = vdupq_n_f32(coeffs[3]);
-	lut = l2s_map;
-	scale_v = vdupq_n_f32((float)(l2s_len - 1));
-
-	for (i=0; i+15<len; i+=16) {
-		float32x4_t sum2, sum3, sum4;
-		int32x4_t idx2, idx3, idx4;
-
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
-
-		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
-		idx2 = vcvtq_s32_f32(vmulq_f32(sum2, scale_v));
-
-		sum3 = oil_ydot4_load_neon(in, i + 8, c0, c1, c2, c3);
-		idx3 = vcvtq_s32_f32(vmulq_f32(sum3, scale_v));
-
-		sum4 = oil_ydot4_load_neon(in, i + 12, c0, c1, c2, c3);
-		idx4 = vcvtq_s32_f32(vmulq_f32(sum4, scale_v));
-
-		{
-			uint8x16_t bytes;
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 0)], vdupq_n_u8(255), 0);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 1)], bytes, 1);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx, 2)], bytes, 2);
-			/* lane 3 = 255 (from vdupq_n_u8) */
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 0)], bytes, 4);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 1)], bytes, 5);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx2, 2)], bytes, 6);
-			/* lane 7 = 255 */
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 0)], bytes, 8);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 1)], bytes, 9);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx3, 2)], bytes, 10);
-			/* lane 11 = 255 */
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 0)], bytes, 12);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 1)], bytes, 13);
-			bytes = vsetq_lane_u8(lut[vgetq_lane_s32(idx4, 2)], bytes, 14);
-			/* lane 15 = 255 */
-			vst1q_u8(out + i, bytes);
-		}
-	}
-
-	for (; i+7<len; i+=8) {
-		float32x4_t sum2;
-		int32x4_t idx2;
-
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
-
-		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
-		idx2 = vcvtq_s32_f32(vmulq_f32(sum2, scale_v));
-
-		out[i]   = lut[vgetq_lane_s32(idx, 0)];
-		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
-		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
-		out[i+3] = 255;
-		out[i+4] = lut[vgetq_lane_s32(idx2, 0)];
-		out[i+5] = lut[vgetq_lane_s32(idx2, 1)];
-		out[i+6] = lut[vgetq_lane_s32(idx2, 2)];
-		out[i+7] = 255;
-	}
-
-	for (; i+3<len; i+=4) {
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
-
-		out[i]   = lut[vgetq_lane_s32(idx, 0)];
-		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
-		out[i+2] = lut[vgetq_lane_s32(idx, 2)];
-		out[i+3] = 255;
-	}
+	yscale_up_rgb_neon_impl(in, len, coeffs, out, 1);
 }
 
 static inline __attribute__((always_inline))
