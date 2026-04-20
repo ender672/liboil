@@ -718,6 +718,38 @@ static void test_scale_all(void)
 	test_scale_all_permutations(2, 1);
 }
 
+/* Sweep near-identity up/down scales (N <-> N+/-1) across sizes, colorspaces,
+ * and seeds. Prior worst-case errors all came from 99<->100; this targets that
+ * regime to exercise float accumulation precision in the x/y scale paths. */
+static void test_scale_near_identity(void)
+{
+	static const int sizes[] = {7, 16, 33, 50, 99, 100};
+	static const enum oil_colorspace spaces[] = {
+		OIL_CS_G, OIL_CS_GA, OIL_CS_RGB, OIL_CS_RGBA, OIL_CS_ARGB,
+		OIL_CS_CMYK, OIL_CS_RGBX, OIL_CS_RGB_NOGAMMA,
+		OIL_CS_RGBA_NOGAMMA, OIL_CS_RGBX_NOGAMMA,
+	};
+	static const unsigned int seeds[] = {1531289551u, 0xdeadbeefu};
+	int sz_i, cs_i, seed_i;
+	int n_sizes = sizeof(sizes) / sizeof(sizes[0]);
+	int n_spaces = sizeof(spaces) / sizeof(spaces[0]);
+	int n_seeds = sizeof(seeds) / sizeof(seeds[0]);
+
+	for (seed_i = 0; seed_i < n_seeds; seed_i++) {
+		srand(seeds[seed_i]);
+		for (sz_i = 0; sz_i < n_sizes; sz_i++) {
+			int n = sizes[sz_i];
+			for (cs_i = 0; cs_i < n_spaces; cs_i++) {
+				enum oil_colorspace cs = spaces[cs_i];
+				test_scale_square_rand(n, n + 1, cs);
+				if (n > 1) {
+					test_scale_square_rand(n, n - 1, cs);
+				}
+			}
+		}
+	}
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -736,6 +768,7 @@ static void run_tests(struct impl *impl)
 	test_scale_catrom_extremes();
 	test_out_discard_all();
 	test_out_not_ready_all();
+	test_scale_near_identity();
 }
 
 int main(void)
