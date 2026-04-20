@@ -142,6 +142,35 @@ static inline void oil_yacc_build_coeffs_avx2(float *coeffs_y_f, int tap,
 	*cy_hi = _mm256_set_m128(_mm_set1_ps(cy[3]), _mm_set1_ps(cy[2]));
 }
 
+/* Single-channel vertical FMA accumulate: load 4 tap floats from sums_y_out,
+ * FMA with broadcast(sum[0]) × coeffs_y, store back. Channel-major layout.
+ */
+static inline __attribute__((always_inline))
+void oil_yacc_fma1_avx2(float *sums_y_out, __m128 sum, __m128 coeffs_y)
+{
+	__m128 sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
+	__m128 sums_y = _mm_load_ps(sums_y_out);
+	sums_y = _mm_fmadd_ps(coeffs_y, sample_y, sums_y);
+	_mm_store_ps(sums_y_out, sums_y);
+}
+
+/* Two-channel vertical FMA accumulate using 256-bit: load 8 tap floats from
+ * sums_y_out (s0's 4 taps followed by s1's 4 taps), FMA both channels at
+ * once, store back. Channel-major layout.
+ */
+static inline __attribute__((always_inline))
+void oil_yacc_fma2_avx2(float *sums_y_out, __m128 s0, __m128 s1,
+	__m128 coeffs_y)
+{
+	__m128 b0 = _mm_shuffle_ps(s0, s0, _MM_SHUFFLE(0, 0, 0, 0));
+	__m128 b1 = _mm_shuffle_ps(s1, s1, _MM_SHUFFLE(0, 0, 0, 0));
+	__m256 sample_y = _mm256_set_m128(b1, b0);
+	__m256 cy256 = _mm256_set_m128(coeffs_y, coeffs_y);
+	__m256 sy256 = _mm256_loadu_ps(sums_y_out);
+	sy256 = _mm256_fmadd_ps(cy256, sample_y, sy256);
+	_mm256_storeu_ps(sums_y_out, sy256);
+}
+
 /* Vertical FMA accumulate for a 4-channel output pixel. s0..s3 each hold the
  * horizontal sum for one channel in lane 0; the four lane-0 values are packed
  * into a single 4-float channel vector and FMA'd into the 16-float ring-buffer
@@ -947,8 +976,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 	}
 
 	for (; i<out_width; i++) {
-		__m128 coeffs_y, sums_y, sample_y;
-		coeffs_y = _mm256_castps256_ps128(coeffs_y256);
+		__m128 coeffs_y = _mm256_castps256_ps128(coeffs_y256);
 		sum2 = _mm_setzero_ps();
 		sum3 = _mm_setzero_ps();
 		sum4 = _mm_setzero_ps();
@@ -980,10 +1008,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 			coeffs_x_f += 4;
 		}
 		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
+		oil_yacc_fma1_avx2(sums_y_out, sum, coeffs_y);
 		sums_y_out += 4;
 		sum = oil_shift_f_left_avx2(sum);
 	}
@@ -1029,8 +1054,7 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 	}
 
 	for (; i<out_width; i++) {
-		__m128 coeffs_y, sums_y, sample_y;
-		coeffs_y = _mm256_castps256_ps128(coeffs_y256);
+		__m128 coeffs_y = _mm256_castps256_ps128(coeffs_y256);
 		for (j=0; j<border_buf[i]; j++) {
 			coeffs_x = _mm_load_ps(coeffs_x_f);
 			sample_x = _mm_set1_ps(i2f_map[in[0]]);
@@ -1038,10 +1062,7 @@ static void oil_scale_down_g_avx2(unsigned char *in, float *sums_y_out,
 			in += 1;
 			coeffs_x_f += 4;
 		}
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
+		oil_yacc_fma1_avx2(sums_y_out, sum, coeffs_y);
 		sums_y_out += 4;
 		sum = oil_shift_f_left_avx2(sum);
 	}
@@ -1054,7 +1075,7 @@ static void oil_scale_down_ga_avx2(unsigned char *in, float *sums_y_out,
 	float alpha;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_g, sum_a;
 	__m128 sum_g2, sum_a2;
-	__m128 coeffs_y, sums_y, sample_y;
+	__m128 coeffs_y;
 
 	coeffs_y = _mm_load_ps(coeffs_y_f);
 
@@ -1112,17 +1133,8 @@ static void oil_scale_down_ga_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_a, sum_a, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+		oil_yacc_fma2_avx2(sums_y_out, sum_g, sum_a, coeffs_y);
+		sums_y_out += 8;
 
 		sum_g = oil_shift_f_left_avx2(sum_g);
 		sum_a = oil_shift_f_left_avx2(sum_a);
@@ -1136,7 +1148,7 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 	int i, j;
 	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
 	__m128 sum_r2, sum_g2, sum_b2;
-	__m128 coeffs_y, sums_y, sample_y;
+	__m128 coeffs_y;
 
 	coeffs_y = _mm_load_ps(coeffs_y_f);
 
@@ -1213,23 +1225,9 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_r, sum_r, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_g, sum_g, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = _mm_load_ps(sums_y_out);
-		sample_y = _mm_shuffle_ps(sum_b, sum_b, _MM_SHUFFLE(0, 0, 0, 0));
-		sums_y = _mm_add_ps(_mm_mul_ps(coeffs_y, sample_y), sums_y);
-		_mm_store_ps(sums_y_out, sums_y);
-		sums_y_out += 4;
+		oil_yacc_fma2_avx2(sums_y_out, sum_r, sum_g, coeffs_y);
+		oil_yacc_fma1_avx2(sums_y_out + 8, sum_b, coeffs_y);
+		sums_y_out += 12;
 
 		sum_r = oil_shift_f_left_avx2(sum_r);
 		sum_g = oil_shift_f_left_avx2(sum_g);
