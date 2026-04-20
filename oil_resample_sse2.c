@@ -97,6 +97,37 @@ __m128 oil_consume_ch0_x4_sse2(float *sums)
 	return vals;
 }
 
+/* Pack lane 0 of four vectors into a single vector [a0, b0, c0, d0]. Used
+ * to gather per-channel horizontal sums into one packed pixel for the
+ * tap-ring-buffer vertical accumulation in downscale paths.
+ */
+static inline __attribute__((always_inline))
+__m128 oil_pack_lane0_x4_sse2(__m128 a, __m128 b, __m128 c, __m128 d)
+{
+	__m128 ab = _mm_unpacklo_ps(a, b);
+	__m128 cd = _mm_unpacklo_ps(c, d);
+	return _mm_movelh_ps(ab, cd);
+}
+
+/* Multiply-accumulate `px` into four ring-buffer tap slots of `sums_y_out`
+ * using per-tap scalar coefficients broadcast in cy0..cy3. The offN args
+ * select tap positions after the ring rotation.
+ */
+static inline __attribute__((always_inline))
+void oil_vaccum_tap4_sse2(float *sums_y_out, __m128 px,
+	int off0, int off1, int off2, int off3,
+	__m128 cy0, __m128 cy1, __m128 cy2, __m128 cy3)
+{
+	_mm_store_ps(sums_y_out + off0,
+		_mm_add_ps(_mm_mul_ps(cy0, px), _mm_load_ps(sums_y_out + off0)));
+	_mm_store_ps(sums_y_out + off1,
+		_mm_add_ps(_mm_mul_ps(cy1, px), _mm_load_ps(sums_y_out + off1)));
+	_mm_store_ps(sums_y_out + off2,
+		_mm_add_ps(_mm_mul_ps(cy2, px), _mm_load_ps(sums_y_out + off2)));
+	_mm_store_ps(sums_y_out + off3,
+		_mm_add_ps(_mm_mul_ps(cy3, px), _mm_load_ps(sums_y_out + off3)));
+}
+
 /* 4-tap y-axis dot product: loads 4 floats from each of in[0..3] at offset
  * `off` and returns c0*in[0] + c1*in[1] + c2*in[2] + c3*in[3].
  */
@@ -1262,32 +1293,10 @@ static inline __attribute__((always_inline)) void scale_down_alpha_sse2_impl(
 			}
 		}
 
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			__m128 rg, ba, rgba, sy;
-
-			rg = _mm_unpacklo_ps(sum_r, sum_g);
-			ba = _mm_unpacklo_ps(sum_b, sum_a);
-			rgba = _mm_movelh_ps(rg, ba);
-
-			sy = _mm_load_ps(sums_y_out + off0);
-			sy = _mm_add_ps(_mm_mul_ps(cy0, rgba), sy);
-			_mm_store_ps(sums_y_out + off0, sy);
-
-			sy = _mm_load_ps(sums_y_out + off1);
-			sy = _mm_add_ps(_mm_mul_ps(cy1, rgba), sy);
-			_mm_store_ps(sums_y_out + off1, sy);
-
-			sy = _mm_load_ps(sums_y_out + off2);
-			sy = _mm_add_ps(_mm_mul_ps(cy2, rgba), sy);
-			_mm_store_ps(sums_y_out + off2, sy);
-
-			sy = _mm_load_ps(sums_y_out + off3);
-			sy = _mm_add_ps(_mm_mul_ps(cy3, rgba), sy);
-			_mm_store_ps(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		oil_vaccum_tap4_sse2(sums_y_out,
+			oil_pack_lane0_x4_sse2(sum_r, sum_g, sum_b, sum_a),
+			off0, off1, off2, off3, cy0, cy1, cy2, cy3);
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_sse2(sum_r);
 		sum_g = oil_shift_f_left_sse2(sum_g);
@@ -1468,31 +1477,10 @@ static void oil_scale_down_cmyk_sse2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		{
-			__m128 cm, yk, cmyk, sy;
-
-			cm = _mm_unpacklo_ps(sum_c, sum_m);
-			yk = _mm_unpacklo_ps(sum_y, sum_k);
-			cmyk = _mm_movelh_ps(cm, yk);
-
-			sy = _mm_load_ps(sums_y_out + off0);
-			sy = _mm_add_ps(_mm_mul_ps(cy0, cmyk), sy);
-			_mm_store_ps(sums_y_out + off0, sy);
-
-			sy = _mm_load_ps(sums_y_out + off1);
-			sy = _mm_add_ps(_mm_mul_ps(cy1, cmyk), sy);
-			_mm_store_ps(sums_y_out + off1, sy);
-
-			sy = _mm_load_ps(sums_y_out + off2);
-			sy = _mm_add_ps(_mm_mul_ps(cy2, cmyk), sy);
-			_mm_store_ps(sums_y_out + off2, sy);
-
-			sy = _mm_load_ps(sums_y_out + off3);
-			sy = _mm_add_ps(_mm_mul_ps(cy3, cmyk), sy);
-			_mm_store_ps(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		oil_vaccum_tap4_sse2(sums_y_out,
+			oil_pack_lane0_x4_sse2(sum_c, sum_m, sum_y, sum_k),
+			off0, off1, off2, off3, cy0, cy1, cy2, cy3);
+		sums_y_out += 16;
 
 		sum_c = oil_shift_f_left_sse2(sum_c);
 		sum_m = oil_shift_f_left_sse2(sum_m);
@@ -1601,32 +1589,11 @@ void oil_scale_down_rgbx_sse2(unsigned char *in, float *sums_y_out,
 			}
 		}
 
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			__m128 rg, bx, rgbx, sy;
-
-			rg = _mm_unpacklo_ps(sum_r, sum_g);
-			bx = _mm_unpacklo_ps(sum_b, sum_b);
-			rgbx = _mm_movelh_ps(rg, bx);
-
-			sy = _mm_load_ps(sums_y_out + off0);
-			sy = _mm_add_ps(_mm_mul_ps(cy0, rgbx), sy);
-			_mm_store_ps(sums_y_out + off0, sy);
-
-			sy = _mm_load_ps(sums_y_out + off1);
-			sy = _mm_add_ps(_mm_mul_ps(cy1, rgbx), sy);
-			_mm_store_ps(sums_y_out + off1, sy);
-
-			sy = _mm_load_ps(sums_y_out + off2);
-			sy = _mm_add_ps(_mm_mul_ps(cy2, rgbx), sy);
-			_mm_store_ps(sums_y_out + off2, sy);
-
-			sy = _mm_load_ps(sums_y_out + off3);
-			sy = _mm_add_ps(_mm_mul_ps(cy3, rgbx), sy);
-			_mm_store_ps(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
+		/* X lane is unused downstream; pass sum_b as filler. */
+		oil_vaccum_tap4_sse2(sums_y_out,
+			oil_pack_lane0_x4_sse2(sum_r, sum_g, sum_b, sum_b),
+			off0, off1, off2, off3, cy0, cy1, cy2, cy3);
+		sums_y_out += 16;
 
 		sum_r = oil_shift_f_left_sse2(sum_r);
 		sum_g = oil_shift_f_left_sse2(sum_g);
