@@ -2070,11 +2070,8 @@ static void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
 {
 	int i;
 	float32x4_t c0, c1, c2, c3;
-	float32x4_t sum, sum2;
 	float32x4_t scale_v, one, zero, half;
-	float32x4_t alpha_v, clamped;
 	int32x4_t idx;
-	float alpha, alpha2;
 
 	c0 = vdupq_n_f32(coeffs[0]);
 	c1 = vdupq_n_f32(coeffs[1]);
@@ -2085,133 +2082,31 @@ static void oil_yscale_up_rgba_nogamma_neon(float **in, int len, float *coeffs,
 	zero = vdupq_n_f32(0.0f);
 	half = vdupq_n_f32(0.5f);
 
+#define UNPREMUL_STORE_NOGAMMA(s, dst) do { \
+		idx = oil_unpremul_rgba_idx_neon((s), zero, one, scale_v, half); \
+		(dst)[0] = vgetq_lane_s32(idx, 0); \
+		(dst)[1] = vgetq_lane_s32(idx, 1); \
+		(dst)[2] = vgetq_lane_s32(idx, 2); \
+		(dst)[3] = vgetq_lane_s32(idx, 3); \
+	} while (0)
+
 	for (i=0; i+15<len; i+=16) {
-		float32x4_t s0, s1, s2, s3;
-		float a0, a1, a2, a3;
-
-		/* Compute weighted sums for 4 pixels */
-		s0 = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-
-		s1 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
-
-		s2 = oil_ydot4_load_neon(in, i + 8, c0, c1, c2, c3);
-
-		s3 = oil_ydot4_load_neon(in, i + 12, c0, c1, c2, c3);
-
-		/* Alpha handling for pixel 0 */
-		a0 = vgetq_lane_f32(s0, 3);
-		if (a0 > 1.0f) a0 = 1.0f;
-		else if (a0 < 0.0f) a0 = 0.0f;
-		if (a0 != 0) {
-			alpha_v = vdupq_n_f32(a0);
-			s0 = vdivq_f32(s0, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(s0, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i]   = vgetq_lane_s32(idx, 0);
-		out[i+1] = vgetq_lane_s32(idx, 1);
-		out[i+2] = vgetq_lane_s32(idx, 2);
-		out[i+3] = (int)(a0 * 255.0f + 0.5f);
-
-		/* Alpha handling for pixel 1 */
-		a1 = vgetq_lane_f32(s1, 3);
-		if (a1 > 1.0f) a1 = 1.0f;
-		else if (a1 < 0.0f) a1 = 0.0f;
-		if (a1 != 0) {
-			alpha_v = vdupq_n_f32(a1);
-			s1 = vdivq_f32(s1, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(s1, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i+4] = vgetq_lane_s32(idx, 0);
-		out[i+5] = vgetq_lane_s32(idx, 1);
-		out[i+6] = vgetq_lane_s32(idx, 2);
-		out[i+7] = (int)(a1 * 255.0f + 0.5f);
-
-		/* Alpha handling for pixel 2 */
-		a2 = vgetq_lane_f32(s2, 3);
-		if (a2 > 1.0f) a2 = 1.0f;
-		else if (a2 < 0.0f) a2 = 0.0f;
-		if (a2 != 0) {
-			alpha_v = vdupq_n_f32(a2);
-			s2 = vdivq_f32(s2, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(s2, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i+8]  = vgetq_lane_s32(idx, 0);
-		out[i+9]  = vgetq_lane_s32(idx, 1);
-		out[i+10] = vgetq_lane_s32(idx, 2);
-		out[i+11] = (int)(a2 * 255.0f + 0.5f);
-
-		/* Alpha handling for pixel 3 */
-		a3 = vgetq_lane_f32(s3, 3);
-		if (a3 > 1.0f) a3 = 1.0f;
-		else if (a3 < 0.0f) a3 = 0.0f;
-		if (a3 != 0) {
-			alpha_v = vdupq_n_f32(a3);
-			s3 = vdivq_f32(s3, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(s3, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i+12] = vgetq_lane_s32(idx, 0);
-		out[i+13] = vgetq_lane_s32(idx, 1);
-		out[i+14] = vgetq_lane_s32(idx, 2);
-		out[i+15] = (int)(a3 * 255.0f + 0.5f);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i,      c0, c1, c2, c3), out + i);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i + 4,  c0, c1, c2, c3), out + i + 4);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i + 8,  c0, c1, c2, c3), out + i + 8);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i + 12, c0, c1, c2, c3), out + i + 12);
 	}
 
 	for (; i+7<len; i+=8) {
-		/* Pixel 0 */
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-
-		/* Pixel 1 */
-		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
-
-		alpha = vgetq_lane_f32(sum, 3);
-		if (alpha > 1.0f) alpha = 1.0f;
-		else if (alpha < 0.0f) alpha = 0.0f;
-		if (alpha != 0) {
-			alpha_v = vdupq_n_f32(alpha);
-			sum = vdivq_f32(sum, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i]   = vgetq_lane_s32(idx, 0);
-		out[i+1] = vgetq_lane_s32(idx, 1);
-		out[i+2] = vgetq_lane_s32(idx, 2);
-		out[i+3] = (int)(alpha * 255.0f + 0.5f);
-
-		alpha2 = vgetq_lane_f32(sum2, 3);
-		if (alpha2 > 1.0f) alpha2 = 1.0f;
-		else if (alpha2 < 0.0f) alpha2 = 0.0f;
-		if (alpha2 != 0) {
-			alpha_v = vdupq_n_f32(alpha2);
-			sum2 = vdivq_f32(sum2, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(sum2, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i+4] = vgetq_lane_s32(idx, 0);
-		out[i+5] = vgetq_lane_s32(idx, 1);
-		out[i+6] = vgetq_lane_s32(idx, 2);
-		out[i+7] = (int)(alpha2 * 255.0f + 0.5f);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i,     c0, c1, c2, c3), out + i);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3), out + i + 4);
 	}
 
 	for (; i<len; i+=4) {
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
-
-		alpha = vgetq_lane_f32(sum, 3);
-		if (alpha > 1.0f) alpha = 1.0f;
-		else if (alpha < 0.0f) alpha = 0.0f;
-		if (alpha != 0) {
-			alpha_v = vdupq_n_f32(alpha);
-			sum = vdivq_f32(sum, alpha_v);
-		}
-		clamped = vminq_f32(vmaxq_f32(sum, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(clamped, scale_v), half));
-		out[i]   = vgetq_lane_s32(idx, 0);
-		out[i+1] = vgetq_lane_s32(idx, 1);
-		out[i+2] = vgetq_lane_s32(idx, 2);
-		out[i+3] = (int)(alpha * 255.0f + 0.5f);
+		UNPREMUL_STORE_NOGAMMA(oil_ydot4_load_neon(in, i, c0, c1, c2, c3), out + i);
 	}
+
+#undef UNPREMUL_STORE_NOGAMMA
 }
 
 static void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, float *out,
