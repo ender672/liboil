@@ -1725,70 +1725,14 @@ static void oil_yscale_out_rgba_nogamma_sse2(float *sums, int width,
 	yscale_out_nogamma_sse2_impl(sums, width, out, tap, 0);
 }
 
-static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
-	unsigned char *out)
+static inline __attribute__((always_inline)) void yscale_up_nogamma_sse2_impl(
+	float **in, int len, float *coeffs, unsigned char *out, int is_rgbx)
 {
 	int i;
 	__m128 c0, c1, c2, c3;
 	__m128 sum_a, sum_b;
 	__m128 scale, half, one, zero;
-	__m128i idx_a, idx_b, packed;
-
-	c0 = _mm_set1_ps(coeffs[0]);
-	c1 = _mm_set1_ps(coeffs[1]);
-	c2 = _mm_set1_ps(coeffs[2]);
-	c3 = _mm_set1_ps(coeffs[3]);
-	scale = _mm_set1_ps(255.0f);
-	half = _mm_set1_ps(0.5f);
-	one = _mm_set1_ps(1.0f);
-	zero = _mm_setzero_ps();
-
-	for (i=0; i+7<len; i+=8) {
-		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
-		sum_b = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
-
-		idx_a = oil_unpremul_rgba_idx_sse2(sum_a, zero, one, scale, half);
-		idx_b = oil_unpremul_rgba_idx_sse2(sum_b, zero, one, scale, half);
-
-		packed = _mm_packs_epi32(idx_a, idx_b);
-		packed = _mm_packus_epi16(packed, packed);
-		_mm_storel_epi64((__m128i *)(out + i), packed);
-	}
-
-	for (; i<len; i+=4) {
-		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
-
-		idx_a = oil_unpremul_rgba_idx_sse2(sum_a, zero, one, scale, half);
-		packed = _mm_packs_epi32(idx_a, idx_a);
-		packed = _mm_packus_epi16(packed, packed);
-		*(int *)(out + i) = _mm_cvtsi128_si32(packed);
-	}
-}
-
-static void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out,
-	float *coeff_buf, int *border_buf)
-{
-	xscale_up_alpha_sse2_impl(in, width_in, out, coeff_buf, border_buf,
-		3, 0, i2f_map);
-}
-
-static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
-	int tap)
-{
-	scale_down_alpha_sse2_impl(in, sums_y_out, out_width, coeffs_x_f,
-		border_buf, coeffs_y_f, tap, 3, 0, i2f_map);
-}
-
-static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
-	unsigned char *out)
-{
-	int i;
-	__m128 c0, c1, c2, c3;
-	__m128 sum_a, sum_b;
-	__m128 scale, half, one, zero;
-	__m128i idx_a, idx_b, packed;
-	__m128i mask, x_val;
+	__m128i idx_a, idx_b, packed, mask, x_val;
 
 	c0 = _mm_set1_ps(coeffs[0]);
 	c1 = _mm_set1_ps(coeffs[1]);
@@ -1805,14 +1749,11 @@ static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		sum_b = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 
-		/* Clamp, scale, and force X=255 for each pixel */
-		idx_a = oil_clamp_round_idx_sse2(sum_a, zero, one, scale, half);
-		idx_a = _mm_or_si128(_mm_and_si128(idx_a, mask), x_val);
+		idx_a = yscale_out_nogamma_idx_sse2(sum_a, zero, one, scale, half,
+			mask, x_val, is_rgbx);
+		idx_b = yscale_out_nogamma_idx_sse2(sum_b, zero, one, scale, half,
+			mask, x_val, is_rgbx);
 
-		idx_b = oil_clamp_round_idx_sse2(sum_b, zero, one, scale, half);
-		idx_b = _mm_or_si128(_mm_and_si128(idx_b, mask), x_val);
-
-		/* Pack both pixels to bytes and store 8 bytes */
 		packed = _mm_packs_epi32(idx_a, idx_b);
 		packed = _mm_packus_epi16(packed, packed);
 		_mm_storel_epi64((__m128i *)(out + i), packed);
@@ -1821,12 +1762,39 @@ static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 	for (; i<len; i+=4) {
 		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 
-		idx_a = oil_clamp_round_idx_sse2(sum_a, zero, one, scale, half);
-		idx_a = _mm_or_si128(_mm_and_si128(idx_a, mask), x_val);
+		idx_a = yscale_out_nogamma_idx_sse2(sum_a, zero, one, scale, half,
+			mask, x_val, is_rgbx);
 		packed = _mm_packs_epi32(idx_a, idx_a);
 		packed = _mm_packus_epi16(packed, packed);
 		*(int *)(out + i) = _mm_cvtsi128_si32(packed);
 	}
+}
+
+static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	yscale_up_nogamma_sse2_impl(in, len, coeffs, out, 0);
+}
+
+static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	yscale_up_nogamma_sse2_impl(in, len, coeffs, out, 1);
+}
+
+static void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out,
+	float *coeff_buf, int *border_buf)
+{
+	xscale_up_alpha_sse2_impl(in, width_in, out, coeff_buf, border_buf,
+		3, 0, i2f_map);
+}
+
+static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	int tap)
+{
+	scale_down_alpha_sse2_impl(in, sums_y_out, out_width, coeffs_x_f,
+		border_buf, coeffs_y_f, tap, 3, 0, i2f_map);
 }
 
 /* SSE2 dispatch functions */
