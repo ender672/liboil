@@ -1512,8 +1512,10 @@ static void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
+static inline __attribute__((always_inline))
+void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	float *lut)
 {
 	int i, j;
 	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
@@ -1536,22 +1538,22 @@ static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 				coeffs_x = vld1q_f32(coeffs_x_f);
 				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
 
-				sample_x = vdupq_n_f32(s2l_map[in[0]]);
+				sample_x = vdupq_n_f32(lut[in[0]]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[in[1]]);
+				sample_x = vdupq_n_f32(lut[in[1]]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[in[2]]);
+				sample_x = vdupq_n_f32(lut[in[2]]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
-				sample_x = vdupq_n_f32(s2l_map[in[3]]);
+				sample_x = vdupq_n_f32(lut[in[3]]);
 				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_r2);
 
-				sample_x = vdupq_n_f32(s2l_map[in[4]]);
+				sample_x = vdupq_n_f32(lut[in[4]]);
 				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
 
-				sample_x = vdupq_n_f32(s2l_map[in[5]]);
+				sample_x = vdupq_n_f32(lut[in[5]]);
 				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_b2);
 
 				in += 6;
@@ -1561,13 +1563,13 @@ static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 			for (; j<border_buf[i]; j++) {
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(s2l_map[in[0]]);
+				sample_x = vdupq_n_f32(lut[in[0]]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[in[1]]);
+				sample_x = vdupq_n_f32(lut[in[1]]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[in[2]]);
+				sample_x = vdupq_n_f32(lut[in[2]]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
 				in += 3;
@@ -1581,13 +1583,13 @@ static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 			for (j=0; j<border_buf[i]; j++) {
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(s2l_map[in[0]]);
+				sample_x = vdupq_n_f32(lut[in[0]]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[in[1]]);
+				sample_x = vdupq_n_f32(lut[in[1]]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[in[2]]);
+				sample_x = vdupq_n_f32(lut[in[2]]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
 				in += 3;
@@ -1613,9 +1615,9 @@ static void oil_scale_down_rgb_neon(unsigned char *in, float *sums_y_out,
 		vst1q_f32(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
+		sum_r = oil_shift_f_left_neon(sum_r);
+		sum_g = oil_shift_f_left_neon(sum_g);
+		sum_b = oil_shift_f_left_neon(sum_b);
 	}
 }
 
@@ -1695,18 +1697,21 @@ void scale_down_alpha_neon_impl(unsigned char *in, float *sums_y_out,
 			}
 
 			for (; j<border_buf[i]; j++) {
+				unsigned int px;
+				memcpy(&px, in, 4);
+
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
 				coeffs_x_a = vmulq_f32(coeffs_x,
-					vdupq_n_f32(i2f_map[in[a_off]]));
+					vdupq_n_f32(i2f_map[PX_BYTE(px, a_off)]));
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off)]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off + 1]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off + 1)]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off + 2]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off + 2)]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
 
 				sum_a = vaddq_f32(coeffs_x_a, sum_a);
@@ -1721,18 +1726,21 @@ void scale_down_alpha_neon_impl(unsigned char *in, float *sums_y_out,
 			sum_a = vaddq_f32(sum_a, sum_a2);
 		} else {
 			for (j=0; j<border_buf[i]; j++) {
+				unsigned int px;
+				memcpy(&px, in, 4);
+
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
 				coeffs_x_a = vmulq_f32(coeffs_x,
-					vdupq_n_f32(i2f_map[in[a_off]]));
+					vdupq_n_f32(i2f_map[PX_BYTE(px, a_off)]));
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off)]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off + 1]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off + 1)]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(rgb_lut[in[rgb_off + 2]]);
+				sample_x = vdupq_n_f32(rgb_lut[PX_BYTE(px, rgb_off + 2)]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
 
 				sum_a = vaddq_f32(coeffs_x_a, sum_a);
@@ -1793,9 +1801,18 @@ static void oil_scale_down_argb_neon(unsigned char *in, float *sums_y_out,
 		border_buf, coeffs_y_f, tap, 0, 1, s2l_map);
 }
 
-static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
+static void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap)
+{
+	scale_down_alpha_neon_impl(in, sums_y_out, out_width, coeffs_x_f,
+		border_buf, coeffs_y_f, tap, 3, 0, i2f_map);
+}
+
+static inline __attribute__((always_inline))
+void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
+	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
+	int tap, float *lut)
 {
 	int i, j;
 	int off0, off1, off2, off3;
@@ -1830,22 +1847,22 @@ static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 				coeffs_x = vld1q_f32(coeffs_x_f);
 				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
 
-				sample_x = vdupq_n_f32(s2l_map[px0 & 0xFF]);
+				sample_x = vdupq_n_f32(lut[px0 & 0xFF]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[(px0 >> 8) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px0 >> 8) & 0xFF]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[(px0 >> 16) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px0 >> 16) & 0xFF]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
-				sample_x = vdupq_n_f32(s2l_map[px1 & 0xFF]);
+				sample_x = vdupq_n_f32(lut[px1 & 0xFF]);
 				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_r2);
 
-				sample_x = vdupq_n_f32(s2l_map[(px1 >> 8) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px1 >> 8) & 0xFF]);
 				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
 
-				sample_x = vdupq_n_f32(s2l_map[(px1 >> 16) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px1 >> 16) & 0xFF]);
 				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_b2);
 
 				in += 8;
@@ -1858,13 +1875,13 @@ static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(s2l_map[px & 0xFF]);
+				sample_x = vdupq_n_f32(lut[px & 0xFF]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[(px >> 8) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px >> 8) & 0xFF]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[(px >> 16) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px >> 16) & 0xFF]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
 				in += 4;
@@ -1881,13 +1898,13 @@ static void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 
 				coeffs_x = vld1q_f32(coeffs_x_f);
 
-				sample_x = vdupq_n_f32(s2l_map[px & 0xFF]);
+				sample_x = vdupq_n_f32(lut[px & 0xFF]);
 				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
 
-				sample_x = vdupq_n_f32(s2l_map[(px >> 8) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px >> 8) & 0xFF]);
 				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
 
-				sample_x = vdupq_n_f32(s2l_map[(px >> 16) & 0xFF]);
+				sample_x = vdupq_n_f32(lut[(px >> 16) & 0xFF]);
 				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
 
 				in += 4;
@@ -2138,113 +2155,6 @@ static void oil_xscale_up_rgb_nogamma_neon(unsigned char *in, int width_in, floa
 		}
 
 		in += 3;
-	}
-}
-
-static void oil_scale_down_rgb_nogamma_neon(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
-{
-	int i, j;
-	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
-	float32x4_t sum_r2, sum_g2, sum_b2;
-	float32x4_t coeffs_y, sums_y, sample_y;
-
-	coeffs_y = vld1q_f32(coeffs_y_f);
-
-	sum_r = vdupq_n_f32(0.0f);
-	sum_g = vdupq_n_f32(0.0f);
-	sum_b = vdupq_n_f32(0.0f);
-
-	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
-			sum_r2 = vdupq_n_f32(0.0f);
-			sum_g2 = vdupq_n_f32(0.0f);
-			sum_b2 = vdupq_n_f32(0.0f);
-
-			for (j=0; j+1<border_buf[i]; j+=2) {
-				coeffs_x = vld1q_f32(coeffs_x_f);
-				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
-
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				sample_x = vdupq_n_f32(i2f_map[in[3]]);
-				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_r2);
-
-				sample_x = vdupq_n_f32(i2f_map[in[4]]);
-				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
-
-				sample_x = vdupq_n_f32(i2f_map[in[5]]);
-				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_b2);
-
-				in += 6;
-				coeffs_x_f += 8;
-			}
-
-			for (; j<border_buf[i]; j++) {
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				in += 3;
-				coeffs_x_f += 4;
-			}
-
-			sum_r = vaddq_f32(sum_r, sum_r2);
-			sum_g = vaddq_f32(sum_g, sum_g2);
-			sum_b = vaddq_f32(sum_b, sum_b2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				sample_x = vdupq_n_f32(i2f_map[in[0]]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[in[1]]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[in[2]]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				in += 3;
-				coeffs_x_f += 4;
-			}
-		}
-
-		sums_y = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_r, 0));
-		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
-		vst1q_f32(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_g, 0));
-		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
-		vst1q_f32(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sums_y = vld1q_f32(sums_y_out);
-		sample_y = vdupq_n_f32(vgetq_lane_f32(sum_b, 0));
-		sums_y = vaddq_f32(vmulq_f32(coeffs_y, sample_y), sums_y);
-		vst1q_f32(sums_y_out, sums_y);
-		sums_y_out += 4;
-
-		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
 	}
 }
 
@@ -2500,167 +2410,6 @@ static void oil_xscale_up_rgba_nogamma_neon(unsigned char *in, int width_in, flo
 		}
 
 		in += 4;
-	}
-}
-
-static void oil_scale_down_rgba_nogamma_neon(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
-	int tap)
-{
-	int i, j;
-	int off0, off1, off2, off3;
-	float32x4_t coeffs_x, coeffs_x2, coeffs_x_a, coeffs_x2_a, sample_x;
-	float32x4_t sum_r, sum_g, sum_b, sum_a;
-	float32x4_t sum_r2, sum_g2, sum_b2, sum_a2;
-	float32x4_t cy0, cy1, cy2, cy3;
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
-	cy0 = vdupq_n_f32(coeffs_y_f[0]);
-	cy1 = vdupq_n_f32(coeffs_y_f[1]);
-	cy2 = vdupq_n_f32(coeffs_y_f[2]);
-	cy3 = vdupq_n_f32(coeffs_y_f[3]);
-
-	sum_r = vdupq_n_f32(0.0f);
-	sum_g = vdupq_n_f32(0.0f);
-	sum_b = vdupq_n_f32(0.0f);
-	sum_a = vdupq_n_f32(0.0f);
-
-	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
-			sum_r2 = vdupq_n_f32(0.0f);
-			sum_g2 = vdupq_n_f32(0.0f);
-			sum_b2 = vdupq_n_f32(0.0f);
-			sum_a2 = vdupq_n_f32(0.0f);
-
-			for (j=0; j+1<border_buf[i]; j+=2) {
-				unsigned int px0, px1;
-				memcpy(&px0, in, 4);
-				memcpy(&px1, in + 4, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
-
-				coeffs_x_a = vmulq_f32(coeffs_x,
-					vdupq_n_f32(i2f_map[px0 >> 24]));
-
-				sample_x = vdupq_n_f32(i2f_map[px0 & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px0 >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px0 >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
-
-				sum_a = vaddq_f32(coeffs_x_a, sum_a);
-
-				coeffs_x2_a = vmulq_f32(coeffs_x2,
-					vdupq_n_f32(i2f_map[px1 >> 24]));
-
-				sample_x = vdupq_n_f32(i2f_map[px1 & 0xFF]);
-				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_r2);
-
-				sample_x = vdupq_n_f32(i2f_map[(px1 >> 8) & 0xFF]);
-				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_g2);
-
-				sample_x = vdupq_n_f32(i2f_map[(px1 >> 16) & 0xFF]);
-				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2_a, sample_x), sum_b2);
-
-				sum_a2 = vaddq_f32(coeffs_x2_a, sum_a2);
-
-				in += 8;
-				coeffs_x_f += 8;
-			}
-
-			for (; j<border_buf[i]; j++) {
-				unsigned int px;
-				memcpy(&px, in, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				coeffs_x_a = vmulq_f32(coeffs_x,
-					vdupq_n_f32(i2f_map[px >> 24]));
-
-				sample_x = vdupq_n_f32(i2f_map[px & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
-
-				sum_a = vaddq_f32(coeffs_x_a, sum_a);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-
-			sum_r = vaddq_f32(sum_r, sum_r2);
-			sum_g = vaddq_f32(sum_g, sum_g2);
-			sum_b = vaddq_f32(sum_b, sum_b2);
-			sum_a = vaddq_f32(sum_a, sum_a2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				unsigned int px;
-				memcpy(&px, in, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				coeffs_x_a = vmulq_f32(coeffs_x,
-					vdupq_n_f32(i2f_map[px >> 24]));
-
-				sample_x = vdupq_n_f32(i2f_map[px & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x_a, sample_x), sum_b);
-
-				sum_a = vaddq_f32(coeffs_x_a, sum_a);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-		}
-
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			float32x4_t rgba, sy;
-
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_r, 0), vdupq_n_f32(0), 0);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_g, 0), rgba, 1);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_b, 0), rgba, 2);
-			rgba = vsetq_lane_f32(vgetq_lane_f32(sum_a, 0), rgba, 3);
-
-			sy = vld1q_f32(sums_y_out + off0);
-			sy = vfmaq_f32(sy, cy0, rgba);
-			vst1q_f32(sums_y_out + off0, sy);
-
-			sy = vld1q_f32(sums_y_out + off1);
-			sy = vfmaq_f32(sy, cy1, rgba);
-			vst1q_f32(sums_y_out + off1, sy);
-
-			sy = vld1q_f32(sums_y_out + off2);
-			sy = vfmaq_f32(sy, cy2, rgba);
-			vst1q_f32(sums_y_out + off2, sy);
-
-			sy = vld1q_f32(sums_y_out + off3);
-			sy = vfmaq_f32(sy, cy3, rgba);
-			vst1q_f32(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
-
-		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
-		sum_a = vextq_f32(sum_a, vdupq_n_f32(0), 1);
 	}
 }
 
@@ -2936,156 +2685,6 @@ static void oil_xscale_up_rgbx_nogamma_neon(unsigned char *in, int width_in, flo
 	}
 }
 
-static void oil_scale_down_rgbx_nogamma_neon(unsigned char *in, float *sums_y_out,
-	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
-	int tap)
-{
-	int i, j;
-	int off0, off1, off2, off3;
-	float32x4_t coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b, sum_x;
-	float32x4_t sum_r2, sum_g2, sum_b2, sum_x2;
-	float32x4_t one_v;
-	float32x4_t cy0, cy1, cy2, cy3;
-
-	off0 = tap * 4;
-	off1 = ((tap + 1) & 3) * 4;
-	off2 = ((tap + 2) & 3) * 4;
-	off3 = ((tap + 3) & 3) * 4;
-	cy0 = vdupq_n_f32(coeffs_y_f[0]);
-	cy1 = vdupq_n_f32(coeffs_y_f[1]);
-	cy2 = vdupq_n_f32(coeffs_y_f[2]);
-	cy3 = vdupq_n_f32(coeffs_y_f[3]);
-	one_v = vdupq_n_f32(1.0f);
-
-	sum_r = vdupq_n_f32(0.0f);
-	sum_g = vdupq_n_f32(0.0f);
-	sum_b = vdupq_n_f32(0.0f);
-	sum_x = vdupq_n_f32(0.0f);
-
-	for (i=0; i<out_width; i++) {
-		if (border_buf[i] >= 4) {
-			sum_r2 = vdupq_n_f32(0.0f);
-			sum_g2 = vdupq_n_f32(0.0f);
-			sum_b2 = vdupq_n_f32(0.0f);
-			sum_x2 = vdupq_n_f32(0.0f);
-
-			for (j=0; j+1<border_buf[i]; j+=2) {
-				unsigned int px0, px1;
-				memcpy(&px0, in, 4);
-				memcpy(&px1, in + 4, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-				coeffs_x2 = vld1q_f32(coeffs_x_f + 4);
-
-				sample_x = vdupq_n_f32(i2f_map[px0 & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px0 >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px0 >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				sum_x = vaddq_f32(vmulq_f32(coeffs_x, one_v), sum_x);
-
-				sample_x = vdupq_n_f32(i2f_map[px1 & 0xFF]);
-				sum_r2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_r2);
-
-				sample_x = vdupq_n_f32(i2f_map[(px1 >> 8) & 0xFF]);
-				sum_g2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_g2);
-
-				sample_x = vdupq_n_f32(i2f_map[(px1 >> 16) & 0xFF]);
-				sum_b2 = vaddq_f32(vmulq_f32(coeffs_x2, sample_x), sum_b2);
-
-				sum_x2 = vaddq_f32(vmulq_f32(coeffs_x2, one_v), sum_x2);
-
-				in += 8;
-				coeffs_x_f += 8;
-			}
-
-			for (; j<border_buf[i]; j++) {
-				unsigned int px;
-				memcpy(&px, in, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				sample_x = vdupq_n_f32(i2f_map[px & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				sum_x = vaddq_f32(vmulq_f32(coeffs_x, one_v), sum_x);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-
-			sum_r = vaddq_f32(sum_r, sum_r2);
-			sum_g = vaddq_f32(sum_g, sum_g2);
-			sum_b = vaddq_f32(sum_b, sum_b2);
-			sum_x = vaddq_f32(sum_x, sum_x2);
-		} else {
-			for (j=0; j<border_buf[i]; j++) {
-				unsigned int px;
-				memcpy(&px, in, 4);
-
-				coeffs_x = vld1q_f32(coeffs_x_f);
-
-				sample_x = vdupq_n_f32(i2f_map[px & 0xFF]);
-				sum_r = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_r);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 8) & 0xFF]);
-				sum_g = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_g);
-
-				sample_x = vdupq_n_f32(i2f_map[(px >> 16) & 0xFF]);
-				sum_b = vaddq_f32(vmulq_f32(coeffs_x, sample_x), sum_b);
-
-				sum_x = vaddq_f32(vmulq_f32(coeffs_x, one_v), sum_x);
-
-				in += 4;
-				coeffs_x_f += 4;
-			}
-		}
-
-		/* Vertical accumulation using ring buffer offsets */
-		{
-			float32x4_t rgbx, sy;
-
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_r, 0), vdupq_n_f32(0), 0);
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_g, 0), rgbx, 1);
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_b, 0), rgbx, 2);
-			rgbx = vsetq_lane_f32(vgetq_lane_f32(sum_x, 0), rgbx, 3);
-
-			sy = vld1q_f32(sums_y_out + off0);
-			sy = vfmaq_f32(sy, cy0, rgbx);
-			vst1q_f32(sums_y_out + off0, sy);
-
-			sy = vld1q_f32(sums_y_out + off1);
-			sy = vfmaq_f32(sy, cy1, rgbx);
-			vst1q_f32(sums_y_out + off1, sy);
-
-			sy = vld1q_f32(sums_y_out + off2);
-			sy = vfmaq_f32(sy, cy2, rgbx);
-			vst1q_f32(sums_y_out + off2, sy);
-
-			sy = vld1q_f32(sums_y_out + off3);
-			sy = vfmaq_f32(sy, cy3, rgbx);
-			vst1q_f32(sums_y_out + off3, sy);
-
-			sums_y_out += 16;
-		}
-
-		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
-		sum_x = vextq_f32(sum_x, vdupq_n_f32(0), 1);
-	}
-}
-
 /* NEON dispatch functions */
 
 static float *get_rb_line(struct oil_scale *os, int line)
@@ -3222,7 +2821,7 @@ static void down_scale_in_neon(struct oil_scale *os, unsigned char *in)
 
 	switch(os->cs) {
 	case OIL_CS_RGB:
-		oil_scale_down_rgb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_rgb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, s2l_map);
 		break;
 	case OIL_CS_G:
 		oil_scale_down_g_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
@@ -3240,16 +2839,16 @@ static void down_scale_in_neon(struct oil_scale *os, unsigned char *in)
 		oil_scale_down_argb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBX:
-		oil_scale_down_rgbx_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
+		oil_scale_down_rgbx_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap, s2l_map);
 		break;
 	case OIL_CS_RGB_NOGAMMA:
-		oil_scale_down_rgb_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y);
+		oil_scale_down_rgb_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, i2f_map);
 		break;
 	case OIL_CS_RGBA_NOGAMMA:
 		oil_scale_down_rgba_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
 		break;
 	case OIL_CS_RGBX_NOGAMMA:
-		oil_scale_down_rgbx_nogamma_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap);
+		oil_scale_down_rgbx_neon(in, os->sums_y, os->out_width, os->coeffs_x, os->borders_x, coeffs_y, os->sums_y_tap, i2f_map);
 		break;
 	case OIL_CS_UNKNOWN:
 		break;
