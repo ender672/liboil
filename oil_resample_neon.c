@@ -2388,12 +2388,8 @@ static void oil_yscale_out_rgbx_nogamma_neon(float *sums, int width, unsigned ch
 	}
 
 	for (; i<width; i++) {
-		float32x4_t vals;
-		int32x4_t idx;
-
-		vals = vld1q_f32(sums + tap_off);
-		vals = vminq_f32(vmaxq_f32(vals, zero), one);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(vals, scale_v), half));
+		int32x4_t idx = oil_clamp_round_idx_neon(vld1q_f32(sums + tap_off),
+			zero, one, scale_v, half);
 
 		out[0] = vgetq_lane_s32(idx, 0);
 		out[1] = vgetq_lane_s32(idx, 1);
