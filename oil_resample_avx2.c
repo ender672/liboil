@@ -65,6 +65,25 @@ static inline float oil_dot1_f_avx2(__m128 smp, __m128 coeffs)
 	return _mm_cvtss_f32(t2);
 }
 
+/* Write 3 bytes to out[0..2] by indexing lut with the low three int32 lanes
+ * of idx. Used when the 4th lane is either discarded or handled separately.
+ */
+static inline __attribute__((always_inline))
+void oil_lut_store3_avx2(unsigned char *out, __m128i idx, unsigned char *lut)
+{
+	out[0] = lut[_mm_cvtsi128_si32(idx)];
+	out[1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
+	out[2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+}
+
+/* Write 4 bytes to out[0..3] by indexing lut with all four int32 lanes of idx. */
+static inline __attribute__((always_inline))
+void oil_lut_store4_avx2(unsigned char *out, __m128i idx, unsigned char *lut)
+{
+	oil_lut_store3_avx2(out, idx, lut);
+	out[3] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
+}
+
 /* 4-tap y-axis dot product: loads 4 floats from each of in[0..3] at offset
  * `off` and returns c0*in[0] + c1*in[1] + c2*in[2] + c3*in[3].
  */
@@ -277,10 +296,7 @@ static void oil_yscale_out_linear_avx2(float *sums, int len, unsigned char *out)
 
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-		out[i]   = lut[_mm_cvtsi128_si32(idx)];
-		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
-		out[i+3] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
+		oil_lut_store4_avx2(out + i, idx, lut);
 
 		_mm_store_ps(sums,      oil_shift_f_left_avx2(f0));
 		_mm_store_ps(sums + 4,  oil_shift_f_left_avx2(f1));
@@ -348,9 +364,7 @@ static void oil_yscale_out_rgbx_avx2(float *sums, int width, unsigned char *out,
 
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-		out[0] = lut[_mm_cvtsi128_si32(idx)];
-		out[1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		oil_lut_store3_avx2(out, idx, lut);
 		out[3] = 255;
 
 		/* Zero consumed tap */
@@ -524,23 +538,14 @@ static void oil_yscale_up_rgb_avx2(float **in, int len, float *coeffs,
 		sum2 = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
 		idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
 
-		out[i]   = lut[_mm_cvtsi128_si32(idx)];
-		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
-		out[i+3] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
-		out[i+4] = lut[_mm_cvtsi128_si32(idx2)];
-		out[i+5] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx2, 4))];
-		out[i+6] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx2, 8))];
-		out[i+7] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx2, 12))];
+		oil_lut_store4_avx2(out + i, idx, lut);
+		oil_lut_store4_avx2(out + i + 4, idx2, lut);
 	}
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-		out[i]   = lut[_mm_cvtsi128_si32(idx)];
-		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
-		out[i+3] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 12))];
+		oil_lut_store4_avx2(out + i, idx, lut);
 	}
 
 	for (; i<len; i++) {
@@ -568,32 +573,21 @@ static void oil_yscale_up_rgbx_avx2(float **in, int len, float *coeffs,
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i+7<len; i+=8) {
-		/* Pixel 0: 4 floats [R, G, B, X] */
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
-		out[i]   = lut[_mm_cvtsi128_si32(idx)];
-		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		oil_lut_store3_avx2(out + i, idx, lut);
 		out[i+3] = 255;
 
-		/* Pixel 1: next 4 floats */
 		sum = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
-		out[i+4] = lut[_mm_cvtsi128_si32(idx)];
-		out[i+5] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+6] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		oil_lut_store3_avx2(out + i + 4, idx, lut);
 		out[i+7] = 255;
 	}
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
-		out[i]   = lut[_mm_cvtsi128_si32(idx)];
-		out[i+1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-		out[i+2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+		oil_lut_store3_avx2(out + i, idx, lut);
 		out[i+3] = 255;
 	}
 }
@@ -1267,10 +1261,8 @@ void oil_unpremul_rgba_lut_avx2(__m128 vals, __m128 zero, __m128 one,
 	vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 	idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
-	out[a_off]       = (int)(alpha * 255.0f + 0.5f);
-	out[rgb_off]     = lut[_mm_cvtsi128_si32(idx)];
-	out[rgb_off + 1] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 4))];
-	out[rgb_off + 2] = lut[_mm_cvtsi128_si32(_mm_srli_si128(idx, 8))];
+	out[a_off] = (int)(alpha * 255.0f + 0.5f);
+	oil_lut_store3_avx2(out + rgb_off, idx, lut);
 }
 
 static inline __attribute__((always_inline))
