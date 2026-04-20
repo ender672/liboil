@@ -693,6 +693,22 @@ static void oil_xscale_up_rgbx_sse2(unsigned char *in, int width_in, float *out,
 	}
 }
 
+/* Dot product of four [C,M,Y,K] sample vectors with per-tap coefficients
+ * packed as lanes [c0,c1,c2,c3] of `coeffs`: c0*smp0 + c1*smp1 + c2*smp2 +
+ * c3*smp3. Uses a parallel mul + tree add to keep the dependency chain short.
+ */
+static inline __attribute__((always_inline))
+__m128 oil_cmyk_dot4_sse2(__m128 smp0, __m128 smp1, __m128 smp2, __m128 smp3,
+	__m128 coeffs)
+{
+	__m128 p0, p1, p2, p3;
+	p0 = _mm_mul_ps(smp0, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(0,0,0,0)));
+	p1 = _mm_mul_ps(smp1, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(1,1,1,1)));
+	p2 = _mm_mul_ps(smp2, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(2,2,2,2)));
+	p3 = _mm_mul_ps(smp3, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(3,3,3,3)));
+	return _mm_add_ps(_mm_add_ps(p0, p1), _mm_add_ps(p2, p3));
+}
+
 static void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
@@ -722,30 +738,10 @@ static void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 
 		/* process pairs of outputs */
 		while (j >= 2) {
-			__m128 coeffs0 = _mm_load_ps(coeff_buf);
-			__m128 coeffs1 = _mm_load_ps(coeff_buf + 4);
-
-			/* First output: broadcast each coeff and multiply */
-			__m128 result0 = _mm_add_ps(
-				_mm_add_ps(
-					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(0,0,0,0))),
-					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(1,1,1,1)))),
-				_mm_add_ps(
-					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(2,2,2,2))),
-					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs0, coeffs0, _MM_SHUFFLE(3,3,3,3)))));
-
-			/* Second output */
-			__m128 result1 = _mm_add_ps(
-				_mm_add_ps(
-					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(0,0,0,0))),
-					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(1,1,1,1)))),
-				_mm_add_ps(
-					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(2,2,2,2))),
-					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs1, coeffs1, _MM_SHUFFLE(3,3,3,3)))));
-
-			_mm_storeu_ps(out, result0);
-			_mm_storeu_ps(out + 4, result1);
-
+			_mm_storeu_ps(out, oil_cmyk_dot4_sse2(smp0, smp1, smp2,
+				smp3, _mm_load_ps(coeff_buf)));
+			_mm_storeu_ps(out + 4, oil_cmyk_dot4_sse2(smp0, smp1, smp2,
+				smp3, _mm_load_ps(coeff_buf + 4)));
 			out += 8;
 			coeff_buf += 8;
 			j -= 2;
@@ -753,18 +749,8 @@ static void oil_xscale_up_cmyk_sse2(unsigned char *in, int width_in, float *out,
 
 		/* process remaining single output */
 		if (j) {
-			__m128 coeffs = _mm_load_ps(coeff_buf);
-
-			__m128 result = _mm_add_ps(
-				_mm_add_ps(
-					_mm_mul_ps(smp0, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(0,0,0,0))),
-					_mm_mul_ps(smp1, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(1,1,1,1)))),
-				_mm_add_ps(
-					_mm_mul_ps(smp2, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(2,2,2,2))),
-					_mm_mul_ps(smp3, _mm_shuffle_ps(coeffs, coeffs, _MM_SHUFFLE(3,3,3,3)))));
-
-			_mm_storeu_ps(out, result);
-
+			_mm_storeu_ps(out, oil_cmyk_dot4_sse2(smp0, smp1, smp2,
+				smp3, _mm_load_ps(coeff_buf)));
 			out += 4;
 			coeff_buf += 4;
 		}
