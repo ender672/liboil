@@ -495,14 +495,14 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 	}
 }
 
-static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
-	unsigned char *out)
+static inline __attribute__((always_inline)) void yscale_up_gamma_sse2_impl(
+	float **in, int len, float *coeffs, unsigned char *out, int is_rgbx)
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 sum;
+	__m128 sum, sum2;
 	__m128 scale;
-	__m128i idx;
+	__m128i idx, idx2;
 	unsigned char *lut;
 
 	c0 = _mm_set1_ps(coeffs[0]);
@@ -513,67 +513,53 @@ static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i+7<len; i+=8) {
-		__m128i idx2;
-		__m128 sum2;
-
 		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
 		sum2 = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 		idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
 
-		oil_lut_store4_sse2(out + i, idx, lut);
-		oil_lut_store4_sse2(out + i + 4, idx2, lut);
+		if (is_rgbx) {
+			oil_lut_store3_sse2(out + i, idx, lut);
+			out[i+3] = 255;
+			oil_lut_store3_sse2(out + i + 4, idx2, lut);
+			out[i+7] = 255;
+		} else {
+			oil_lut_store4_sse2(out + i, idx, lut);
+			oil_lut_store4_sse2(out + i + 4, idx2, lut);
+		}
 	}
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-		oil_lut_store4_sse2(out + i, idx, lut);
+		if (is_rgbx) {
+			oil_lut_store3_sse2(out + i, idx, lut);
+			out[i+3] = 255;
+		} else {
+			oil_lut_store4_sse2(out + i, idx, lut);
+		}
 	}
 
-	for (; i<len; i++) {
-		out[i] = lut[(int)(
-			(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
-			coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+	/* RGBX len is always a multiple of 4; scalar tail only applies to RGB. */
+	if (!is_rgbx) {
+		for (; i<len; i++) {
+			out[i] = lut[(int)(
+				(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+				coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+		}
 	}
+}
+
+static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
+	unsigned char *out)
+{
+	yscale_up_gamma_sse2_impl(in, len, coeffs, out, 0);
 }
 
 static void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
 	unsigned char *out)
 {
-	int i;
-	__m128 c0, c1, c2, c3;
-	__m128 sum;
-	__m128 scale;
-	__m128i idx;
-	unsigned char *lut;
-
-	c0 = _mm_set1_ps(coeffs[0]);
-	c1 = _mm_set1_ps(coeffs[1]);
-	c2 = _mm_set1_ps(coeffs[2]);
-	c3 = _mm_set1_ps(coeffs[3]);
-	lut = l2s_map;
-	scale = _mm_set1_ps((float)(l2s_len - 1));
-
-	for (i=0; i+7<len; i+=8) {
-		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
-		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-		oil_lut_store3_sse2(out + i, idx, lut);
-		out[i+3] = 255;
-
-		sum = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
-		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-		oil_lut_store3_sse2(out + i + 4, idx, lut);
-		out[i+7] = 255;
-	}
-
-	for (; i+3<len; i+=4) {
-		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
-		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-		oil_lut_store3_sse2(out + i, idx, lut);
-		out[i+3] = 255;
-	}
+	yscale_up_gamma_sse2_impl(in, len, coeffs, out, 1);
 }
 
 static inline __attribute__((always_inline))
