@@ -1186,7 +1186,6 @@ static inline __attribute__((always_inline)) void scale_down_alpha_sse2_impl(
 	sum_a = _mm_setzero_ps();
 
 	for (i=0; i<out_width; i++) {
-		j = 0;
 		if (border_buf[i] >= 4) {
 			sum_r2 = _mm_setzero_ps();
 			sum_g2 = _mm_setzero_ps();
@@ -1231,30 +1230,50 @@ static inline __attribute__((always_inline)) void scale_down_alpha_sse2_impl(
 				coeffs_x_f += 8;
 			}
 
+			for (; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
+
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[a_off]]));
+
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
+
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
+
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
+
+				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
+
+				in += 4;
+				coeffs_x_f += 4;
+			}
+
 			sum_r = _mm_add_ps(sum_r, sum_r2);
 			sum_g = _mm_add_ps(sum_g, sum_g2);
 			sum_b = _mm_add_ps(sum_b, sum_b2);
 			sum_a = _mm_add_ps(sum_a, sum_a2);
-		}
+		} else {
+			for (j=0; j<border_buf[i]; j++) {
+				coeffs_x = _mm_load_ps(coeffs_x_f);
 
-		for (; j<border_buf[i]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
+				coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[a_off]]));
 
-			coeffs_x_a = _mm_mul_ps(coeffs_x, _mm_set1_ps(i2f_map[in[a_off]]));
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off]]);
+				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
 
-			sample_x = _mm_set1_ps(rgb_lut[in[rgb_off]]);
-			sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_r);
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 1]]);
+				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
 
-			sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 1]]);
-			sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_g);
+				sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 2]]);
+				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
 
-			sample_x = _mm_set1_ps(rgb_lut[in[rgb_off + 2]]);
-			sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x_a, sample_x), sum_b);
+				sum_a = _mm_add_ps(coeffs_x_a, sum_a);
 
-			sum_a = _mm_add_ps(coeffs_x_a, sum_a);
-
-			in += 4;
-			coeffs_x_f += 4;
+				in += 4;
+				coeffs_x_f += 4;
+			}
 		}
 
 		/* Vertical accumulation using ring buffer offsets */
