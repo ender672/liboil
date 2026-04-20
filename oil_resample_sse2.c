@@ -1073,13 +1073,11 @@ static void oil_yscale_up_rgba_sse2(float **in, int len, float *coeffs,
 
 static inline __attribute__((always_inline)) void xscale_up_alpha_sse2_impl(
 	unsigned char *in, int width_in, float *out, float *coeff_buf,
-	int *border_buf, int a_off, int rgb_off)
+	int *border_buf, int a_off, int rgb_off, float *rgb_lut)
 {
 	int i, j;
 	__m128 smp_r, smp_g, smp_b, smp_a;
-	float *sl;
 
-	sl = s2l_map;
 	smp_r = _mm_setzero_ps();
 	smp_g = _mm_setzero_ps();
 	smp_b = _mm_setzero_ps();
@@ -1089,9 +1087,9 @@ static inline __attribute__((always_inline)) void xscale_up_alpha_sse2_impl(
 		float alpha_new = i2f_map[in[a_off]];
 
 		smp_a = oil_push_f_sse2(smp_a, alpha_new);
-		smp_r = oil_push_f_sse2(smp_r, alpha_new * sl[in[rgb_off]]);
-		smp_g = oil_push_f_sse2(smp_g, alpha_new * sl[in[rgb_off + 1]]);
-		smp_b = oil_push_f_sse2(smp_b, alpha_new * sl[in[rgb_off + 2]]);
+		smp_r = oil_push_f_sse2(smp_r, alpha_new * rgb_lut[in[rgb_off]]);
+		smp_g = oil_push_f_sse2(smp_g, alpha_new * rgb_lut[in[rgb_off + 1]]);
+		smp_b = oil_push_f_sse2(smp_b, alpha_new * rgb_lut[in[rgb_off + 2]]);
 
 		j = border_buf[i];
 
@@ -1136,7 +1134,7 @@ static void oil_xscale_up_rgba_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	xscale_up_alpha_sse2_impl(in, width_in, out, coeff_buf, border_buf,
-		3, 0);
+		3, 0, s2l_map);
 }
 
 #define PX_BYTE(px, idx) (((px) >> ((idx) * 8)) & 0xFF)
@@ -1299,7 +1297,7 @@ static void oil_xscale_up_argb_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
 	xscale_up_alpha_sse2_impl(in, width_in, out, coeff_buf, border_buf,
-		0, 1);
+		0, 1, s2l_map);
 }
 
 static void oil_scale_down_argb_sse2(unsigned char *in, float *sums_y_out,
@@ -2009,61 +2007,8 @@ static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 static void oil_xscale_up_rgba_nogamma_sse2(unsigned char *in, int width_in, float *out,
 	float *coeff_buf, int *border_buf)
 {
-	int i, j;
-	__m128 smp_r, smp_g, smp_b, smp_a;
-	float *lut;
-
-	lut = i2f_map;
-	smp_r = _mm_setzero_ps();
-	smp_g = _mm_setzero_ps();
-	smp_b = _mm_setzero_ps();
-	smp_a = _mm_setzero_ps();
-
-	for (i=0; i<width_in; i++) {
-		float alpha_new = lut[in[3]];
-
-		smp_a = oil_push_f_sse2(smp_a, alpha_new);
-		smp_r = oil_push_f_sse2(smp_r, alpha_new * lut[in[0]]);
-		smp_g = oil_push_f_sse2(smp_g, alpha_new * lut[in[1]]);
-		smp_b = oil_push_f_sse2(smp_b, alpha_new * lut[in[2]]);
-
-		j = border_buf[i];
-
-		/* process pairs of outputs */
-		while (j >= 2) {
-			__m128 c0 = _mm_load_ps(coeff_buf);
-			__m128 c1 = _mm_load_ps(coeff_buf + 4);
-			__m128 t2_r = oil_dot2_f_sse2(smp_r, c0, c1);
-			__m128 t2_g = oil_dot2_f_sse2(smp_g, c0, c1);
-			__m128 t2_b = oil_dot2_f_sse2(smp_b, c0, c1);
-			__m128 t2_a = oil_dot2_f_sse2(smp_a, c0, c1);
-
-			/* Store interleaved: [R0, G0, B0, A0, R1, G1, B1, A1] */
-			{
-				__m128 rg = _mm_unpacklo_ps(t2_r, t2_g);
-				__m128 ba = _mm_unpacklo_ps(t2_b, t2_a);
-				_mm_storeu_ps(out, _mm_movelh_ps(rg, ba));
-				_mm_storeu_ps(out + 4, _mm_movehl_ps(ba, rg));
-			}
-
-			out += 8;
-			coeff_buf += 8;
-			j -= 2;
-		}
-
-		/* process remaining single output */
-		if (j) {
-			__m128 coeffs = _mm_load_ps(coeff_buf);
-			out[0] = oil_dot1_f_sse2(smp_r, coeffs);
-			out[1] = oil_dot1_f_sse2(smp_g, coeffs);
-			out[2] = oil_dot1_f_sse2(smp_b, coeffs);
-			out[3] = oil_dot1_f_sse2(smp_a, coeffs);
-			out += 4;
-			coeff_buf += 4;
-		}
-
-		in += 4;
-	}
+	xscale_up_alpha_sse2_impl(in, width_in, out, coeff_buf, border_buf,
+		3, 0, i2f_map);
 }
 
 static void oil_scale_down_rgba_nogamma_sse2(unsigned char *in, float *sums_y_out,
