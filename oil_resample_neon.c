@@ -1325,7 +1325,7 @@ static void oil_scale_down_g_neon(unsigned char *in, float *sums_y_out,
 		vst1q_f32(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum = vextq_f32(sum, vdupq_n_f32(0), 1);
+		sum = oil_shift_f_left_neon(sum);
 	}
 }
 
@@ -1464,8 +1464,8 @@ static void oil_scale_down_ga_neon(unsigned char *in, float *sums_y_out,
 		vst1q_f32(sums_y_out, sums_y);
 		sums_y_out += 4;
 
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_a = vextq_f32(sum_a, vdupq_n_f32(0), 1);
+		sum_g = oil_shift_f_left_neon(sum_g);
+		sum_a = oil_shift_f_left_neon(sum_a);
 	}
 }
 
@@ -1896,9 +1896,9 @@ void oil_scale_down_rgbx_neon(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_r = vextq_f32(sum_r, vdupq_n_f32(0), 1);
-		sum_g = vextq_f32(sum_g, vdupq_n_f32(0), 1);
-		sum_b = vextq_f32(sum_b, vdupq_n_f32(0), 1);
+		sum_r = oil_shift_f_left_neon(sum_r);
+		sum_g = oil_shift_f_left_neon(sum_g);
+		sum_b = oil_shift_f_left_neon(sum_b);
 	}
 }
 
@@ -2030,10 +2030,10 @@ static void oil_scale_down_cmyk_neon(unsigned char *in, float *sums_y_out,
 			sums_y_out += 16;
 		}
 
-		sum_c = vextq_f32(sum_c, vdupq_n_f32(0), 1);
-		sum_m = vextq_f32(sum_m, vdupq_n_f32(0), 1);
-		sum_y = vextq_f32(sum_y, vdupq_n_f32(0), 1);
-		sum_k = vextq_f32(sum_k, vdupq_n_f32(0), 1);
+		sum_c = oil_shift_f_left_neon(sum_c);
+		sum_m = oil_shift_f_left_neon(sum_m);
+		sum_y = oil_shift_f_left_neon(sum_y);
+		sum_k = oil_shift_f_left_neon(sum_k);
 	}
 }
 
