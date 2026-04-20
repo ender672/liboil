@@ -887,12 +887,64 @@ static void oil_yscale_up_g_cmyk_avx2(float **in, int len, float *coeffs,
 	}
 }
 
+/* Accumulate `count` horizontal G samples into `sum`, using a 4-way unrolled
+ * inner loop with a 1-way scalar tail. Advances *in_p and *coeffs_x_f_p past
+ * the consumed samples/coefficients. `sum` carries the partial sum shifted in
+ * from the previous output position; the four parallel accumulators are
+ * reduced before returning.
+ */
+static inline __attribute__((always_inline))
+__m128 oil_xacc_g_heavy_avx2(unsigned char **in_p, float **coeffs_x_f_p,
+	int count, __m128 sum)
+{
+	int j;
+	unsigned char *in = *in_p;
+	float *coeffs_x_f = *coeffs_x_f_p;
+	__m128 coeffs_x, sample_x, sum2, sum3, sum4;
+
+	sum2 = _mm_setzero_ps();
+	sum3 = _mm_setzero_ps();
+	sum4 = _mm_setzero_ps();
+
+	for (j=0; j+3<count; j+=4) {
+		coeffs_x = _mm_load_ps(coeffs_x_f);
+		sample_x = _mm_set1_ps(i2f_map[in[0]]);
+		sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+
+		coeffs_x = _mm_load_ps(coeffs_x_f + 4);
+		sample_x = _mm_set1_ps(i2f_map[in[1]]);
+		sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
+
+		coeffs_x = _mm_load_ps(coeffs_x_f + 8);
+		sample_x = _mm_set1_ps(i2f_map[in[2]]);
+		sum3 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum3);
+
+		coeffs_x = _mm_load_ps(coeffs_x_f + 12);
+		sample_x = _mm_set1_ps(i2f_map[in[3]]);
+		sum4 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum4);
+
+		in += 4;
+		coeffs_x_f += 16;
+	}
+	for (; j<count; j++) {
+		coeffs_x = _mm_load_ps(coeffs_x_f);
+		sample_x = _mm_set1_ps(i2f_map[in[0]]);
+		sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
+		in += 1;
+		coeffs_x_f += 4;
+	}
+
+	*in_p = in;
+	*coeffs_x_f_p = coeffs_x_f;
+	return _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
+}
+
 static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 	unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f)
 {
-	int i, j;
-	__m128 coeffs_x, sample_x, sum, sum2, sum3, sum4;
+	int i;
+	__m128 sum;
 	__m256 coeffs_y256, sums_y256, sample_y256;
 	__m128 result_lo, result_hi;
 
@@ -900,71 +952,11 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 	sum = _mm_setzero_ps();
 
 	for (i=0; i+1<out_width; i+=2) {
-		sum2 = _mm_setzero_ps();
-		sum3 = _mm_setzero_ps();
-		sum4 = _mm_setzero_ps();
-		for (j=0; j+3<border_buf[i]; j+=4) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 4);
-			sample_x = _mm_set1_ps(i2f_map[in[1]]);
-			sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 8);
-			sample_x = _mm_set1_ps(i2f_map[in[2]]);
-			sum3 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum3);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 12);
-			sample_x = _mm_set1_ps(i2f_map[in[3]]);
-			sum4 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum4);
-
-			in += 4;
-			coeffs_x_f += 16;
-		}
-		for (; j<border_buf[i]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-			in += 1;
-			coeffs_x_f += 4;
-		}
-		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
+		sum = oil_xacc_g_heavy_avx2(&in, &coeffs_x_f, border_buf[i], sum);
 		result_lo = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
 		sum = oil_shift_f_left_avx2(sum);
 
-		sum2 = _mm_setzero_ps();
-		sum3 = _mm_setzero_ps();
-		sum4 = _mm_setzero_ps();
-		for (j=0; j+3<border_buf[i+1]; j+=4) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 4);
-			sample_x = _mm_set1_ps(i2f_map[in[1]]);
-			sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 8);
-			sample_x = _mm_set1_ps(i2f_map[in[2]]);
-			sum3 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum3);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 12);
-			sample_x = _mm_set1_ps(i2f_map[in[3]]);
-			sum4 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum4);
-
-			in += 4;
-			coeffs_x_f += 16;
-		}
-		for (; j<border_buf[i+1]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-			in += 1;
-			coeffs_x_f += 4;
-		}
-		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
+		sum = oil_xacc_g_heavy_avx2(&in, &coeffs_x_f, border_buf[i+1], sum);
 		result_hi = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(0, 0, 0, 0));
 		sum = oil_shift_f_left_avx2(sum);
 
@@ -977,37 +969,7 @@ static void __attribute__((noinline)) oil_scale_down_g_heavy_avx2(
 
 	for (; i<out_width; i++) {
 		__m128 coeffs_y = _mm256_castps256_ps128(coeffs_y256);
-		sum2 = _mm_setzero_ps();
-		sum3 = _mm_setzero_ps();
-		sum4 = _mm_setzero_ps();
-		for (j=0; j+3<border_buf[i]; j+=4) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 4);
-			sample_x = _mm_set1_ps(i2f_map[in[1]]);
-			sum2 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum2);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 8);
-			sample_x = _mm_set1_ps(i2f_map[in[2]]);
-			sum3 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum3);
-
-			coeffs_x = _mm_load_ps(coeffs_x_f + 12);
-			sample_x = _mm_set1_ps(i2f_map[in[3]]);
-			sum4 = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum4);
-
-			in += 4;
-			coeffs_x_f += 16;
-		}
-		for (; j<border_buf[i]; j++) {
-			coeffs_x = _mm_load_ps(coeffs_x_f);
-			sample_x = _mm_set1_ps(i2f_map[in[0]]);
-			sum = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum);
-			in += 1;
-			coeffs_x_f += 4;
-		}
-		sum = _mm_add_ps(_mm_add_ps(sum, sum2), _mm_add_ps(sum3, sum4));
+		sum = oil_xacc_g_heavy_avx2(&in, &coeffs_x_f, border_buf[i], sum);
 		oil_yacc_fma1_avx2(sums_y_out, sum, coeffs_y);
 		sums_y_out += 4;
 		sum = oil_shift_f_left_avx2(sum);
