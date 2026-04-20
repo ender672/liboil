@@ -69,6 +69,22 @@ float oil_dot1_f_sse2(__m128 smp, __m128 coeffs)
 	return _mm_cvtss_f32(t2);
 }
 
+/* 4-tap y-axis dot product: loads 4 floats from each of in[0..3] at offset
+ * `off` and returns c0*in[0] + c1*in[1] + c2*in[2] + c3*in[3].
+ */
+static inline __attribute__((always_inline))
+__m128 oil_ydot4_load_sse2(float **in, int off,
+	__m128 c0, __m128 c1, __m128 c2, __m128 c3)
+{
+	__m128 v0 = _mm_loadu_ps(in[0] + off);
+	__m128 v1 = _mm_loadu_ps(in[1] + off);
+	__m128 v2 = _mm_loadu_ps(in[2] + off);
+	__m128 v3 = _mm_loadu_ps(in[3] + off);
+	return _mm_add_ps(
+		_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
+		_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+}
+
 /* Write 3 bytes to out[0..2] by indexing lut with the low three int32 lanes
  * of idx. Used when the 4th lane is either discarded or handled separately.
  */
@@ -403,7 +419,7 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum, sum2;
+	__m128 sum, sum2;
 	__m128 scale, half, zero, one, result;
 	__m128 blend_mask;
 	__m128i idx;
@@ -421,21 +437,8 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 
 	/* Process 4 GA pixels (8 floats) at a time */
 	for (i=0; i+7<len; i+=8) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
-
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum2 = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
+		sum2 = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 
 		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
 		result = unpremul_clamp_ga_sse2(sum, zero, one, blend_mask);
@@ -453,13 +456,7 @@ static void oil_yscale_up_ga_sse2(float **in, int len, float *coeffs,
 
 	/* Process 2 GA pixels (4 floats) at a time */
 	for (; i+3<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 
 		result = unpremul_clamp_ga_sse2(sum, zero, one, blend_mask);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(result, scale), half));
@@ -490,7 +487,7 @@ static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum;
+	__m128 sum;
 	__m128 scale;
 	__m128i idx;
 	unsigned char *lut;
@@ -506,22 +503,10 @@ static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 		__m128i idx2;
 		__m128 sum2;
 
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum2 = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum2 = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 		idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
 
 		oil_lut_store4_sse2(out + i, idx, lut);
@@ -529,13 +514,7 @@ static void oil_yscale_up_rgb_sse2(float **in, int len, float *coeffs,
 	}
 
 	for (; i+3<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 		oil_lut_store4_sse2(out + i, idx, lut);
 	}
@@ -552,7 +531,7 @@ static void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum;
+	__m128 sum;
 	__m128 scale;
 	__m128i idx;
 	unsigned char *lut;
@@ -565,43 +544,20 @@ static void oil_yscale_up_rgbx_sse2(float **in, int len, float *coeffs,
 	scale = _mm_set1_ps((float)(l2s_len - 1));
 
 	for (i=0; i+7<len; i+=8) {
-		/* Pixel 0: 4 floats [R, G, B, X] */
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
 		oil_lut_store3_sse2(out + i, idx, lut);
 		out[i+3] = 255;
 
-		/* Pixel 1: next 4 floats */
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
 		oil_lut_store3_sse2(out + i + 4, idx, lut);
 		out[i+7] = 255;
 	}
 
 	for (; i+3<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
-
 		oil_lut_store3_sse2(out + i, idx, lut);
 		out[i+3] = 255;
 	}
@@ -809,7 +765,7 @@ static void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum;
+	__m128 sum;
 	__m128 scale, half, zero, one;
 	__m128i idx;
 
@@ -826,43 +782,19 @@ static void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 		__m128i idx2, idx3, idx4;
 		__m128 sum2;
 
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
 
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum2 = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum2 = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
 		idx2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
 
-		v0 = _mm_loadu_ps(in[0] + i + 8);
-		v1 = _mm_loadu_ps(in[1] + i + 8);
-		v2 = _mm_loadu_ps(in[2] + i + 8);
-		v3 = _mm_loadu_ps(in[3] + i + 8);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i + 8, c0, c1, c2, c3);
 		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx3 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
 
-		v0 = _mm_loadu_ps(in[0] + i + 12);
-		v1 = _mm_loadu_ps(in[1] + i + 12);
-		v2 = _mm_loadu_ps(in[2] + i + 12);
-		v3 = _mm_loadu_ps(in[3] + i + 12);
-		sum2 = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum2 = oil_ydot4_load_sse2(in, i + 12, c0, c1, c2, c3);
 		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
 		idx4 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
 
@@ -876,23 +808,11 @@ static void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 		__m128i idx2;
 		__m128 sum2;
 
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
 
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum2 = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum2 = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
 		idx2 = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum2, scale), half));
 
@@ -902,13 +822,7 @@ static void oil_yscale_up_g_cmyk_sse2(float **in, int len, float *coeffs,
 	}
 
 	for (; i+3<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum, scale), half));
 		idx = _mm_packs_epi32(idx, idx);
@@ -1173,7 +1087,7 @@ static inline __attribute__((always_inline)) void yscale_up_alpha_sse2_impl(
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum;
+	__m128 sum;
 	__m128 scale, one, zero;
 	__m128 alpha_v, clamped;
 	__m128i idx;
@@ -1190,13 +1104,7 @@ static inline __attribute__((always_inline)) void yscale_up_alpha_sse2_impl(
 	zero = _mm_setzero_ps();
 
 	for (i=0; i<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 
 		/* Clamp alpha to [0, 1] */
 		alpha_v = _mm_shuffle_ps(sum, sum, _MM_SHUFFLE(3, 3, 3, 3));
@@ -2236,7 +2144,7 @@ static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum_a, sum_b;
+	__m128 sum_a, sum_b;
 	__m128 scale, half, one, zero;
 	__m128 alpha_v, clamped;
 	__m128i idx_a, idx_b, packed;
@@ -2252,23 +2160,8 @@ static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	zero = _mm_setzero_ps();
 
 	for (i=0; i+7<len; i+=8) {
-		/* Pixel 1 */
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum_a = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
-
-		/* Pixel 2 */
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum_b = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
+		sum_b = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 
 		/* Unpremultiply pixel 1 */
 		alpha_v = _mm_shuffle_ps(sum_a, sum_a, _MM_SHUFFLE(3, 3, 3, 3));
@@ -2311,13 +2204,7 @@ static void oil_yscale_up_rgba_nogamma_sse2(float **in, int len, float *coeffs,
 	}
 
 	for (; i<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum_a = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 
 		alpha_v = _mm_shuffle_ps(sum_a, sum_a, _MM_SHUFFLE(3, 3, 3, 3));
 		alpha_v = _mm_min_ps(_mm_max_ps(alpha_v, zero), one);
@@ -2562,7 +2449,7 @@ static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 {
 	int i;
 	__m128 c0, c1, c2, c3;
-	__m128 v0, v1, v2, v3, sum_a, sum_b;
+	__m128 sum_a, sum_b;
 	__m128 scale, half, one, zero;
 	__m128i idx_a, idx_b, packed;
 	__m128i mask, x_val;
@@ -2579,23 +2466,8 @@ static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 	x_val = _mm_set_epi32(255, 0, 0, 0);
 
 	for (i=0; i+7<len; i+=8) {
-		/* Pixel 1: 4 floats [R, G, B, X] */
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum_a = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
-
-		/* Pixel 2 */
-		v0 = _mm_loadu_ps(in[0] + i + 4);
-		v1 = _mm_loadu_ps(in[1] + i + 4);
-		v2 = _mm_loadu_ps(in[2] + i + 4);
-		v3 = _mm_loadu_ps(in[3] + i + 4);
-		sum_b = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
+		sum_b = oil_ydot4_load_sse2(in, i + 4, c0, c1, c2, c3);
 
 		/* Clamp, scale, and force X=255 for pixel 1 */
 		sum_a = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
@@ -2614,13 +2486,7 @@ static void oil_yscale_up_rgbx_nogamma_sse2(float **in, int len, float *coeffs,
 	}
 
 	for (; i<len; i+=4) {
-		v0 = _mm_loadu_ps(in[0] + i);
-		v1 = _mm_loadu_ps(in[1] + i);
-		v2 = _mm_loadu_ps(in[2] + i);
-		v3 = _mm_loadu_ps(in[3] + i);
-		sum_a = _mm_add_ps(
-			_mm_add_ps(_mm_mul_ps(c0, v0), _mm_mul_ps(c1, v1)),
-			_mm_add_ps(_mm_mul_ps(c2, v2), _mm_mul_ps(c3, v3)));
+		sum_a = oil_ydot4_load_sse2(in, i, c0, c1, c2, c3);
 
 		sum_a = _mm_min_ps(_mm_max_ps(sum_a, zero), one);
 		idx_a = _mm_cvttps_epi32(_mm_add_ps(_mm_mul_ps(sum_a, scale), half));
