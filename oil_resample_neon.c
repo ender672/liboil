@@ -567,11 +567,10 @@ static void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 {
 	int i;
 	float32x4_t c0, c1, c2, c3;
-	float32x4_t sum, sum2;
+	float32x4_t sum, sum2, result;
 	float32x4_t scale, half, zero, one;
-	float32x4_t alpha_spread, safe_alpha, divided, gray_clamped, result;
-	uint32x4_t blend_mask, nz_mask;
-	int32x4_t idx;
+	uint32x4_t blend_mask;
+	int32x4_t idx, idx2;
 
 	c0 = vdupq_n_f32(coeffs[0]);
 	c1 = vdupq_n_f32(coeffs[1]);
@@ -589,75 +588,35 @@ static void oil_yscale_up_ga_neon(float **in, int len, float *coeffs,
 
 	/* Process 4 GA pixels (8 floats) at a time */
 	for (i=0; i+7<len; i+=8) {
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		int16x8_t n16;
+		uint8x8_t n8;
 
+		sum  = oil_ydot4_load_neon(in, i,     c0, c1, c2, c3);
 		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
 
-		/* sum = [g0, a0, g1, a1], sum2 = [g2, a2, g3, a3] */
+		result = unpremul_clamp_ga_neon(sum,  zero, one, blend_mask);
+		idx  = vcvtq_s32_f32(vfmaq_f32(half, result, scale));
+		result = unpremul_clamp_ga_neon(sum2, zero, one, blend_mask);
+		idx2 = vcvtq_s32_f32(vfmaq_f32(half, result, scale));
 
-		/* Process first pair: spread alpha to both lanes */
-		/* shuffle(sum, sum, 3,3,1,1) -> [a0, a0, a1, a1] */
-		{
-			float a0 = vgetq_lane_f32(sum, 1);
-			float a1 = vgetq_lane_f32(sum, 3);
-			float tmp[4] = {a0, a0, a1, a1};
-			alpha_spread = vld1q_f32(tmp);
-		}
-		alpha_spread = vminq_f32(vmaxq_f32(alpha_spread, zero), one);
-		nz_mask = vmvnq_u32(vceqq_f32(alpha_spread, zero));
-		safe_alpha = vbslq_f32(nz_mask, alpha_spread, one);
-		divided = vdivq_f32(sum, safe_alpha);
-		gray_clamped = vminq_f32(vmaxq_f32(divided, zero), one);
-		result = vbslq_f32(blend_mask, alpha_spread, gray_clamped);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(result, scale), half));
-
-		/* Process second pair */
-		{
-			float a2 = vgetq_lane_f32(sum2, 1);
-			float a3 = vgetq_lane_f32(sum2, 3);
-			float tmp[4] = {a2, a2, a3, a3};
-			alpha_spread = vld1q_f32(tmp);
-		}
-		alpha_spread = vminq_f32(vmaxq_f32(alpha_spread, zero), one);
-		nz_mask = vmvnq_u32(vceqq_f32(alpha_spread, zero));
-		safe_alpha = vbslq_f32(nz_mask, alpha_spread, one);
-		divided = vdivq_f32(sum2, safe_alpha);
-		gray_clamped = vminq_f32(vmaxq_f32(divided, zero), one);
-		result = vbslq_f32(blend_mask, alpha_spread, gray_clamped);
-		{
-			int32x4_t idx2 = vcvtq_s32_f32(
-				vaddq_f32(vmulq_f32(result, scale), half));
-
-			/* Pack 8 ints -> 8 bytes */
-			int16x8_t n16 = vcombine_s16(vqmovn_s32(idx), vqmovn_s32(idx2));
-			uint8x8_t n8 = vqmovun_s16(n16);
-			vst1_u8(out + i, n8);
-		}
+		n16 = vcombine_s16(vqmovn_s32(idx), vqmovn_s32(idx2));
+		n8 = vqmovun_s16(n16);
+		vst1_u8(out + i, n8);
 	}
 
 	/* Process 2 GA pixels (4 floats) at a time */
 	for (; i+3<len; i+=4) {
-		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		int16x4_t n16;
+		uint8x8_t n8;
 
-		{
-			float a0 = vgetq_lane_f32(sum, 1);
-			float a1 = vgetq_lane_f32(sum, 3);
-			float tmp[4] = {a0, a0, a1, a1};
-			alpha_spread = vld1q_f32(tmp);
-		}
-		alpha_spread = vminq_f32(vmaxq_f32(alpha_spread, zero), one);
-		nz_mask = vmvnq_u32(vceqq_f32(alpha_spread, zero));
-		safe_alpha = vbslq_f32(nz_mask, alpha_spread, one);
-		divided = vdivq_f32(sum, safe_alpha);
-		gray_clamped = vminq_f32(vmaxq_f32(divided, zero), one);
-		result = vbslq_f32(blend_mask, alpha_spread, gray_clamped);
-		idx = vcvtq_s32_f32(vaddq_f32(vmulq_f32(result, scale), half));
-		{
-			int16x4_t n16 = vqmovn_s32(idx);
-			uint8x8_t n8 = vqmovun_s16(vcombine_s16(n16, n16));
-			vst1_lane_u32((uint32_t *)(out + i),
-				vreinterpret_u32_u8(n8), 0);
-		}
+		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		result = unpremul_clamp_ga_neon(sum, zero, one, blend_mask);
+		idx = vcvtq_s32_f32(vfmaq_f32(half, result, scale));
+
+		n16 = vqmovn_s32(idx);
+		n8 = vqmovun_s16(vcombine_s16(n16, n16));
+		vst1_lane_u32((uint32_t *)(out + i),
+			vreinterpret_u32_u8(n8), 0);
 	}
 
 	/* Scalar tail for remaining pixel */
