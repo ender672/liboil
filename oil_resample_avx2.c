@@ -300,22 +300,28 @@ static void oil_yscale_out_nonlinear_avx2(float *sums, int len, unsigned char *o
 static void oil_yscale_out_linear_avx2(float *sums, int len, unsigned char *out)
 {
 	int i;
-	__m128 scale, vals;
+	__m128 scale, vals, zero, one;
 	__m128i idx;
 	unsigned char *lut;
 
 	lut = l2s_map;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
 
 	for (i=0; i+3<len; i+=4) {
 		vals = oil_consume_ch0_x4_avx2(sums);
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 		oil_lut_store4_avx2(out + i, idx, lut);
 		sums += 16;
 	}
 
 	for (; i<len; i++) {
-		out[i] = lut[(int)(*sums * (l2s_len - 1))];
+		float v = *sums;
+		if (v < 0.0f) v = 0.0f;
+		else if (v > 1.0f) v = 1.0f;
+		out[i] = lut[(int)(v * (l2s_len - 1))];
 		oil_shift_left_f_avx2(sums);
 		sums += 4;
 	}
@@ -357,7 +363,7 @@ static void oil_yscale_out_rgbx_avx2(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
-	__m128 scale, vals;
+	__m128 scale, vals, zero, one;
 	__m128i idx;
 	__m128i z;
 	unsigned char *lut;
@@ -365,10 +371,13 @@ static void oil_yscale_out_rgbx_avx2(float *sums, int width, unsigned char *out,
 	lut = l2s_map;
 	tap_off = tap * 4;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
 	z = _mm_setzero_si128();
 
 	for (i=0; i<width; i++) {
 		vals = _mm_load_ps(sums + tap_off);
+		vals = _mm_min_ps(_mm_max_ps(vals, zero), one);
 
 		idx = _mm_cvttps_epi32(_mm_mul_ps(vals, scale));
 
@@ -525,7 +534,7 @@ static void oil_yscale_up_rgb_avx2(float **in, int len, float *coeffs,
 	int i;
 	__m128 c0, c1, c2, c3;
 	__m128 sum;
-	__m128 scale;
+	__m128 scale, zero, one;
 	__m128i idx;
 	unsigned char *lut;
 
@@ -535,15 +544,19 @@ static void oil_yscale_up_rgb_avx2(float **in, int len, float *coeffs,
 	c3 = _mm_set1_ps(coeffs[3]);
 	lut = l2s_map;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
 
 	for (i=0; i+7<len; i+=8) {
 		__m128i idx2;
 		__m128 sum2;
 
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 
 		sum2 = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
+		sum2 = _mm_min_ps(_mm_max_ps(sum2, zero), one);
 		idx2 = _mm_cvttps_epi32(_mm_mul_ps(sum2, scale));
 
 		oil_lut_store4_avx2(out + i, idx, lut);
@@ -552,14 +565,17 @@ static void oil_yscale_up_rgb_avx2(float **in, int len, float *coeffs,
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 		oil_lut_store4_avx2(out + i, idx, lut);
 	}
 
 	for (; i<len; i++) {
-		out[i] = lut[(int)(
-			(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
-			coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+		float v = coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+			coeffs[2] * in[2][i] + coeffs[3] * in[3][i];
+		if (v < 0.0f) v = 0.0f;
+		else if (v > 1.0f) v = 1.0f;
+		out[i] = lut[(int)(v * (l2s_len - 1))];
 	}
 }
 
@@ -569,7 +585,7 @@ static void oil_yscale_up_rgbx_avx2(float **in, int len, float *coeffs,
 	int i;
 	__m128 c0, c1, c2, c3;
 	__m128 sum;
-	__m128 scale;
+	__m128 scale, zero, one;
 	__m128i idx;
 	unsigned char *lut;
 
@@ -579,14 +595,18 @@ static void oil_yscale_up_rgbx_avx2(float **in, int len, float *coeffs,
 	c3 = _mm_set1_ps(coeffs[3]);
 	lut = l2s_map;
 	scale = _mm_set1_ps((float)(l2s_len - 1));
+	zero = _mm_setzero_ps();
+	one = _mm_set1_ps(1.0f);
 
 	for (i=0; i+7<len; i+=8) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 		oil_lut_store3_avx2(out + i, idx, lut);
 		out[i+3] = 255;
 
 		sum = oil_ydot4_load_avx2(in, i + 4, c0, c1, c2, c3);
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 		oil_lut_store3_avx2(out + i + 4, idx, lut);
 		out[i+7] = 255;
@@ -594,6 +614,7 @@ static void oil_yscale_up_rgbx_avx2(float **in, int len, float *coeffs,
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_avx2(in, i, c0, c1, c2, c3);
+		sum = _mm_min_ps(_mm_max_ps(sum, zero), one);
 		idx = _mm_cvttps_epi32(_mm_mul_ps(sum, scale));
 		oil_lut_store3_avx2(out + i, idx, lut);
 		out[i+3] = 255;

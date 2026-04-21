@@ -280,15 +280,18 @@ static void oil_yscale_out_nonlinear_neon(float *sums, int len, unsigned char *o
 static void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
 {
 	int i;
-	float32x4_t scale_v, vals;
+	float32x4_t scale_v, vals, zero, one;
 	int32x4_t idx;
 	unsigned char *lut;
 
 	lut = l2s_map;
 	scale_v = vdupq_n_f32((float)(l2s_len - 1));
+	zero = vdupq_n_f32(0.0f);
+	one = vdupq_n_f32(1.0f);
 
 	for (i=0; i+3<len; i+=4) {
 		vals = oil_consume_ch0_x4_neon(sums);
+		vals = vminq_f32(vmaxq_f32(vals, zero), one);
 		idx = vcvtq_s32_f32(vmulq_f32(vals, scale_v));
 		oil_lut_store4_neon(out + i, idx, lut);
 
@@ -296,7 +299,10 @@ static void oil_yscale_out_linear_neon(float *sums, int len, unsigned char *out)
 	}
 
 	for (; i<len; i++) {
-		out[i] = lut[(int)(*sums * (l2s_len - 1))];
+		float v = *sums;
+		if (v < 0.0f) v = 0.0f;
+		else if (v > 1.0f) v = 1.0f;
+		out[i] = lut[(int)(v * (l2s_len - 1))];
 		oil_shift_left_f_neon(sums);
 		sums += 4;
 	}
@@ -369,7 +375,7 @@ static void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out,
 	int tap)
 {
 	int i, tap_off;
-	float32x4_t scale_v, vals, z;
+	float32x4_t scale_v, vals, z, one;
 	int32x4_t idx;
 	unsigned char *lut;
 
@@ -377,9 +383,11 @@ static void oil_yscale_out_rgbx_neon(float *sums, int width, unsigned char *out,
 	tap_off = tap * 4;
 	scale_v = vdupq_n_f32((float)(l2s_len - 1));
 	z = vdupq_n_f32(0.0f);
+	one = vdupq_n_f32(1.0f);
 
 	for (i=0; i<width; i++) {
 		vals = vld1q_f32(sums + tap_off);
+		vals = vminq_f32(vmaxq_f32(vals, z), one);
 		idx = vcvtq_s32_f32(vmulq_f32(vals, scale_v));
 		oil_lut_store3_neon(out, idx, lut);
 		out[3] = 255;
@@ -661,7 +669,7 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 	int i;
 	float32x4_t c0, c1, c2, c3;
 	float32x4_t sum;
-	float32x4_t scale_v;
+	float32x4_t scale_v, zero, one;
 	int32x4_t idx;
 	unsigned char *lut;
 
@@ -671,6 +679,8 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 	c3 = vdupq_n_f32(coeffs[3]);
 	lut = l2s_map;
 	scale_v = vdupq_n_f32((float)(l2s_len - 1));
+	zero = vdupq_n_f32(0.0f);
+	one = vdupq_n_f32(1.0f);
 
 	for (i=0; i+15<len; i+=16) {
 		int32x4_t idx2, idx3, idx4;
@@ -678,15 +688,19 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 		uint8x16_t bytes;
 
 		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		sum = vminq_f32(vmaxq_f32(sum, zero), one);
 		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
 
 		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
+		sum2 = vminq_f32(vmaxq_f32(sum2, zero), one);
 		idx2 = vcvtq_s32_f32(vmulq_f32(sum2, scale_v));
 
 		sum3 = oil_ydot4_load_neon(in, i + 8, c0, c1, c2, c3);
+		sum3 = vminq_f32(vmaxq_f32(sum3, zero), one);
 		idx3 = vcvtq_s32_f32(vmulq_f32(sum3, scale_v));
 
 		sum4 = oil_ydot4_load_neon(in, i + 12, c0, c1, c2, c3);
+		sum4 = vminq_f32(vmaxq_f32(sum4, zero), one);
 		idx4 = vcvtq_s32_f32(vmulq_f32(sum4, scale_v));
 
 		bytes = vdupq_n_u8(255);
@@ -718,9 +732,11 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 		float32x4_t sum2;
 
 		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		sum = vminq_f32(vmaxq_f32(sum, zero), one);
 		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
 
 		sum2 = oil_ydot4_load_neon(in, i + 4, c0, c1, c2, c3);
+		sum2 = vminq_f32(vmaxq_f32(sum2, zero), one);
 		idx2 = vcvtq_s32_f32(vmulq_f32(sum2, scale_v));
 
 		out[i]   = lut[vgetq_lane_s32(idx, 0)];
@@ -735,6 +751,7 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 
 	for (; i+3<len; i+=4) {
 		sum = oil_ydot4_load_neon(in, i, c0, c1, c2, c3);
+		sum = vminq_f32(vmaxq_f32(sum, zero), one);
 		idx = vcvtq_s32_f32(vmulq_f32(sum, scale_v));
 		out[i]   = lut[vgetq_lane_s32(idx, 0)];
 		out[i+1] = lut[vgetq_lane_s32(idx, 1)];
@@ -744,9 +761,11 @@ void yscale_up_rgb_neon_impl(float **in, int len, float *coeffs,
 
 	if (!fill_alpha) {
 		for (; i<len; i++) {
-			out[i] = lut[(int)(
-				(coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
-				coeffs[2] * in[2][i] + coeffs[3] * in[3][i]) * (l2s_len - 1))];
+			float v = coeffs[0] * in[0][i] + coeffs[1] * in[1][i] +
+				coeffs[2] * in[2][i] + coeffs[3] * in[3][i];
+			if (v < 0.0f) v = 0.0f;
+			else if (v > 1.0f) v = 1.0f;
+			out[i] = lut[(int)(v * (l2s_len - 1))];
 		}
 	}
 }

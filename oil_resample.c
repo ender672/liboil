@@ -152,31 +152,24 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
 }
 
 /**
- * Pre-calculated table of linear to srgb mappings. Initialized via build_l2s().
- *
- * catmull-rom interpolation can produce values from -17/64 to 81/64.
- *
- * The total allocated space will be split into three parts:
- *   * 17/98 of padding below zero
- *   * 64/98 of mapping
- *   * 17/98 of padding above one
+ * Pre-calculated linear-to-sRGB table. All entries map the [0, 1] linear
+ * range; callers clamp their input before indexing. Catmull-Rom's negative
+ * lobe can drive intermediates outside [0, 1] - and RGBA/ARGB unpremul can
+ * send R_pre / alpha arbitrarily large - so every gamma-aware output path
+ * clamps before the lookup.
  */
 #define L2S_ALL_LEN 32768
-static unsigned char l2s_map_all[L2S_ALL_LEN];
-int l2s_len;
-unsigned char *l2s_map;
+static unsigned char l2s_map_storage[L2S_ALL_LEN];
+int l2s_len = L2S_ALL_LEN;
+unsigned char *l2s_map = l2s_map_storage;
 
 static void build_l2s(void)
 {
-	int i, padding;
+	int i;
 	double srgb_f, tmp, val;
 
-	padding = L2S_ALL_LEN * 17 / 98;
-	l2s_len = L2S_ALL_LEN - 2 * padding;
-	l2s_map = l2s_map_all + padding;
-
-	for (i=0; i<l2s_len; i++) {
-		srgb_f = (i + 0.5)/(l2s_len - 1);
+	for (i=0; i<L2S_ALL_LEN; i++) {
+		srgb_f = (i + 0.5)/(L2S_ALL_LEN - 1);
 		if (srgb_f <= 0.00313) {
 			val = srgb_f * 12.92;
 		} else {
@@ -185,10 +178,6 @@ static void build_l2s(void)
 		}
 
 		l2s_map[i] = round(val * 255);
-	}
-
-	for (i=0; i<padding; i++) {
-		l2s_map[l2s_len + i] = 255;
 	}
 }
 
@@ -241,7 +230,7 @@ static void yscale_out_linear(float *sums, int len, unsigned char *out)
 {
 	int i;
 	for (i=0; i<len; i++) {
-		out[i] = linear_sample_to_srgb(*sums);
+		out[i] = linear_sample_to_srgb(clampf(*sums));
 		shift_left_f(sums);
 		sums += 4;
 	}
@@ -490,7 +479,7 @@ static void yscale_up_rgb(float **in, int len, float *coeffs,
 			coeffs[1] * in[1][i] +
 			coeffs[2] * in[2][i] +
 			coeffs[3] * in[3][i];
-		out[i] = linear_sample_to_srgb(sum);
+		out[i] = linear_sample_to_srgb(clampf(sum));
 	}
 }
 
@@ -511,9 +500,8 @@ static void yscale_up_rgba(float **in, int len, float *coeffs,
 		for (j=0; j<3; j++) {
 			if (alpha != 0 && alpha != 1.0f) {
 				sums[j] /= alpha;
-				sums[j] = clampf(sums[j]);
 			}
-			out[i + j] = linear_sample_to_srgb(sums[j]);
+			out[i + j] = linear_sample_to_srgb(clampf(sums[j]));
 		}
 		out[i + 3] = f2i(alpha * 255.0f);
 	}
@@ -537,9 +525,8 @@ static void oil_yscale_up_argb(float **in, int len, float *coeffs,
 		for (j=0; j<3; j++) {
 			if (alpha != 0 && alpha != 1.0f) {
 				sums[j] /= alpha;
-				sums[j] = clampf(sums[j]);
 			}
-			out[i + j + 1] = linear_sample_to_srgb(sums[j]);
+			out[i + j + 1] = linear_sample_to_srgb(clampf(sums[j]));
 		}
 	}
 }

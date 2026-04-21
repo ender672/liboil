@@ -540,6 +540,107 @@ static void test_scale_catrom_extremes(void)
 	free_2d_uchar(input_image, 4);
 }
 
+/* Synthetic pattern that maximizes interpolator overshoot on upscale.
+ *
+ * The input is 2x2 blocks of alternating 255 and 0 in both dimensions. On an
+ * integer upscale, output positions that land at block centers place the two
+ * same-colored source samples under the Catmull-Rom kernel's positive lobe
+ * (|x|<1, weight ~0.5625 each) and the two opposite-colored samples under the
+ * negative lobe (|x|>1, weight ~-0.0625 each). A single 1-D pass produces a
+ * linear-space value of ~1.125 at a +block center and ~-0.125 at a -block
+ * center. Applying the same stress in both x and y compounds these, reaching
+ * ~1.266 and ~-0.141. That's well outside [0,1], so every path exercises
+ * clamping, 8-bit saturation, and (for sRGB spaces) linear-to-sRGB on
+ * out-of-gamut values. */
+static void test_scale_negative_lobe_pattern(int in_dim, int out_dim,
+	enum oil_colorspace cs)
+{
+	int i, j, k, cmp, val;
+	unsigned char **input_image;
+
+	cmp = OIL_CMP(cs);
+	input_image = alloc_2d_uchar(in_dim * cmp, in_dim);
+	for (i=0; i<in_dim; i++) {
+		for (j=0; j<in_dim; j++) {
+			val = (((j / 2) ^ (i / 2)) & 1) ? 0 : 255;
+			for (k=0; k<cmp; k++) {
+				input_image[i][j * cmp + k] = val;
+			}
+		}
+	}
+	test_scale(in_dim, in_dim, input_image, out_dim, out_dim, cs);
+	free_2d_uchar(input_image, in_dim);
+}
+
+/* Worst case for premultiplied-alpha unpremul: Catmull-Rom's negative lobe
+ * can break the R_pre ≤ α invariant during interpolation, so the post-divide
+ * value R_pre / clampf(α) can reach far outside any pre-divide overshoot
+ * bound. Pattern [A, B, C, A]: A = opaque black (R_pre=0, α=1), B,C = near-
+ * transparent white (α=28/255, 29/255; R_pre ≈ α, the tightest premultiply).
+ * At src_pos=1.5 the negative-lobe taps hit A (contributes 0 to R_pre, drags
+ * α down by 2·0.0625), positive-lobe taps hit B,C (contribute α·0.5625 to
+ * both sums). α sums to ~0.0007 (barely positive, so the divide path fires);
+ * R_pre sums to ~0.126. R_final = R_pre/α ≈ 170, ~170x the l2s_map padding.
+ *
+ * A correctness-preserving fix must clamp the post-divide value — widening
+ * l2s_map padding alone cannot bound this path. 4->7 places output pixel 3
+ * at exact src_pos=1.5. All rows use the same pattern, so y-interp is the
+ * identity and the overshoot rides through to every output row. */
+static void test_scale_alpha_unpremul_overshoot(void)
+{
+	static const enum oil_colorspace cs_list[] = {
+		OIL_CS_RGBA, OIL_CS_ARGB,
+	};
+	static const unsigned char alphas[4] = { 255,  28,  29, 255 };
+	static const unsigned char rgbs[4]   = {   0, 255, 255,   0 };
+	int k, i, j, cmp, a_off, rgb_off;
+	unsigned char **input_image;
+	enum oil_colorspace cs;
+	int n = sizeof(cs_list) / sizeof(cs_list[0]);
+
+	for (k=0; k<n; k++) {
+		cs = cs_list[k];
+		a_off = (cs == OIL_CS_ARGB) ? 0 : 3;
+		rgb_off = (cs == OIL_CS_ARGB) ? 1 : 0;
+		cmp = OIL_CMP(cs);
+		input_image = alloc_2d_uchar(4 * cmp, 4);
+		for (i=0; i<4; i++) {
+			for (j=0; j<4; j++) {
+				unsigned char *px = input_image[i] + j * cmp;
+				px[a_off] = alphas[j];
+				px[rgb_off] = px[rgb_off + 1] =
+					px[rgb_off + 2] = rgbs[j];
+			}
+		}
+		test_scale(4, 4, input_image, 7, 7, cs);
+		free_2d_uchar(input_image, 4);
+	}
+}
+
+static void test_scale_negative_lobe_all(void)
+{
+	static const int dims[][2] = {
+		{16, 32},  /* 2x upscale: output centers hit lobe extremes exactly */
+		{16, 64},  /* 4x upscale: multiple output samples per input pixel */
+		{16, 33},  /* non-integer upscale */
+	};
+	static const enum oil_colorspace spaces[] = {
+		OIL_CS_G, OIL_CS_GA, OIL_CS_RGB, OIL_CS_RGBA, OIL_CS_ARGB,
+		OIL_CS_CMYK, OIL_CS_RGBX, OIL_CS_RGB_NOGAMMA,
+		OIL_CS_RGBA_NOGAMMA, OIL_CS_RGBX_NOGAMMA,
+	};
+	int d, c;
+	int n_dims = sizeof(dims) / sizeof(dims[0]);
+	int n_spaces = sizeof(spaces) / sizeof(spaces[0]);
+
+	for (d=0; d<n_dims; d++) {
+		for (c=0; c<n_spaces; c++) {
+			test_scale_negative_lobe_pattern(dims[d][0], dims[d][1],
+				spaces[c]);
+		}
+	}
+}
+
 static void test_scale_each_cs(int dim_a, int dim_b)
 {
 	test_scale_square_rand(dim_a, dim_b, OIL_CS_G);
@@ -838,6 +939,8 @@ static void run_tests(struct impl *impl)
 
 	test_scale_all();
 	test_scale_catrom_extremes();
+	test_scale_negative_lobe_all();
+	test_scale_alpha_unpremul_overshoot();
 	test_out_discard_all();
 	test_out_not_ready_all();
 	test_scale_near_identity();
