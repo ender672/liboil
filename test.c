@@ -750,6 +750,78 @@ static void test_scale_near_identity(void)
 	}
 }
 
+/* Accuracy test: linear ramp preservation for G colorspace.
+ *
+ * Catmull-Rom reproduces linear functions exactly in the kernel interior
+ * (the normalized coefficients satisfy sum(c_k * x_k) = center — the
+ * first-moment property). So a linear input ramp must resample to a linear
+ * ramp at output sample centers, independent of scale factor. Near edges the
+ * kernel is truncated and renormalized, which preserves the zeroth moment
+ * but breaks the first-moment property; those pixels are skipped.
+ *
+ * This is a stronger check than the reference-comparison tests: the ground
+ * truth is algebraic, not another floating-point implementation. A bug
+ * shared by the fast impl and the long-double reference would pass
+ * reference-comparison but fail this test. */
+static void test_g_linear_ramp(int in_dim, int out_dim)
+{
+	struct oil_scale os;
+	int i, out_pos;
+	unsigned char *in_row, *out_row;
+	double radius, src_pos;
+
+	/* in_row[i] = i must be an exact 8-bit ramp value. */
+	assert(in_dim <= 256);
+
+	in_row = malloc(in_dim);
+	for (i=0; i<in_dim; i++) {
+		in_row[i] = i;
+	}
+	out_row = malloc(out_dim);
+
+	/* Downscale: radius = 2 * in/out source pixels. Upscale: radius = 2. */
+	radius = in_dim <= out_dim ? 2.0 : 2.0 * (double)in_dim / out_dim;
+
+	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, OIL_CS_G);
+	for (out_pos=0; out_pos<out_dim; out_pos++) {
+		while (oil_scale_slots(&os)) {
+			cur_scale_in(&os, in_row);
+		}
+		/* Input is constant in y, so every output row is identical —
+		 * we only need to inspect the last one. */
+		cur_scale_out(&os, out_row);
+	}
+	oil_scale_free(&os);
+
+	for (out_pos=0; out_pos<out_dim; out_pos++) {
+		src_pos = (out_pos + 0.5) * (double)in_dim / out_dim - 0.5;
+		if (src_pos < radius || src_pos > in_dim - 1 - radius) {
+			continue;
+		}
+		int expected = (int)lround(src_pos);
+		int got = out_row[out_pos];
+		/* Tolerance is 8-bit round-to-nearest only; no float slack. */
+		if (abs(got - expected) > 1) {
+			fprintf(stderr, "ramp %d->%d pos %d: expected %d, got %d\n",
+				in_dim, out_dim, out_pos, expected, got);
+			assert(0 && "linear ramp not preserved within 8-bit rounding");
+		}
+	}
+
+	free(in_row);
+	free(out_row);
+}
+
+static void test_g_linear_ramp_all(void)
+{
+	test_g_linear_ramp(32, 128);   /* 4x upscale */
+	test_g_linear_ramp(128, 32);   /* 4x downscale */
+	test_g_linear_ramp(200, 50);   /* 4x downscale, larger */
+	test_g_linear_ramp(99, 100);   /* near-identity upscale */
+	test_g_linear_ramp(100, 99);   /* near-identity downscale */
+	test_g_linear_ramp(256, 17);   /* ~15x downscale, wide kernel */
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -769,6 +841,7 @@ static void run_tests(struct impl *impl)
 	test_out_discard_all();
 	test_out_not_ready_all();
 	test_scale_near_identity();
+	test_g_linear_ramp_all();
 }
 
 int main(void)
