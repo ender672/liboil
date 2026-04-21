@@ -278,7 +278,7 @@ static void print_help(char *prog)
 	printf("If omitted, all colorspaces are benchmarked.\n");
 	printf("\n");
 	printf("Environment:\n");
-	printf("  OILITERATIONS    Number of iterations per benchmark (default 100)\n");
+	printf("  OILITERATIONS    Number of iterations per benchmark (default 500)\n");
 }
 
 int main(int argc, char *argv[])
@@ -327,7 +327,7 @@ int main(int argc, char *argv[])
 	path = argv[arg_pos];
 	cs_arg = (argc - arg_pos == 2) ? argv[arg_pos + 1] : NULL;
 
-	iterations = 100;
+	iterations = 500;
 	if (getenv("OILITERATIONS")) {
 		errno = 0;
 		ul = strtoul(getenv("OILITERATIONS"), &end, 10);
