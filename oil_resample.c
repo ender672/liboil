@@ -158,7 +158,7 @@ static void calc_coeffs(float *coeffs, float tx, int taps, int ltrim, int rtrim)
  * send R_pre / alpha arbitrarily large - so every gamma-aware output path
  * clamps before the lookup.
  */
-#define L2S_ALL_LEN 32768
+#define L2S_ALL_LEN 22000
 static unsigned char l2s_map_storage[L2S_ALL_LEN];
 int l2s_len = L2S_ALL_LEN;
 unsigned char *l2s_map = l2s_map_storage;
