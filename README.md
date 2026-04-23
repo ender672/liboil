@@ -3,6 +3,8 @@ liboil
 
 A C library for resizing images. It currently does all resizing with a bicubic (catmull-rom) interpolator. This library aims for fast performance, low memory use, and accuracy.
 
+Performance over time, broken down by colorspace and SIMD backend, is tracked at [liboil-bench.netlify.app](https://liboil-bench.netlify.app/).
+
 Purpose
 -------
 
