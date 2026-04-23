@@ -10,6 +10,7 @@ sdltest
 local.mk
 DO_NOT_COMMIT*
 .vscode/
+.claude/
 
 # OSX
 test.dSYM
