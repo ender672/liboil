@@ -1398,6 +1398,7 @@ static void upscale_init(struct oil_scale *os)
 
 	scale_up_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x);
 	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
+	os->slots_y = 0;
 }
 
 static int downscale_alloc_size(int in_height, int out_height, int in_width,
@@ -1439,6 +1440,7 @@ static void downscale_init(struct oil_scale *os)
 		os->tmp_coeffs);
 	scale_down_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y,
 		os->tmp_coeffs);
+	os->slots_y = os->borders_y[0];
 }
 
 int oil_scale_alloc_size(int in_height, int out_height, int in_width,
@@ -1520,6 +1522,15 @@ void oil_scale_restart(struct oil_scale *os)
 {
 	os->in_pos = os->out_pos = 0;
 	os->sums_y_tap = 0;
+	if (os->out_height <= os->in_height) {
+		/* downscale: sums_y accumulates partial output across input rows;
+		 * stale state from a prior pass would corrupt the next output. */
+		memset(os->sums_y, 0,
+			os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
+		os->slots_y = os->borders_y[0];
+	} else {
+		os->slots_y = 0;
+	}
 }
 
 void oil_scale_free(struct oil_scale *os)
@@ -1542,10 +1553,10 @@ void oil_scale_free(struct oil_scale *os)
 int oil_scale_slots(struct oil_scale *ys)
 {
 	if (ys->out_height <= ys->in_height) {
-		return ys->borders_y[ys->out_pos];
+		return ys->slots_y;
 	}
 	if (ys->in_pos) {
-		return ys->borders_y[ys->in_pos - 1] == 0;
+		return ys->slots_y == 0;
 	}
 	return ys->borders_y[0] == 0 ? 2 : 1;
 }
@@ -1598,7 +1609,7 @@ static void down_scale_in(struct oil_scale *os, unsigned char *in)
 		break;
 	}
 
-	os->borders_y[os->out_pos] -= 1;
+	os->slots_y -= 1;
 	os->in_pos++;
 }
 
@@ -1610,6 +1621,7 @@ static void up_scale_in(struct oil_scale *os, unsigned char *in)
 	oil_xscale_up(in, os->in_width, tmp, os->cs, os->coeffs_x, os->borders_x);
 
 	os->in_pos++;
+	os->slots_y = os->borders_y[os->in_pos - 1];
 }
 
 int oil_scale_in(struct oil_scale *os, unsigned char *in)
@@ -1644,10 +1656,13 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 		}
 		yscale_up(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
 			os->cs);
-		os->borders_y[os->in_pos - 1] -= 1;
+		os->slots_y -= 1;
 	}
 
 	os->out_pos++;
+	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+		os->slots_y = os->borders_y[os->out_pos];
+	}
 	return 0;
 }
 
@@ -1666,10 +1681,13 @@ int oil_scale_out_discard(struct oil_scale *os)
 		yscale_out(os->sums_y, os->out_width, tmp, os->cs, os->sums_y_tap);
 		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
 	} else {
-		os->borders_y[os->in_pos - 1] -= 1;
+		os->slots_y -= 1;
 	}
 
 	os->out_pos++;
+	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+		os->slots_y = os->borders_y[os->out_pos];
+	}
 	return 0;
 }
 

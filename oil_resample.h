@@ -90,6 +90,7 @@ struct oil_scale {
 	float *tmp_coeffs; // temporary buffer for calculating coeffs.
 	void *buf; // single backing allocation for all buffers above.
 	int sums_y_tap; // ring buffer offset for sums_y (0-3).
+	int slots_y; // live countdown into the current borders_y entry.
 };
 
 /**

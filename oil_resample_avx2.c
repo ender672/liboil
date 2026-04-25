@@ -2073,7 +2073,7 @@ static void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 		break;
 	}
 
-	os->borders_y[os->out_pos] -= 1;
+	os->slots_y -= 1;
 	os->in_pos++;
 }
 
@@ -2085,6 +2085,7 @@ static void up_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 	xscale_up_avx2(in, os->in_width, tmp, os->cs, os->coeffs_x, os->borders_x);
 
 	os->in_pos++;
+	os->slots_y = os->borders_y[os->in_pos - 1];
 }
 
 int oil_scale_in_avx2(struct oil_scale *os, unsigned char *in)
@@ -2119,10 +2120,13 @@ int oil_scale_out_avx2(struct oil_scale *os, unsigned char *out)
 		}
 		yscale_up_avx2(in, sl_len, os->coeffs_y + os->out_pos * 4, out,
 			os->cs);
-		os->borders_y[os->in_pos - 1] -= 1;
+		os->slots_y -= 1;
 	}
 
 	os->out_pos++;
+	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+		os->slots_y = os->borders_y[os->out_pos];
+	}
 	return 0;
 }
 

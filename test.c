@@ -923,6 +923,84 @@ static void test_g_linear_ramp_all(void)
 	test_g_linear_ramp(256, 17);   /* ~15x downscale, wide kernel */
 }
 
+/* oil_scale_restart() must leave the scaler in a state equivalent to a fresh
+ * init: a second full pass over identical input must produce byte-identical
+ * output. Currently fails because borders_y is destructively decremented during
+ * scaling and restart doesn't repopulate it (and sums_y isn't cleared). */
+static void test_scale_restart(int in_dim, int out_dim, enum oil_colorspace cs)
+{
+	struct oil_scale os;
+	int i, j, in_line, in_row_stride, out_row_stride;
+	unsigned char **input_image, **first_pass, **second_pass;
+
+	in_row_stride = OIL_CMP(cs) * in_dim;
+	out_row_stride = OIL_CMP(cs) * out_dim;
+
+	input_image = alloc_2d_uchar(in_row_stride, in_dim);
+	for (i=0; i<in_dim; i++) {
+		fill_rand8(input_image[i], in_row_stride);
+	}
+	first_pass = alloc_2d_uchar(out_row_stride, out_dim);
+	second_pass = alloc_2d_uchar(out_row_stride, out_dim);
+
+	oil_scale_init(&os, in_dim, out_dim, in_dim, out_dim, cs);
+
+	/* first pass */
+	in_line = 0;
+	for (i=0; i<out_dim; i++) {
+		while (oil_scale_slots(&os)) {
+			assert(in_line < in_dim &&
+				"first pass: input exhausted before output ready");
+			assert(cur_scale_in(&os, input_image[in_line++]) == 0);
+		}
+		assert(cur_scale_out(&os, first_pass[i]) == 0);
+	}
+
+	/* restart and run again on identical input */
+	oil_scale_restart(&os);
+	in_line = 0;
+	for (i=0; i<out_dim; i++) {
+		while (oil_scale_slots(&os)) {
+			assert(in_line < in_dim &&
+				"after restart: input exhausted before output ready");
+			assert(cur_scale_in(&os, input_image[in_line++]) == 0);
+		}
+		assert(cur_scale_out(&os, second_pass[i]) == 0);
+	}
+
+	oil_scale_free(&os);
+
+	/* outputs must be byte-identical */
+	for (i=0; i<out_dim; i++) {
+		for (j=0; j<out_row_stride; j++) {
+			if (first_pass[i][j] != second_pass[i][j]) {
+				fprintf(stderr,
+					"restart mismatch %d->%d cs=%d row %d byte %d: "
+					"first=%d second=%d\n",
+					in_dim, out_dim, cs, i, j,
+					first_pass[i][j], second_pass[i][j]);
+				assert(0 && "oil_scale_restart did not reproduce first pass");
+			}
+		}
+	}
+
+	free_2d_uchar(input_image, in_dim);
+	free_2d_uchar(first_pass, out_dim);
+	free_2d_uchar(second_pass, out_dim);
+}
+
+static void test_scale_restart_all(void)
+{
+	/* downscale */
+	test_scale_restart(100, 50, OIL_CS_G);
+	test_scale_restart(100, 50, OIL_CS_RGB);
+	test_scale_restart(100, 50, OIL_CS_RGBA);
+	/* upscale */
+	test_scale_restart(50, 100, OIL_CS_G);
+	test_scale_restart(50, 100, OIL_CS_RGB);
+	test_scale_restart(50, 100, OIL_CS_RGBA);
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -945,6 +1023,7 @@ static void run_tests(struct impl *impl)
 	test_out_not_ready_all();
 	test_scale_near_identity();
 	test_g_linear_ramp_all();
+	test_scale_restart_all();
 }
 
 int main(void)
