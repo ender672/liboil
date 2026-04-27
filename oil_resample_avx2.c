@@ -200,9 +200,10 @@ static inline __attribute__((always_inline))
 void oil_yacc_fma2_avx2(float *sums_y_out, __m128 s0, __m128 s1,
 	__m128 coeffs_y)
 {
-	__m128 b0 = _mm_shuffle_ps(s0, s0, _MM_SHUFFLE(0, 0, 0, 0));
-	__m128 b1 = _mm_shuffle_ps(s1, s1, _MM_SHUFFLE(0, 0, 0, 0));
-	__m256 sample_y = _mm256_set_m128(b1, b0);
+	/* Build sample_y = [s0[0]*4, s1[0]*4] using 1 vinsertf128 + 1 vpermilps
+	 * instead of 2 vpermilps + 1 vinsertf128, saving one port-5 uop. */
+	__m256 s01 = _mm256_insertf128_ps(_mm256_castps128_ps256(s0), s1, 1);
+	__m256 sample_y = _mm256_permute_ps(s01, 0);
 	__m256 cy256 = _mm256_set_m128(coeffs_y, coeffs_y);
 	__m256 sy256 = _mm256_loadu_ps(sums_y_out);
 	sy256 = _mm256_fmadd_ps(cy256, sample_y, sy256);
