@@ -1087,8 +1087,7 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 	float *lut)
 {
 	int i, j;
-	__m128 coeffs_x, coeffs_x2, sample_x, sum_r, sum_g, sum_b;
-	__m128 sum_r2, sum_g2, sum_b2;
+	__m128 coeffs_x, sample_x, sum_r, sum_g, sum_b;
 	__m128 coeffs_y;
 
 	coeffs_y = _mm_load_ps(coeffs_y_f);
@@ -1099,55 +1098,57 @@ static void oil_scale_down_rgb_avx2(unsigned char *in, float *sums_y_out,
 
 	for (i=0; i<out_width; i++) {
 		if (border_buf[i] >= 4) {
-			sum_r2 = _mm_setzero_ps();
-			sum_g2 = _mm_setzero_ps();
-			sum_b2 = _mm_setzero_ps();
+			/* Pack two adjacent x-taps into 256-bit FMAs:
+			 * lo lane = even tap j, hi lane = odd tap j+1. */
+			__m256 sum_r256 = _mm256_insertf128_ps(
+				_mm256_castps128_ps256(sum_r), _mm_setzero_ps(), 1);
+			__m256 sum_g256 = _mm256_insertf128_ps(
+				_mm256_castps128_ps256(sum_g), _mm_setzero_ps(), 1);
+			__m256 sum_b256 = _mm256_insertf128_ps(
+				_mm256_castps128_ps256(sum_b), _mm_setzero_ps(), 1);
 
 			for (j=0; j+1<border_buf[i]; j+=2) {
-				coeffs_x = _mm_load_ps(coeffs_x_f);
-				coeffs_x2 = _mm_load_ps(coeffs_x_f + 4);
+				__m256 cx = _mm256_loadu_ps(coeffs_x_f);
+				__m256 sr = _mm256_set_m128(
+					_mm_set1_ps(lut[in[3]]),
+					_mm_set1_ps(lut[in[0]]));
+				__m256 sg = _mm256_set_m128(
+					_mm_set1_ps(lut[in[4]]),
+					_mm_set1_ps(lut[in[1]]));
+				__m256 sb = _mm256_set_m128(
+					_mm_set1_ps(lut[in[5]]),
+					_mm_set1_ps(lut[in[2]]));
 
-				sample_x = _mm_set1_ps(lut[in[0]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
-
-				sample_x = _mm_set1_ps(lut[in[1]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
-
-				sample_x = _mm_set1_ps(lut[in[2]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
-
-				sample_x = _mm_set1_ps(lut[in[3]]);
-				sum_r2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_r2);
-
-				sample_x = _mm_set1_ps(lut[in[4]]);
-				sum_g2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_g2);
-
-				sample_x = _mm_set1_ps(lut[in[5]]);
-				sum_b2 = _mm_add_ps(_mm_mul_ps(coeffs_x2, sample_x), sum_b2);
+				sum_r256 = _mm256_fmadd_ps(cx, sr, sum_r256);
+				sum_g256 = _mm256_fmadd_ps(cx, sg, sum_g256);
+				sum_b256 = _mm256_fmadd_ps(cx, sb, sum_b256);
 
 				in += 6;
 				coeffs_x_f += 8;
 			}
 
+			sum_r = _mm_add_ps(_mm256_castps256_ps128(sum_r256),
+				_mm256_extractf128_ps(sum_r256, 1));
+			sum_g = _mm_add_ps(_mm256_castps256_ps128(sum_g256),
+				_mm256_extractf128_ps(sum_g256, 1));
+			sum_b = _mm_add_ps(_mm256_castps256_ps128(sum_b256),
+				_mm256_extractf128_ps(sum_b256, 1));
+
 			for (; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
 
 				sample_x = _mm_set1_ps(lut[in[0]]);
-				sum_r = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_r);
+				sum_r = _mm_fmadd_ps(coeffs_x, sample_x, sum_r);
 
 				sample_x = _mm_set1_ps(lut[in[1]]);
-				sum_g = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_g);
+				sum_g = _mm_fmadd_ps(coeffs_x, sample_x, sum_g);
 
 				sample_x = _mm_set1_ps(lut[in[2]]);
-				sum_b = _mm_add_ps(_mm_mul_ps(coeffs_x, sample_x), sum_b);
+				sum_b = _mm_fmadd_ps(coeffs_x, sample_x, sum_b);
 
 				in += 3;
 				coeffs_x_f += 4;
 			}
-
-			sum_r = _mm_add_ps(sum_r, sum_r2);
-			sum_g = _mm_add_ps(sum_g, sum_g2);
-			sum_b = _mm_add_ps(sum_b, sum_b2);
 		} else {
 			for (j=0; j<border_buf[i]; j++) {
 				coeffs_x = _mm_load_ps(coeffs_x_f);
