@@ -1582,7 +1582,8 @@ static void oil_scale_down_cmyk_avx2(unsigned char *in, float *sums_y_out,
 	}
 }
 
-static void oil_scale_down_rgbx_avx2(unsigned char *in, float *sums_y_out,
+static inline __attribute__((always_inline))
+void oil_scale_down_rgbx_avx2(unsigned char *in, float *sums_y_out,
 	int out_width, float *coeffs_x_f, int *border_buf, float *coeffs_y_f,
 	int tap, float *lut)
 {
@@ -2030,7 +2031,8 @@ static void xscale_up_avx2(unsigned char *in, int width_in, float *out,
 	}
 }
 
-static void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
+static inline __attribute__((always_inline))
+void down_scale_in_avx2(struct oil_scale *os, unsigned char *in)
 {
 	float *coeffs_y;
 
