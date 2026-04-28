@@ -10,6 +10,8 @@ OIL_OBJS += oil_resample_sse2.o oil_resample_avx2.o
 endif
 
 all: test imgscale benchmark coeffbench
+oil_resample.o: oil_resample.c oil_resample.h oil_resample_internal.h oil_resample_avx2.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 oil_resample_sse2.o: oil_resample_sse2.c oil_resample_internal.h
 	$(CC) $(CFLAGS) -msse2 -c -o $@ $<
 oil_resample_avx2.o: oil_resample_avx2.c oil_resample_internal.h

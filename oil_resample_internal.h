@@ -7,5 +7,4 @@ extern float i2f_map[256];
 extern unsigned char *l2s_map;
 extern int l2s_len;
 
-
 #endif

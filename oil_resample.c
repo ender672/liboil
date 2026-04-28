@@ -21,14 +21,12 @@
 
 #include "oil_resample.h"
 #include "oil_resample_internal.h"
+#include "oil_resample_avx2.h"
 #include <math.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
-#if defined(__AVX2__) && defined(__FMA__)
-#include <immintrin.h>
-#endif
 
 /**
  * When shrinking a 10 million pixel wide scanline down to a single pixel, we
@@ -665,16 +663,98 @@ static void build_i2f(void)
  * It generates out_dim border counters, these indicate how many input samples to process before
  * the next output sample is finished.
  */
+/**
+ * Evaluate n_samples Catmull-Rom kernel values into tmp_coeffs[]. Each
+ * value is catrom(|x|) * inv_tm, with x walking by inv_tm per sample
+ * starting at x_start. Returns the sum, used by the caller to normalize.
+ *
+ * Backend-specific SIMD handles the 8-wide head when available; the
+ * scalar tail picks up whatever's left. Catmull-Rom splits at |x|=1, so
+ * we compute both cubic pieces and select on a mask — no data-dependent
+ * branch, vectorizes cleanly.
+ */
+static float compute_down_kernel(float *tmp_coeffs, int n_samples,
+	float inv_tm, float x_start)
+{
+	float fudge = 0.0f;
+	float x = x_start;
+	int j = 0;
+
+#if defined(__AVX2__) && defined(__FMA__)
+	j = oil_catrom_block8_avx2(tmp_coeffs, n_samples, inv_tm, &x, &fudge);
+#endif
+	for (; j < n_samples; j++) {
+		float ax = x < 0 ? -x : x;
+		float ax2 = ax * ax;
+		float c_pos = (1.5f * ax - 2.5f) * ax2 + 1.0f;
+		float c_neg = (((5.0f - ax) * ax - 8.0f) * ax + 4.0f) * 0.5f;
+		float c = (ax < 1.0f ? c_pos : c_neg) * inv_tm;
+		tmp_coeffs[j] = c;
+		fudge += c;
+		x += inv_tm;
+	}
+	return fudge;
+}
+
+/**
+ * Place the tmp_coeffs[] kernel into coeff_buf using the rotating-offset
+ * scheme: each input position p stores its (up to) 4 contributions at
+ * coeff_buf[p*4 + {0,1,2,3}], with the offset chosen by which previous
+ * "ends" boundary p has just crossed (lane 3 = oldest output, lane 0 =
+ * most recent). Caller has already normalized tmp_coeffs.
+ *
+ * For wide kernels (n_samples > 4) we partition [smp_start, smp_end]
+ * into 4 contiguous offset segments and stream each — this kills the
+ * per-sample branch chain that dominates on big downscales. For narrow
+ * kernels the segment-loop overhead outweighs the savings, so we keep
+ * the per-sample chain.
+ */
+static void scatter_down_kernel(float *coeff_buf, const float *tmp_coeffs,
+	int smp_start, int smp_end, int e1, int e2, int e3)
+{
+	int n_samples = smp_end - smp_start + 1;
+	int j, p, off;
+
+	if (n_samples > 4) {
+		static const int seg_off[4] = {3, 2, 1, 0};
+		int seg_lo[4], seg_hi[4];
+		int seg, p_end;
+
+		seg_lo[0] = smp_start;
+		seg_hi[0] = e3 < smp_end ? e3 : smp_end;
+		seg_lo[1] = e3 + 1 > smp_start ? e3 + 1 : smp_start;
+		seg_hi[1] = e2 < smp_end ? e2 : smp_end;
+		seg_lo[2] = e2 + 1 > smp_start ? e2 + 1 : smp_start;
+		seg_hi[2] = e1 < smp_end ? e1 : smp_end;
+		seg_lo[3] = e1 + 1 > smp_start ? e1 + 1 : smp_start;
+		seg_hi[3] = smp_end;
+
+		for (seg = 0; seg < 4; seg++) {
+			off = seg_off[seg];
+			p_end = seg_hi[seg];
+			for (p = seg_lo[seg]; p <= p_end; p++) {
+				coeff_buf[p * 4 + off] = tmp_coeffs[p - smp_start];
+			}
+		}
+	} else {
+		for (j = 0; j < n_samples; j++) {
+			p = smp_start + j;
+			off = 3;
+			if (p > e1) off = 0;
+			else if (p > e2) off = 1;
+			else if (p > e3) off = 2;
+			coeff_buf[p * 4 + off] = tmp_coeffs[j];
+		}
+	}
+}
+
 static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf,
 	float *tmp_coeffs)
 {
-	int i, j, smp_end, smp_start, n_samples, ends[4];
-	int e1, e2, e3, p, p_end, seg, off;
-	int natural_start, natural_end, integer_tap;
-	float fudge, inv_tm, x, ax, c;
+	int i, j, smp_start, smp_end, n_samples, ends[4];
+	int e1, e2, e3, natural_start, natural_end, integer_tap;
+	float inv_tm, x_start, fudge, inv_fudge;
 	double tap_mult, radius, center, center_step, left_edge, right_edge;
-	int seg_lo[4], seg_hi[4];
-	static const int seg_off[4] = {3, 2, 1, 0};
 
 	tap_mult = (double)in_dim / out_dim;
 	radius = 2.0 * tap_mult;
@@ -684,31 +764,29 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 	 * each iteration to avoid recomputing the multiply. */
 	center = 0.5 * tap_mult - 0.5;
 	/* When tap_mult divides evenly and the kernel isn't clamped at the
-	 * image edge, Catmull-Rom is partition-of-unity: sum(catrom(x))/tap
-	 * = 1 exactly (algebraically), so fudge = 1 and we can drop the
-	 * divide + per-sample multiply on the scatter. */
+	 * image edge, Catmull-Rom is partition-of-unity: sum = 1 exactly
+	 * (algebraically), so we can skip the normalize pass entirely. */
 	integer_tap = (in_dim % out_dim) == 0;
 
-	for (i=0; i<4; i++) {
+	for (i = 0; i < 4; i++) {
 		ends[i] = -1;
 	}
 
-	for (i=0; i<out_dim; i++) {
-		int interior, skip_norm;
+	for (i = 0; i < out_dim; i++) {
+		int interior;
 
-		left_edge = center - radius;
-		right_edge = center + radius;
 		/* smp_start = floor(left_edge)+1 and smp_end = ceil(right_edge)-1
 		 * collapse the original ceil/floor + "equality bump" pair into one
 		 * rounding op each. This excludes samples at exactly distance ±2
 		 * (where catrom = 0) — same as the original. */
+		left_edge = center - radius;
+		right_edge = center + radius;
 		natural_start = (int)floor(left_edge) + 1;
 		natural_end = (int)ceil(right_edge) - 1;
 		smp_start = natural_start < 0 ? 0 : natural_start;
 		smp_end = natural_end >= in_dim ? in_dim - 1 : natural_end;
 		n_samples = smp_end - smp_start + 1;
 		interior = (natural_start == smp_start && natural_end == smp_end);
-		skip_norm = integer_tap && interior;
 
 		e3 = ends[(i+1) & 3];
 		e2 = ends[(i+2) & 3];
@@ -716,130 +794,19 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 		ends[i & 3] = smp_end;
 		border_buf[i] = smp_end - e1;
 
-		/* Walk samples in pos-order, computing x = (pos-center)/tap_mult
-		 * incrementally. Catmull-Rom splits at |x|=1; we compute both
-		 * cubic pieces and select on a mask so the loop has no data-
-		 * dependent branch and vectorizes cleanly. */
-		fudge = 0.0f;
-		x = (float)((double)smp_start - center) * inv_tm;
-		j = 0;
-#if defined(__AVX2__) && defined(__FMA__)
-		if (n_samples >= 8) {
-			const __m256 vsign = _mm256_set1_ps(-0.0f);
-			const __m256 vone = _mm256_set1_ps(1.0f);
-			const __m256 vc1_5 = _mm256_set1_ps(1.5f);
-			const __m256 vcn2_5 = _mm256_set1_ps(-2.5f);
-			const __m256 vc5 = _mm256_set1_ps(5.0f);
-			const __m256 vcn8 = _mm256_set1_ps(-8.0f);
-			const __m256 vc4 = _mm256_set1_ps(4.0f);
-			const __m256 vc0_5 = _mm256_set1_ps(0.5f);
-			__m256 vinv_tm = _mm256_set1_ps(inv_tm);
-			__m256 vstride = _mm256_set1_ps(8.0f * inv_tm);
-			__m256 vx = _mm256_setr_ps(x,
-				x + inv_tm, x + 2.0f*inv_tm, x + 3.0f*inv_tm,
-				x + 4.0f*inv_tm, x + 5.0f*inv_tm, x + 6.0f*inv_tm,
-				x + 7.0f*inv_tm);
-			__m256 vfudge = _mm256_setzero_ps();
-			int j8 = n_samples & ~7;
-			float carry[8];
-			for (; j < j8; j += 8) {
-				__m256 vax = _mm256_andnot_ps(vsign, vx);
-				__m256 vax2 = _mm256_mul_ps(vax, vax);
-				__m256 vp = _mm256_fmadd_ps(vc1_5, vax, vcn2_5);
-				vp = _mm256_fmadd_ps(vp, vax2, vone);
-				__m256 vn = _mm256_sub_ps(vc5, vax);
-				vn = _mm256_fmadd_ps(vn, vax, vcn8);
-				vn = _mm256_fmadd_ps(vn, vax, vc4);
-				vn = _mm256_mul_ps(vn, vc0_5);
-				__m256 vlobe = _mm256_cmp_ps(vax, vone, _CMP_LT_OQ);
-				__m256 vc = _mm256_blendv_ps(vn, vp, vlobe);
-				vc = _mm256_mul_ps(vc, vinv_tm);
-				_mm256_storeu_ps(tmp_coeffs + j, vc);
-				vfudge = _mm256_add_ps(vfudge, vc);
-				vx = _mm256_add_ps(vx, vstride);
-			}
-			{
-				__m128 lo = _mm256_castps256_ps128(vfudge);
-				__m128 hi = _mm256_extractf128_ps(vfudge, 1);
-				__m128 s = _mm_add_ps(lo, hi);
-				__m128 sh = _mm_movehl_ps(s, s);
-				s = _mm_add_ps(s, sh);
-				sh = _mm_shuffle_ps(s, s, 0x55);
-				s = _mm_add_ss(s, sh);
-				fudge = _mm_cvtss_f32(s);
-			}
-			_mm256_storeu_ps(carry, vx);
-			x = carry[0];
-		}
-#endif
-		for (; j < n_samples; j++) {
-			float ax2, c_pos, c_neg;
-			ax = x < 0 ? -x : x;
-			ax2 = ax * ax;
-			c_pos = (1.5f * ax - 2.5f) * ax2 + 1.0f;
-			c_neg = (((5.0f - ax) * ax - 8.0f) * ax + 4.0f) * 0.5f;
-			c = (ax < 1.0f ? c_pos : c_neg) * inv_tm;
-			tmp_coeffs[j] = c;
-			fudge += c;
-			x += inv_tm;
-		}
-		fudge = skip_norm ? 1.0f : 1.0f / fudge;
+		x_start = (float)((double)smp_start - center) * inv_tm;
+		fudge = compute_down_kernel(tmp_coeffs, n_samples, inv_tm, x_start);
 
-		/* Scatter to coeff_buf with offset chosen per sample, multiplying
-		 * by 1/fudge inline. For wide kernels (n_samples > 4) we partition
-		 * [smp_start, smp_end] into 4 contiguous offset segments; this
-		 * removes the per-sample branch chain that dominates on big
-		 * downscales. For narrow kernels, the segment-loop overhead
-		 * outweighs the savings, so we fall back to the per-sample chain.
-		 * skip_norm splits each branch so we drop the fudge multiply. */
-		if (n_samples > 4) {
-			seg_lo[0] = smp_start;
-			seg_hi[0] = e3 < smp_end ? e3 : smp_end;
-			seg_lo[1] = e3 + 1 > smp_start ? e3 + 1 : smp_start;
-			seg_hi[1] = e2 < smp_end ? e2 : smp_end;
-			seg_lo[2] = e2 + 1 > smp_start ? e2 + 1 : smp_start;
-			seg_hi[2] = e1 < smp_end ? e1 : smp_end;
-			seg_lo[3] = e1 + 1 > smp_start ? e1 + 1 : smp_start;
-			seg_hi[3] = smp_end;
-
-			if (skip_norm) {
-				for (seg = 0; seg < 4; seg++) {
-					off = seg_off[seg];
-					p_end = seg_hi[seg];
-					for (p = seg_lo[seg]; p <= p_end; p++) {
-						coeff_buf[p * 4 + off] = tmp_coeffs[p - smp_start];
-					}
-				}
-			} else {
-				for (seg = 0; seg < 4; seg++) {
-					off = seg_off[seg];
-					p_end = seg_hi[seg];
-					for (p = seg_lo[seg]; p <= p_end; p++) {
-						coeff_buf[p * 4 + off] = tmp_coeffs[p - smp_start] * fudge;
-					}
-				}
-			}
-		} else {
-			if (skip_norm) {
-				for (j=0; j<n_samples; j++) {
-					p = smp_start + j;
-					off = 3;
-					if (p > e1) off = 0;
-					else if (p > e2) off = 1;
-					else if (p > e3) off = 2;
-					coeff_buf[p * 4 + off] = tmp_coeffs[j];
-				}
-			} else {
-				for (j=0; j<n_samples; j++) {
-					p = smp_start + j;
-					off = 3;
-					if (p > e1) off = 0;
-					else if (p > e2) off = 1;
-					else if (p > e3) off = 2;
-					coeff_buf[p * 4 + off] = tmp_coeffs[j] * fudge;
-				}
+		if (!(integer_tap && interior)) {
+			inv_fudge = 1.0f / fudge;
+			for (j = 0; j < n_samples; j++) {
+				tmp_coeffs[j] *= inv_fudge;
 			}
 		}
+
+		scatter_down_kernel(coeff_buf, tmp_coeffs, smp_start, smp_end,
+			e1, e2, e3);
+
 		center += center_step;
 	}
 }
@@ -886,25 +853,12 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 		 * lobe polynomial directly — no fabsf, no |x|<1 branch, no
 		 * /tap_mult (tap_mult is always 1 here). Catmull-Rom is
 		 * partition-of-unity at 4 unit-spaced taps (c0+c1+c2+c3 = 1
-		 * algebraically), so we can skip fudge normalization.
-		 *
-		 * SSE path computes all 4 coefficients in parallel; lanes 1,2
-		 * use the positive-lobe poly, lanes 0,3 use the negative-lobe
-		 * poly, blended via a constant mask. */
+		 * algebraically), so we can skip fudge normalization. The
+		 * SIMD evaluator lives in the AVX2 backend; the scalar form
+		 * here is the portable fallback. */
 		if (smp_i >= 1 && end <= max_pos) {
 #if defined(__AVX2__) && defined(__FMA__)
-			__m128 vd = _mm_setr_ps(1.0f + tx, tx, 1.0f - tx, 2.0f - tx);
-			__m128 vd2 = _mm_mul_ps(vd, vd);
-			__m128 vp = _mm_fmadd_ps(_mm_set1_ps(1.5f), vd, _mm_set1_ps(-2.5f));
-			vp = _mm_fmadd_ps(vp, vd2, _mm_set1_ps(1.0f));
-			__m128 vn = _mm_sub_ps(_mm_set1_ps(5.0f), vd);
-			vn = _mm_fmadd_ps(vn, vd, _mm_set1_ps(-8.0f));
-			vn = _mm_fmadd_ps(vn, vd, _mm_set1_ps(4.0f));
-			vn = _mm_mul_ps(vn, _mm_set1_ps(0.5f));
-			/* lanes 1,2 are positive lobe; lanes 0,3 negative. */
-			__m128 vmask = _mm_castsi128_ps(_mm_setr_epi32(0, -1, -1, 0));
-			__m128 vc = _mm_blendv_ps(vn, vp, vmask);
-			_mm_storeu_ps(coeff_buf, vc);
+			oil_catrom_4tap_avx2(coeff_buf, tx);
 #else
 			float u = tx;
 			float um1 = 1.0f - u;
