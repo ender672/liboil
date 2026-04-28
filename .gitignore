@@ -3,6 +3,7 @@ test
 imgscale
 oilview
 benchmark
+coeffbench
 sdltest
 *.jpg
 *.png
