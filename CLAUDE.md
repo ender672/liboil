@@ -11,7 +11,7 @@ liboil is a C library for fast, accurate image resizing using Catmull-Rom (bicub
 ```bash
 make test          # build test binary
 ./test             # run tests (assert-based, compares against long-double reference impl)
-make benchmark     # build perf benchmark
+make benchmark     # build perf benchmark. The benchmark runs many iterations and prints the best of. One run is always enough.
 make clean         # remove all build artifacts
 ```
 
