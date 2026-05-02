@@ -81,30 +81,6 @@ static int clamp8(float x)
 }
 
 /**
- * Map from the discreet dest coordinate pos to a continuous source coordinate.
- * The resulting coordinate can range from -0.5 to the maximum of the
- * destination image dimension.
- */
-static double map(int dim_in, int dim_out, int pos)
-{
-	return (pos + 0.5) * ((double)dim_in / dim_out) - 0.5;
-}
-
-/**
- * Returns the mapped input position and put the sub-pixel remainder in rest.
- */
-static int split_map(int dim_in, int dim_out, int pos, float *rest)
-{
-	double smp;
-	int smp_i;
-
-	smp = map(dim_in, dim_out, pos);
-	smp_i = smp < 0 ? -1 : smp;
-	*rest = smp - smp_i;
-	return smp_i;
-}
-
-/**
  * Return the maximum number of input samples that can contribute to any single
  * output sample. Used only for buffer allocation.
  */
@@ -689,31 +665,26 @@ static void build_i2f(void)
 static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf,
 	float *tmp_coeffs)
 {
-	int smp_i, i, j, offset, pos, smp_end, smp_start, n_samples, ends[4];
-	float tx, fudge;
+	int i, j, offset, pos, smp_end, smp_start, n_samples, ends[4];
+	float fudge;
 	double tap_mult, radius, center, left_edge, right_edge, dist;
 
 	tap_mult = (double)in_dim / out_dim;
 	radius = 2.0 * tap_mult;
+	center = 0.5 * tap_mult - 0.5;
 
 	for (i=0; i<4; i++) {
 		ends[i] = -1;
 	}
 
 	for (i=0; i<out_dim; i++) {
-		smp_i = split_map(in_dim, out_dim, i, &tx);
-		center = smp_i + (double)tx;
-
 		left_edge = center - radius;
 		right_edge = center + radius;
-		smp_start = (int)ceil(left_edge);
-		smp_end = (int)floor(right_edge);
-		if ((double)smp_start == left_edge) {
-			smp_start++;
-		}
-		if ((double)smp_end == right_edge) {
-			smp_end--;
-		}
+		/* floor(left)+1 / ceil(right)-1 collapse the original ceil/floor
+		 * + equality-bump pair into one rounding op each. Excludes
+		 * samples at exactly distance +/-2 (catrom = 0 there). */
+		smp_start = (int)floor(left_edge) + 1;
+		smp_end = (int)ceil(right_edge) - 1;
 		if (smp_start < 0) {
 			smp_start = 0;
 		}
@@ -750,6 +721,8 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 
 			coeff_buf[pos * 4 + offset] = tmp_coeffs[j];
 		}
+
+		center += tap_mult;
 	}
 }
 
@@ -767,11 +740,23 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf)
 {
 	int i, smp_i, start, end, ltrim, rtrim, safe_end, max_pos;
+	double pos_d, step;
 	float tx;
 
 	max_pos = in_dim - 1;
+	step = (double)in_dim / out_dim;
+	pos_d = 0.5 * step - 0.5;
+
 	for (i=0; i<out_dim; i++) {
-		smp_i = split_map(in_dim, out_dim, i, &tx);
+		/* split_map inlined: smp_i is floor toward -inf, but pos_d in
+		 * (-0.5, 0) maps to smp_i = -1. */
+		if (pos_d < 0.0) {
+			smp_i = -1;
+			tx = (float)(pos_d + 1.0);
+		} else {
+			smp_i = (int)pos_d;
+			tx = (float)(pos_d - smp_i);
+		}
 		start = smp_i - 1;
 		end = smp_i + 2;
 
@@ -795,6 +780,7 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 		calc_coeffs(coeff_buf + rtrim, tx, 4, ltrim, rtrim);
 
 		coeff_buf += 4;
+		pos_d += step;
 	}
 }
 
