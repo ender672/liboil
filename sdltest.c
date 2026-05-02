@@ -3,6 +3,8 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 
+#define LINE_QUEUE_DEPTH 16
+
 enum backend { BACKEND_DEFAULT, BACKEND_SCALAR, BACKEND_SSE2, BACKEND_AVX2, BACKEND_NEON };
 static enum backend backend;
 
@@ -17,11 +19,13 @@ static int (*scale_out_fn)(struct oil_scale *, unsigned char *);
 struct resumable_resize {
 	FILE *io;
 	int looks_like_png;
+	int interlaced_png;
 	int surface_width;
 	int surface_height;
 	int out_width;
 	int out_height;
-	int ypos;
+	int in_height;
+	int in_rowbytes;
 	int cmp;
 	unsigned char *outbuf;
 
@@ -33,6 +37,20 @@ struct resumable_resize {
 	png_infop rinfo;
 
 	unsigned char *surface_pixels;
+
+	SDL_Thread *decoder_thread;
+	SDL_Thread *scaler_thread;
+	SDL_Mutex *mutex;
+	SDL_Condition *not_empty;
+	SDL_Condition *not_full;
+	unsigned char *slots[LINE_QUEUE_DEPTH];
+	int head;
+	int tail;
+	int count;
+	int ypos;
+	int decoder_done;
+	int scaler_done;
+	int aborted;
 };
 
 static void translate(unsigned char *in, unsigned char *out, int width, int cmp) {
@@ -109,6 +127,9 @@ static int png_start(struct resumable_resize *rr) {
 	oil_libpng_init(rr->olp, rpng, rinfo, rr->out_width, rr->out_height);
 	rr->cmp = OIL_CMP(rr->olp->os.cs);
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
+	rr->in_height = png_get_image_height(rpng, rinfo);
+	rr->in_rowbytes = png_get_rowbytes(rpng, rinfo);
+	rr->interlaced_png = (png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7);
 	return 0;
 }
 
@@ -171,6 +192,9 @@ static int jpeg_start(struct resumable_resize *rr)
 	oil_libjpeg_init(rr->olj, dinfo, rr->out_width, rr->out_height);
 	rr->cmp = 3;
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
+	rr->in_height = dinfo->output_height;
+	rr->in_rowbytes = dinfo->output_width * dinfo->output_components;
+	rr->interlaced_png = 0;
 	return 0;
 }
 
@@ -183,8 +207,107 @@ static void jpeg_end(struct resumable_resize *rr) {
 	free(rr->dinfo);
 }
 
+static int decoder_thread_fn(void *arg)
+{
+	struct resumable_resize *rr = arg;
+	int row;
+
+	for (row = 0; row < rr->in_height; row++) {
+		unsigned char *slot;
+
+		SDL_LockMutex(rr->mutex);
+		while (rr->count == LINE_QUEUE_DEPTH && !rr->aborted) {
+			SDL_WaitCondition(rr->not_full, rr->mutex);
+		}
+		if (rr->aborted) {
+			SDL_UnlockMutex(rr->mutex);
+			return 0;
+		}
+		slot = rr->slots[rr->head];
+		SDL_UnlockMutex(rr->mutex);
+
+		if (rr->looks_like_png) {
+			if (rr->interlaced_png) {
+				memcpy(slot, rr->olp->inimage[row], rr->in_rowbytes);
+			} else {
+				png_read_row(rr->rpng, slot, NULL);
+			}
+		} else {
+			jpeg_read_scanlines(rr->dinfo, &slot, 1);
+		}
+
+		SDL_LockMutex(rr->mutex);
+		rr->head = (rr->head + 1) % LINE_QUEUE_DEPTH;
+		rr->count++;
+		SDL_BroadcastCondition(rr->not_empty);
+		SDL_UnlockMutex(rr->mutex);
+	}
+
+	SDL_LockMutex(rr->mutex);
+	rr->decoder_done = 1;
+	SDL_BroadcastCondition(rr->not_empty);
+	SDL_UnlockMutex(rr->mutex);
+	return 0;
+}
+
+static int scaler_thread_fn(void *arg)
+{
+	struct resumable_resize *rr = arg;
+	struct oil_scale *os;
+	int center_offset;
+	int local_ypos;
+
+	os = rr->looks_like_png ? &rr->olp->os : &rr->olj->os;
+	center_offset = resize_center_offset(rr);
+	local_ypos = 0;
+
+	while (local_ypos < rr->out_height) {
+		unsigned char *tmp;
+
+		while (oil_scale_slots(os) > 0) {
+			unsigned char *slot;
+
+			SDL_LockMutex(rr->mutex);
+			while (rr->count == 0 && !rr->decoder_done && !rr->aborted) {
+				SDL_WaitCondition(rr->not_empty, rr->mutex);
+			}
+			if (rr->aborted || rr->count == 0) {
+				SDL_UnlockMutex(rr->mutex);
+				goto done;
+			}
+			slot = rr->slots[rr->tail];
+			SDL_UnlockMutex(rr->mutex);
+
+			scale_in_fn(os, slot);
+
+			SDL_LockMutex(rr->mutex);
+			rr->tail = (rr->tail + 1) % LINE_QUEUE_DEPTH;
+			rr->count--;
+			SDL_BroadcastCondition(rr->not_full);
+			SDL_UnlockMutex(rr->mutex);
+		}
+
+		scale_out_fn(os, rr->outbuf);
+		tmp = rr->surface_pixels + center_offset + local_ypos * rr->surface_width * 4;
+		translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
+		local_ypos++;
+
+		SDL_LockMutex(rr->mutex);
+		rr->ypos = local_ypos;
+		SDL_UnlockMutex(rr->mutex);
+	}
+
+done:
+	SDL_LockMutex(rr->mutex);
+	rr->scaler_done = 1;
+	SDL_UnlockMutex(rr->mutex);
+	return 0;
+}
+
 static int resumable_resize_start(struct resumable_resize *rr, char *path, int surface_width, int surface_height, unsigned char *surface_pixels)
 {
+	int i;
+
 	rr->io = fopen(path, "r");
 	if (!rr->io) {
 		fprintf(stderr, "Error: unable to open %s\n", path);
@@ -195,6 +318,21 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path, int s
 	rr->surface_height = surface_height;
 	rr->surface_pixels = surface_pixels;
 	rr->ypos = 0;
+	rr->head = 0;
+	rr->tail = 0;
+	rr->count = 0;
+	rr->decoder_done = 0;
+	rr->scaler_done = 0;
+	rr->aborted = 0;
+	rr->mutex = NULL;
+	rr->not_empty = NULL;
+	rr->not_full = NULL;
+	rr->decoder_thread = NULL;
+	rr->scaler_thread = NULL;
+	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
+		rr->slots[i] = NULL;
+	}
+
 	if (rr->looks_like_png) {
 		if (png_start(rr) < 0) {
 			fclose(rr->io);
@@ -206,6 +344,51 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path, int s
 			return -1;
 		}
 	}
+
+	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
+		rr->slots[i] = malloc(rr->in_rowbytes);
+		if (!rr->slots[i]) {
+			while (i-- > 0) free(rr->slots[i]);
+			if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
+			fclose(rr->io);
+			return -1;
+		}
+	}
+
+	rr->mutex = SDL_CreateMutex();
+	rr->not_empty = SDL_CreateCondition();
+	rr->not_full = SDL_CreateCondition();
+	if (!rr->mutex || !rr->not_empty || !rr->not_full) {
+		fprintf(stderr, "Error: SDL sync init failed: %s\n", SDL_GetError());
+		if (rr->mutex) SDL_DestroyMutex(rr->mutex);
+		if (rr->not_empty) SDL_DestroyCondition(rr->not_empty);
+		if (rr->not_full) SDL_DestroyCondition(rr->not_full);
+		for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
+		if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
+		fclose(rr->io);
+		return -1;
+	}
+
+	rr->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
+	rr->scaler_thread = SDL_CreateThread(scaler_thread_fn, "oil-scaler", rr);
+	if (!rr->decoder_thread || !rr->scaler_thread) {
+		fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
+		SDL_LockMutex(rr->mutex);
+		rr->aborted = 1;
+		SDL_BroadcastCondition(rr->not_empty);
+		SDL_BroadcastCondition(rr->not_full);
+		SDL_UnlockMutex(rr->mutex);
+		if (rr->decoder_thread) SDL_WaitThread(rr->decoder_thread, NULL);
+		if (rr->scaler_thread) SDL_WaitThread(rr->scaler_thread, NULL);
+		SDL_DestroyMutex(rr->mutex);
+		SDL_DestroyCondition(rr->not_empty);
+		SDL_DestroyCondition(rr->not_full);
+		for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
+		if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
+		fclose(rr->io);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -214,54 +397,27 @@ static int resumable_resize_start_from_surface(struct resumable_resize *rr, char
 	return resumable_resize_start(rr, path, surface->w, surface->h, surface->pixels);
 }
 
-static int resumable_resize_do(struct resumable_resize *rr) {
-	int scanline_ready, center_offset, line_buf_offset;
-	unsigned char *tmp;
-
-	center_offset = resize_center_offset(rr);
-	line_buf_offset = rr->ypos * rr->surface_width * 4;
-	tmp = rr->surface_pixels + center_offset + line_buf_offset;
-
-	if (rr->looks_like_png) {
-		if (!oil_scale_slots(&rr->olp->os)) {
-			scanline_ready = 1;
-		} else {
-			switch (png_get_interlace_type(rr->olp->rpng, rr->olp->rinfo)) {
-			case PNG_INTERLACE_NONE:
-				png_read_row(rr->olp->rpng, rr->olp->inbuf, NULL);
-				break;
-			case PNG_INTERLACE_ADAM7:
-				rr->olp->inbuf = rr->olp->inimage[rr->olp->in_vpos++];
-				break;
-			}
-			scale_in_fn(&rr->olp->os, rr->olp->inbuf);
-			scanline_ready = oil_scale_slots(&rr->olp->os) == 0;
-		}
-		if (!scanline_ready) {
-			return -2;
-		}
-		scale_out_fn(&rr->olp->os, rr->outbuf);
-		rr->ypos += 1;
-	} else {
-		if (!oil_scale_slots(&rr->olj->os)) {
-			scanline_ready = 1;
-		} else {
-			jpeg_read_scanlines(rr->olj->dinfo, &rr->olj->inbuf, 1);
-			scale_in_fn(&rr->olj->os, rr->olj->inbuf);
-			scanline_ready = oil_scale_slots(&rr->olj->os) == 0;
-		}
-		if (!scanline_ready) {
-			return -2;
-		}
-		scale_out_fn(&rr->olj->os, rr->outbuf);
-		rr->ypos += 1;
-	}
-	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
-	return rr->ypos == rr->out_height ? 0 : -1;
-}
-
 static void resumable_resize_end(struct resumable_resize *rr)
 {
+	int i;
+
+	SDL_LockMutex(rr->mutex);
+	rr->aborted = 1;
+	SDL_BroadcastCondition(rr->not_empty);
+	SDL_BroadcastCondition(rr->not_full);
+	SDL_UnlockMutex(rr->mutex);
+
+	SDL_WaitThread(rr->decoder_thread, NULL);
+	SDL_WaitThread(rr->scaler_thread, NULL);
+
+	SDL_DestroyMutex(rr->mutex);
+	SDL_DestroyCondition(rr->not_empty);
+	SDL_DestroyCondition(rr->not_full);
+
+	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
+		free(rr->slots[i]);
+	}
+
 	if (rr->looks_like_png) {
 		png_end(rr);
 	} else {
@@ -298,7 +454,8 @@ int main(int argc, char **argv) {
 	SDL_Surface *surface;
 	SDL_Event event;
 	char *path;
-	int ret, event_happened, render_in_progress, surface_is_dirty;
+	int event_happened, render_in_progress, surface_is_dirty;
+	int last_displayed_ypos;
 	struct resumable_resize rr;
 	Uint64 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
 	SDL_Surface *snapshot = NULL;
@@ -392,6 +549,7 @@ int main(int argc, char **argv) {
 	clear_surface(surface);
 	lastUpdateTime = 0;
 	resize_start_time = 0;
+	last_displayed_ypos = 0;
 	if (resumable_resize_start_from_surface(&rr, path, surface) < 0) {
 		SDL_Quit();
 		return 1;
@@ -400,7 +558,13 @@ int main(int argc, char **argv) {
 	surface_is_dirty = 1;
 
 	while (1) {
-		event_happened = (render_in_progress || pending_resize_time) ? SDL_PollEvent(&event) : SDL_WaitEvent(&event);
+		if (render_in_progress) {
+			event_happened = SDL_WaitEventTimeout(&event, 1000 / 60);
+		} else if (pending_resize_time) {
+			event_happened = SDL_WaitEventTimeout(&event, DEBOUNCE_MS);
+		} else {
+			event_happened = SDL_WaitEvent(&event);
+		}
 
 		if (event_happened && event.type == SDL_EVENT_QUIT) {
 			if (render_in_progress) {
@@ -438,6 +602,7 @@ int main(int argc, char **argv) {
 			surface = SDL_GetWindowSurface(window);
 			clear_surface(surface);
 			resize_start_time = SDL_GetTicks();
+			last_displayed_ypos = 0;
 			if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
 				render_in_progress = 1;
 				surface_is_dirty = 1;
@@ -451,6 +616,7 @@ int main(int argc, char **argv) {
 				surface = SDL_GetWindowSurface(window);
 				clear_surface(surface);
 				resize_start_time = SDL_GetTicks();
+				last_displayed_ypos = 0;
 				if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
 					render_in_progress = 1;
 					surface_is_dirty = 1;
@@ -459,8 +625,14 @@ int main(int argc, char **argv) {
 		}
 
 		if (render_in_progress) {
-			ret = resumable_resize_do(&rr);
-			if (ret == 0) { // 0 means the image resize finished
+			int local_ypos, local_done;
+
+			SDL_LockMutex(rr.mutex);
+			local_ypos = rr.ypos;
+			local_done = rr.scaler_done;
+			SDL_UnlockMutex(rr.mutex);
+
+			if (local_done) {
 				render_in_progress = 0;
 				if (snapshot)
 					SDL_DestroySurface(snapshot);
@@ -482,7 +654,8 @@ int main(int argc, char **argv) {
 				lastUpdateTime = SDL_GetTicks();
 				elapsed_time = SDL_GetTicks() - resize_start_time;
 				fprintf(stderr, "Resize ticks: %llu\n", (unsigned long long)elapsed_time);
-			} else if (ret == -1) { // -1 means one scanline finished
+			} else if (local_ypos > last_displayed_ypos) {
+				last_displayed_ypos = local_ypos;
 				surface_is_dirty = 1;
 			}
 		}
