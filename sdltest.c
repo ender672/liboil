@@ -2,24 +2,51 @@
 #include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
+#include <jpeglib.h>
+#include <png.h>
+
+#include "oil_resample.h"
+#include "oil_libjpeg.h"
+#include "oil_libpng.h"
 
 #define LINE_QUEUE_DEPTH 16
 
-enum backend { BACKEND_DEFAULT, BACKEND_SCALAR, BACKEND_SSE2, BACKEND_AVX2, BACKEND_NEON };
-static enum backend backend;
+struct backend_entry {
+	const char *flag;
+	int (*scale_in)(struct oil_scale *, unsigned char *);
+	int (*scale_out)(struct oil_scale *, unsigned char *);
+};
 
-#include "oil_resample.h"
+static const struct backend_entry backends[] = {
+	{"--scalar", oil_scale_in, oil_scale_out},
+#if defined(__x86_64__)
+	{"--sse2",   oil_scale_in_sse2, oil_scale_out_sse2},
+	{"--avx2",   oil_scale_in_avx2, oil_scale_out_avx2},
+#elif defined(__aarch64__)
+	{"--neon",   oil_scale_in_neon, oil_scale_out_neon},
+#endif
+};
 
-static int (*scale_in_fn)(struct oil_scale *, unsigned char *);
-static int (*scale_out_fn)(struct oil_scale *, unsigned char *);
-#include "oil_libjpeg.h"
-#include "oil_libpng.h"
-#include <jpeglib.h>
-#include <png.h>
+static const struct backend_entry *find_backend(const char *flag) {
+	size_t i;
+	for (i = 0; i < sizeof(backends)/sizeof(backends[0]); i++) {
+		if (strcmp(backends[i].flag, flag) == 0) return &backends[i];
+	}
+	return NULL;
+}
+
+static const struct backend_entry *default_backend(void) {
+#if defined(__x86_64__)
+	return find_backend(__builtin_cpu_supports("avx2") ? "--avx2" : "--sse2");
+#elif defined(__aarch64__)
+	return find_backend("--neon");
+#else
+	return find_backend("--scalar");
+#endif
+}
+
 struct resumable_resize {
 	FILE *io;
-	int looks_like_png;
-	int interlaced_png;
 	int surface_width;
 	int surface_height;
 	int out_width;
@@ -28,6 +55,13 @@ struct resumable_resize {
 	int in_rowbytes;
 	int cmp;
 	unsigned char *outbuf;
+	unsigned char *scaled_buf;
+
+	struct oil_scale *os;
+	int (*scale_in)(struct oil_scale *, unsigned char *);
+	int (*scale_out)(struct oil_scale *, unsigned char *);
+	void (*decode_row)(struct resumable_resize *, unsigned char *, int);
+	void (*format_end)(struct resumable_resize *);
 
 	struct oil_libjpeg *olj;
 	struct jpeg_decompress_struct *dinfo;
@@ -36,13 +70,10 @@ struct resumable_resize {
 	png_structp rpng;
 	png_infop rinfo;
 
-	unsigned char *surface_pixels;
-
 	SDL_Thread *decoder_thread;
 	SDL_Thread *scaler_thread;
 	SDL_Mutex *mutex;
-	SDL_Condition *not_empty;
-	SDL_Condition *not_full;
+	SDL_Condition *cv;
 	unsigned char *slots[LINE_QUEUE_DEPTH];
 	int head;
 	int tail;
@@ -78,14 +109,22 @@ static int looks_like_png(FILE *io)
 	return peek == 137;
 }
 
-static int resize_center_offset(struct resumable_resize *rr)
-{
-	int x_center_offset, y_center_offset;
-
-	x_center_offset = (rr->surface_width - rr->out_width) / 2 * 4;
-	y_center_offset = (rr->surface_height - rr->out_height) / 2 * rr->surface_width * 4;
-	return x_center_offset + y_center_offset;
+static void decode_png_interlaced(struct resumable_resize *rr, unsigned char *slot, int row) {
+	memcpy(slot, rr->olp->inimage[row], rr->in_rowbytes);
 }
+
+static void decode_png_streaming(struct resumable_resize *rr, unsigned char *slot, int row) {
+	(void)row;
+	png_read_row(rr->rpng, slot, NULL);
+}
+
+static void decode_jpeg_row(struct resumable_resize *rr, unsigned char *slot, int row) {
+	(void)row;
+	jpeg_read_scanlines(rr->dinfo, &slot, 1);
+}
+
+static void png_end(struct resumable_resize *rr);
+static void jpeg_end(struct resumable_resize *rr);
 
 static int png_start(struct resumable_resize *rr) {
 	png_structp rpng;
@@ -129,7 +168,10 @@ static int png_start(struct resumable_resize *rr) {
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
 	rr->in_height = png_get_image_height(rpng, rinfo);
 	rr->in_rowbytes = png_get_rowbytes(rpng, rinfo);
-	rr->interlaced_png = (png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7);
+	rr->os = &rr->olp->os;
+	rr->decode_row = (png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7)
+		? decode_png_interlaced : decode_png_streaming;
+	rr->format_end = png_end;
 	return 0;
 }
 
@@ -194,7 +236,9 @@ static int jpeg_start(struct resumable_resize *rr)
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
 	rr->in_height = dinfo->output_height;
 	rr->in_rowbytes = dinfo->output_width * dinfo->output_components;
-	rr->interlaced_png = 0;
+	rr->os = &rr->olj->os;
+	rr->decode_row = decode_jpeg_row;
+	rr->format_end = jpeg_end;
 	return 0;
 }
 
@@ -217,7 +261,7 @@ static int decoder_thread_fn(void *arg)
 
 		SDL_LockMutex(rr->mutex);
 		while (rr->count == LINE_QUEUE_DEPTH && !rr->aborted) {
-			SDL_WaitCondition(rr->not_full, rr->mutex);
+			SDL_WaitCondition(rr->cv, rr->mutex);
 		}
 		if (rr->aborted) {
 			SDL_UnlockMutex(rr->mutex);
@@ -226,26 +270,18 @@ static int decoder_thread_fn(void *arg)
 		slot = rr->slots[rr->head];
 		SDL_UnlockMutex(rr->mutex);
 
-		if (rr->looks_like_png) {
-			if (rr->interlaced_png) {
-				memcpy(slot, rr->olp->inimage[row], rr->in_rowbytes);
-			} else {
-				png_read_row(rr->rpng, slot, NULL);
-			}
-		} else {
-			jpeg_read_scanlines(rr->dinfo, &slot, 1);
-		}
+		rr->decode_row(rr, slot, row);
 
 		SDL_LockMutex(rr->mutex);
 		rr->head = (rr->head + 1) % LINE_QUEUE_DEPTH;
 		rr->count++;
-		SDL_BroadcastCondition(rr->not_empty);
+		SDL_SignalCondition(rr->cv);
 		SDL_UnlockMutex(rr->mutex);
 	}
 
 	SDL_LockMutex(rr->mutex);
 	rr->decoder_done = 1;
-	SDL_BroadcastCondition(rr->not_empty);
+	SDL_SignalCondition(rr->cv);
 	SDL_UnlockMutex(rr->mutex);
 	return 0;
 }
@@ -253,23 +289,17 @@ static int decoder_thread_fn(void *arg)
 static int scaler_thread_fn(void *arg)
 {
 	struct resumable_resize *rr = arg;
-	struct oil_scale *os;
-	int center_offset;
-	int local_ypos;
-
-	os = rr->looks_like_png ? &rr->olp->os : &rr->olj->os;
-	center_offset = resize_center_offset(rr);
-	local_ypos = 0;
+	int local_ypos = 0;
 
 	while (local_ypos < rr->out_height) {
 		unsigned char *tmp;
 
-		while (oil_scale_slots(os) > 0) {
+		while (oil_scale_slots(rr->os) > 0) {
 			unsigned char *slot;
 
 			SDL_LockMutex(rr->mutex);
 			while (rr->count == 0 && !rr->decoder_done && !rr->aborted) {
-				SDL_WaitCondition(rr->not_empty, rr->mutex);
+				SDL_WaitCondition(rr->cv, rr->mutex);
 			}
 			if (rr->aborted || rr->count == 0) {
 				SDL_UnlockMutex(rr->mutex);
@@ -278,17 +308,17 @@ static int scaler_thread_fn(void *arg)
 			slot = rr->slots[rr->tail];
 			SDL_UnlockMutex(rr->mutex);
 
-			scale_in_fn(os, slot);
+			rr->scale_in(rr->os, slot);
 
 			SDL_LockMutex(rr->mutex);
 			rr->tail = (rr->tail + 1) % LINE_QUEUE_DEPTH;
 			rr->count--;
-			SDL_BroadcastCondition(rr->not_full);
+			SDL_SignalCondition(rr->cv);
 			SDL_UnlockMutex(rr->mutex);
 		}
 
-		scale_out_fn(os, rr->outbuf);
-		tmp = rr->surface_pixels + center_offset + local_ypos * rr->surface_width * 4;
+		rr->scale_out(rr->os, rr->outbuf);
+		tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
 		translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
 		local_ypos++;
 
@@ -304,69 +334,43 @@ done:
 	return 0;
 }
 
-static int resumable_resize_start(struct resumable_resize *rr, char *path, int surface_width, int surface_height, unsigned char *surface_pixels)
+static int resumable_resize_start(struct resumable_resize *rr, char *path,
+                                  int surface_width, int surface_height,
+                                  const struct backend_entry *be)
 {
 	int i;
+	int is_png;
+
+	memset(rr, 0, sizeof(*rr));
+	rr->surface_width = surface_width;
+	rr->surface_height = surface_height;
+	rr->scale_in = be->scale_in;
+	rr->scale_out = be->scale_out;
 
 	rr->io = fopen(path, "r");
 	if (!rr->io) {
 		fprintf(stderr, "Error: unable to open %s\n", path);
 		return -1;
 	}
-	rr->looks_like_png = looks_like_png(rr->io);
-	rr->surface_width = surface_width;
-	rr->surface_height = surface_height;
-	rr->surface_pixels = surface_pixels;
-	rr->ypos = 0;
-	rr->head = 0;
-	rr->tail = 0;
-	rr->count = 0;
-	rr->decoder_done = 0;
-	rr->scaler_done = 0;
-	rr->aborted = 0;
-	rr->mutex = NULL;
-	rr->not_empty = NULL;
-	rr->not_full = NULL;
-	rr->decoder_thread = NULL;
-	rr->scaler_thread = NULL;
-	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
-		rr->slots[i] = NULL;
+	is_png = looks_like_png(rr->io);
+
+	if (is_png ? png_start(rr) : jpeg_start(rr)) {
+		goto fail_io;
 	}
 
-	if (rr->looks_like_png) {
-		if (png_start(rr) < 0) {
-			fclose(rr->io);
-			return -1;
-		}
-	} else {
-		if (jpeg_start(rr) < 0) {
-			fclose(rr->io);
-			return -1;
-		}
-	}
+	rr->scaled_buf = malloc((size_t)rr->out_width * rr->out_height * 4);
+	if (!rr->scaled_buf) goto fail_decoder;
 
 	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
 		rr->slots[i] = malloc(rr->in_rowbytes);
-		if (!rr->slots[i]) {
-			while (i-- > 0) free(rr->slots[i]);
-			if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
-			fclose(rr->io);
-			return -1;
-		}
+		if (!rr->slots[i]) goto fail_slots;
 	}
 
 	rr->mutex = SDL_CreateMutex();
-	rr->not_empty = SDL_CreateCondition();
-	rr->not_full = SDL_CreateCondition();
-	if (!rr->mutex || !rr->not_empty || !rr->not_full) {
+	rr->cv = SDL_CreateCondition();
+	if (!rr->mutex || !rr->cv) {
 		fprintf(stderr, "Error: SDL sync init failed: %s\n", SDL_GetError());
-		if (rr->mutex) SDL_DestroyMutex(rr->mutex);
-		if (rr->not_empty) SDL_DestroyCondition(rr->not_empty);
-		if (rr->not_full) SDL_DestroyCondition(rr->not_full);
-		for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
-		if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
-		fclose(rr->io);
-		return -1;
+		goto fail_sync;
 	}
 
 	rr->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
@@ -375,26 +379,26 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path, int s
 		fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
 		SDL_LockMutex(rr->mutex);
 		rr->aborted = 1;
-		SDL_BroadcastCondition(rr->not_empty);
-		SDL_BroadcastCondition(rr->not_full);
+		SDL_BroadcastCondition(rr->cv);
 		SDL_UnlockMutex(rr->mutex);
-		if (rr->decoder_thread) SDL_WaitThread(rr->decoder_thread, NULL);
-		if (rr->scaler_thread) SDL_WaitThread(rr->scaler_thread, NULL);
-		SDL_DestroyMutex(rr->mutex);
-		SDL_DestroyCondition(rr->not_empty);
-		SDL_DestroyCondition(rr->not_full);
-		for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
-		if (rr->looks_like_png) png_end(rr); else jpeg_end(rr);
-		fclose(rr->io);
-		return -1;
+		SDL_WaitThread(rr->decoder_thread, NULL);
+		SDL_WaitThread(rr->scaler_thread, NULL);
+		goto fail_sync;
 	}
 
 	return 0;
-}
 
-static int resumable_resize_start_from_surface(struct resumable_resize *rr, char *path, SDL_Surface *surface)
-{
-	return resumable_resize_start(rr, path, surface->w, surface->h, surface->pixels);
+fail_sync:
+	SDL_DestroyMutex(rr->mutex);
+	SDL_DestroyCondition(rr->cv);
+fail_slots:
+	for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
+	free(rr->scaled_buf);
+fail_decoder:
+	rr->format_end(rr);
+fail_io:
+	fclose(rr->io);
+	return -1;
 }
 
 static void resumable_resize_end(struct resumable_resize *rr)
@@ -403,77 +407,115 @@ static void resumable_resize_end(struct resumable_resize *rr)
 
 	SDL_LockMutex(rr->mutex);
 	rr->aborted = 1;
-	SDL_BroadcastCondition(rr->not_empty);
-	SDL_BroadcastCondition(rr->not_full);
+	SDL_BroadcastCondition(rr->cv);
 	SDL_UnlockMutex(rr->mutex);
 
 	SDL_WaitThread(rr->decoder_thread, NULL);
 	SDL_WaitThread(rr->scaler_thread, NULL);
 
 	SDL_DestroyMutex(rr->mutex);
-	SDL_DestroyCondition(rr->not_empty);
-	SDL_DestroyCondition(rr->not_full);
+	SDL_DestroyCondition(rr->cv);
 
 	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
 		free(rr->slots[i]);
 	}
+	free(rr->scaled_buf);
 
-	if (rr->looks_like_png) {
-		png_end(rr);
-	} else {
-		jpeg_end(rr);
-	}
+	rr->format_end(rr);
 	fclose(rr->io);
 }
 
-static void clear_surface(SDL_Surface *surface)
+static void compute_letterbox(int win_w, int win_h, int src_w, int src_h, SDL_FRect *dst)
 {
-	memset(surface->pixels, 0, surface->pitch * surface->h);
+	float sx = (float)win_w / src_w;
+	float sy = (float)win_h / src_h;
+	float scale = sx < sy ? sx : sy;
+	dst->w = src_w * scale;
+	dst->h = src_h * scale;
+	dst->x = (win_w - dst->w) / 2.0f;
+	dst->y = (win_h - dst->h) / 2.0f;
 }
 
-static void letterbox_blit(SDL_Surface *snap, SDL_Surface *dest)
+static void present_frame(SDL_Renderer *renderer, SDL_Texture *display_tex)
 {
-	float scale_x, scale_y, scale;
-	SDL_Rect dst_rect;
+	int win_w, win_h;
+	SDL_GetRenderOutputSize(renderer, &win_w, &win_h);
 
-	scale_x = (float)dest->w / snap->w;
-	scale_y = (float)dest->h / snap->h;
-	scale = scale_x < scale_y ? scale_x : scale_y;
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+	SDL_RenderClear(renderer);
 
-	dst_rect.w = (int)(snap->w * scale);
-	dst_rect.h = (int)(snap->h * scale);
-	dst_rect.x = (dest->w - dst_rect.w) / 2;
-	dst_rect.y = (dest->h - dst_rect.h) / 2;
+	if (display_tex) {
+		float tex_w, tex_h;
+		SDL_FRect dst;
+		SDL_GetTextureSize(display_tex, &tex_w, &tex_h);
+		compute_letterbox(win_w, win_h, (int)tex_w, (int)tex_h, &dst);
+		SDL_RenderTexture(renderer, display_tex, NULL, &dst);
+	}
 
-	clear_surface(dest);
-	SDL_BlitSurfaceScaled(snap, NULL, dest, &dst_rect, SDL_SCALEMODE_LINEAR);
+	SDL_RenderPresent(renderer);
+}
+
+static void update_texture_rows(SDL_Texture *tex, struct resumable_resize *rr, int y0, int y1)
+{
+	SDL_Rect rect;
+	rect.x = 0;
+	rect.y = y0;
+	rect.w = rr->out_width;
+	rect.h = y1 - y0;
+	SDL_UpdateTexture(tex, &rect,
+		rr->scaled_buf + y0 * rr->out_width * 4,
+		rr->out_width * 4);
+}
+
+static SDL_Texture *create_blank_texture(SDL_Renderer *renderer, int w, int h)
+{
+	SDL_Texture *tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+		SDL_TEXTUREACCESS_STREAMING, w, h);
+	if (tex) {
+		void *pixels;
+		int pitch;
+		if (SDL_LockTexture(tex, NULL, &pixels, &pitch)) {
+			memset(pixels, 0, (size_t)pitch * h);
+			SDL_UnlockTexture(tex);
+		}
+	}
+	return tex;
+}
+
+static int start_resize_session(struct resumable_resize *rr, char *path,
+                                SDL_Renderer *renderer, SDL_Texture **display_tex,
+                                const struct backend_entry *be)
+{
+	int rw, rh;
+	SDL_GetRenderOutputSize(renderer, &rw, &rh);
+	if (resumable_resize_start(rr, path, rw, rh, be) < 0) return -1;
+	if (*display_tex) SDL_DestroyTexture(*display_tex);
+	*display_tex = create_blank_texture(renderer, rr->out_width, rr->out_height);
+	return 0;
 }
 
 int main(int argc, char **argv) {
 	SDL_Window *window;
-	SDL_Surface *surface;
+	SDL_Renderer *renderer;
+	SDL_Texture *display_tex = NULL;
 	SDL_Event event;
 	char *path;
-	int event_happened, render_in_progress, surface_is_dirty;
+	int event_happened, render_in_progress;
 	int last_displayed_ypos;
 	struct resumable_resize rr;
-	Uint64 lastUpdateTime, currentTime, elapsed_time, resize_start_time;
-	SDL_Surface *snapshot = NULL;
-	Uint64 pending_resize_time = 0;
-	#define DEBOUNCE_MS 150
+	Uint64 resize_start_time, elapsed_time;
+	int resize_pending = 0;
 	int argi;
+	const struct backend_entry *be = NULL;
 
 	path = NULL;
-	backend = BACKEND_DEFAULT;
 	for (argi = 1; argi < argc; argi++) {
-		if (strcmp(argv[argi], "--scalar") == 0) {
-			backend = BACKEND_SCALAR;
-		} else if (strcmp(argv[argi], "--sse2") == 0) {
-			backend = BACKEND_SSE2;
-		} else if (strcmp(argv[argi], "--avx2") == 0) {
-			backend = BACKEND_AVX2;
-		} else if (strcmp(argv[argi], "--neon") == 0) {
-			backend = BACKEND_NEON;
+		if (argv[argi][0] == '-' && argv[argi][1] == '-') {
+			be = find_backend(argv[argi]);
+			if (!be) {
+				fprintf(stderr, "Error: unknown or unavailable backend: %s\n", argv[argi]);
+				return 1;
+			}
 		} else {
 			path = argv[argi];
 		}
@@ -482,57 +524,7 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] <image>\n", argv[0]);
 		return 1;
 	}
-
-	if (backend == BACKEND_DEFAULT) {
-#if defined(__x86_64__)
-		if (__builtin_cpu_supports("avx2")) {
-			backend = BACKEND_AVX2;
-		} else {
-			backend = BACKEND_SSE2;
-		}
-#elif defined(__aarch64__)
-		backend = BACKEND_NEON;
-#else
-		backend = BACKEND_SCALAR;
-#endif
-	}
-
-	switch (backend) {
-	case BACKEND_DEFAULT:
-		/* unreachable */
-		break;
-	case BACKEND_SCALAR:
-		scale_in_fn = oil_scale_in;
-		scale_out_fn = oil_scale_out;
-		break;
-	case BACKEND_SSE2:
-#if defined(__x86_64__)
-		scale_in_fn = oil_scale_in_sse2;
-		scale_out_fn = oil_scale_out_sse2;
-#else
-		fprintf(stderr, "Error: SSE2 backend not available on this architecture\n");
-		return 1;
-#endif
-		break;
-	case BACKEND_AVX2:
-#if defined(__x86_64__)
-		scale_in_fn = oil_scale_in_avx2;
-		scale_out_fn = oil_scale_out_avx2;
-#else
-		fprintf(stderr, "Error: AVX2 backend not available on this architecture\n");
-		return 1;
-#endif
-		break;
-	case BACKEND_NEON:
-#if defined(__aarch64__)
-		scale_in_fn = oil_scale_in_neon;
-		scale_out_fn = oil_scale_out_neon;
-#else
-		fprintf(stderr, "Error: NEON backend not available on this architecture\n");
-		return 1;
-#endif
-		break;
-	}
+	if (!be) be = default_backend();
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -544,83 +536,58 @@ int main(int argc, char **argv) {
 		SDL_Quit();
 		return 1;
 	}
+	renderer = SDL_CreateRenderer(window, NULL);
+	if (!renderer) {
+		fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
+		SDL_DestroyWindow(window);
+		SDL_Quit();
+		return 1;
+	}
 
-	surface = SDL_GetWindowSurface(window);
-	clear_surface(surface);
-	lastUpdateTime = 0;
-	resize_start_time = 0;
 	last_displayed_ypos = 0;
-	if (resumable_resize_start_from_surface(&rr, path, surface) < 0) {
+	resize_start_time = SDL_GetTicks();
+	if (start_resize_session(&rr, path, renderer, &display_tex, be) < 0) {
+		SDL_DestroyRenderer(renderer);
+		SDL_DestroyWindow(window);
 		SDL_Quit();
 		return 1;
 	}
 	render_in_progress = 1;
-	surface_is_dirty = 1;
 
 	while (1) {
-		if (render_in_progress) {
-			event_happened = SDL_WaitEventTimeout(&event, 1000 / 60);
-		} else if (pending_resize_time) {
-			event_happened = SDL_WaitEventTimeout(&event, DEBOUNCE_MS);
-		} else {
-			event_happened = SDL_WaitEvent(&event);
-		}
+		event_happened = SDL_WaitEventTimeout(&event, render_in_progress ? 16 : -1);
 
-		if (event_happened && event.type == SDL_EVENT_QUIT) {
-			if (render_in_progress) {
-				resumable_resize_end(&rr);
-			}
-			if (snapshot)
-				SDL_DestroySurface(snapshot);
-			SDL_Quit();
-			return 0;
-		}
-
-		if (event_happened && event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
-			if (render_in_progress) {
-				resumable_resize_end(&rr);
-				render_in_progress = 0;
-			}
-			surface = SDL_GetWindowSurface(window);
-			if (snapshot) {
-				letterbox_blit(snapshot, surface);
-				SDL_UpdateWindowSurface(window);
-				surface_is_dirty = 0;
-			} else {
-				clear_surface(surface);
-				surface_is_dirty = 1;
-			}
-			pending_resize_time = SDL_GetTicks();
-		}
-
-		if (event_happened && event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5) {
-			if (render_in_progress) {
-				resumable_resize_end(&rr);
-				render_in_progress = 0;
-			}
-			pending_resize_time = 0;
-			surface = SDL_GetWindowSurface(window);
-			clear_surface(surface);
-			resize_start_time = SDL_GetTicks();
-			last_displayed_ypos = 0;
-			if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
-				render_in_progress = 1;
-				surface_is_dirty = 1;
-			}
-		}
-
-		if (!render_in_progress && pending_resize_time > 0) {
-			currentTime = SDL_GetTicks();
-			if (currentTime - pending_resize_time >= DEBOUNCE_MS) {
-				pending_resize_time = 0;
-				surface = SDL_GetWindowSurface(window);
-				clear_surface(surface);
-				resize_start_time = SDL_GetTicks();
-				last_displayed_ypos = 0;
-				if (resumable_resize_start_from_surface(&rr, path, surface) == 0) {
-					render_in_progress = 1;
-					surface_is_dirty = 1;
+		if (event_happened) {
+			if (event.type == SDL_EVENT_QUIT) {
+				if (render_in_progress) {
+					resumable_resize_end(&rr);
 				}
+				SDL_DestroyTexture(display_tex);
+				SDL_DestroyRenderer(renderer);
+				SDL_DestroyWindow(window);
+				SDL_Quit();
+				return 0;
+			}
+			if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+			    (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5)) {
+				if (render_in_progress) {
+					resumable_resize_end(&rr);
+					render_in_progress = 0;
+				}
+				if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+					present_frame(renderer, display_tex);
+				}
+				resize_pending = 1;
+			}
+		}
+
+		if (resize_pending && !render_in_progress &&
+		    SDL_GetMouseState(NULL, NULL) == 0) {
+			resize_pending = 0;
+			last_displayed_ypos = 0;
+			resize_start_time = SDL_GetTicks();
+			if (start_resize_session(&rr, path, renderer, &display_tex, be) == 0) {
+				render_in_progress = 1;
 			}
 		}
 
@@ -634,39 +601,17 @@ int main(int argc, char **argv) {
 
 			if (local_done) {
 				render_in_progress = 0;
-				if (snapshot)
-					SDL_DestroySurface(snapshot);
-				snapshot = SDL_CreateSurface(rr.out_width, rr.out_height, surface->format);
-				{
-					int y, center_offset;
-					center_offset = resize_center_offset(&rr);
-					for (y = 0; y < rr.out_height; y++) {
-						memcpy(
-							(unsigned char *)snapshot->pixels + y * snapshot->pitch,
-							(unsigned char *)surface->pixels + center_offset + y * surface->w * 4,
-							rr.out_width * 4
-						);
-					}
+				if (last_displayed_ypos < rr.out_height) {
+					update_texture_rows(display_tex, &rr, last_displayed_ypos, rr.out_height);
 				}
 				resumable_resize_end(&rr);
-				SDL_UpdateWindowSurface(window);
-				surface_is_dirty = 0;
-				lastUpdateTime = SDL_GetTicks();
+				present_frame(renderer, display_tex);
 				elapsed_time = SDL_GetTicks() - resize_start_time;
 				fprintf(stderr, "Resize ticks: %llu\n", (unsigned long long)elapsed_time);
 			} else if (local_ypos > last_displayed_ypos) {
+				update_texture_rows(display_tex, &rr, last_displayed_ypos, local_ypos);
 				last_displayed_ypos = local_ypos;
-				surface_is_dirty = 1;
-			}
-		}
-
-		if (surface_is_dirty) {
-			currentTime = SDL_GetTicks();
-			elapsed_time = currentTime - lastUpdateTime;
-			if (elapsed_time >= 1000 / 60) {
-				SDL_UpdateWindowSurface(window);
-				surface_is_dirty = 0;
-				lastUpdateTime = currentTime;
+				present_frame(renderer, display_tex);
 			}
 		}
 	}
