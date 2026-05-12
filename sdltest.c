@@ -45,6 +45,15 @@ static const struct backend_entry *default_backend(void) {
 #endif
 }
 
+static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
+	switch (cs) {
+	case OIL_CS_RGB:  return OIL_CS_RGB_NOGAMMA;
+	case OIL_CS_RGBA: return OIL_CS_RGBA_NOGAMMA;
+	case OIL_CS_RGBX: return OIL_CS_RGBX_NOGAMMA;
+	default: return cs;
+	}
+}
+
 struct resumable_resize {
 	FILE *io;
 	int surface_width;
@@ -55,6 +64,7 @@ struct resumable_resize {
 	int in_rowbytes;
 	int cmp;
 	int threaded;
+	int no_gamma;
 	int n_slots;
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
@@ -167,6 +177,7 @@ static int png_start(struct resumable_resize *rr) {
 
 	rr->olp = malloc(sizeof(struct oil_libpng));
 	oil_libpng_init(rr->olp, rpng, rinfo, rr->out_width, rr->out_height);
+	if (rr->no_gamma) rr->olp->os.cs = nogamma_cs(rr->olp->os.cs);
 	rr->cmp = OIL_CMP(rr->olp->os.cs);
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
 	rr->in_height = png_get_image_height(rpng, rinfo);
@@ -235,6 +246,7 @@ static int jpeg_start(struct resumable_resize *rr)
 
 	rr->olj = malloc(sizeof(struct oil_libjpeg));
 	oil_libjpeg_init(rr->olj, dinfo, rr->out_width, rr->out_height);
+	if (rr->no_gamma) rr->olj->os.cs = nogamma_cs(rr->olj->os.cs);
 	rr->cmp = 3;
 	rr->outbuf = malloc(rr->out_width * rr->cmp);
 	rr->in_height = dinfo->output_height;
@@ -377,7 +389,8 @@ done:
 
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
                                   int surface_width, int surface_height,
-                                  const struct backend_entry *be, int threaded)
+                                  const struct backend_entry *be, int threaded,
+                                  int no_gamma)
 {
 	int i;
 	int is_png;
@@ -388,6 +401,7 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	rr->scale_in = be->scale_in;
 	rr->scale_out = be->scale_out;
 	rr->threaded = threaded;
+	rr->no_gamma = no_gamma;
 	rr->n_slots = threaded ? LINE_QUEUE_DEPTH : 1;
 
 	rr->io = fopen(path, "r");
@@ -539,11 +553,12 @@ static SDL_Texture *create_blank_texture(SDL_Renderer *renderer, int w, int h)
 
 static int start_resize_session(struct resumable_resize *rr, char *path,
                                 SDL_Renderer *renderer, SDL_Texture **display_tex,
-                                const struct backend_entry *be, int threaded)
+                                const struct backend_entry *be, int threaded,
+                                int no_gamma)
 {
 	int rw, rh;
 	SDL_GetRenderOutputSize(renderer, &rw, &rh);
-	if (resumable_resize_start(rr, path, rw, rh, be, threaded) < 0) return -1;
+	if (resumable_resize_start(rr, path, rw, rh, be, threaded, no_gamma) < 0) return -1;
 	if (*display_tex) SDL_DestroyTexture(*display_tex);
 	*display_tex = create_blank_texture(renderer, rr->out_width, rr->out_height);
 	return 0;
@@ -562,12 +577,15 @@ int main(int argc, char **argv) {
 	int resize_pending = 0;
 	int argi;
 	int threaded = 1;
+	int no_gamma = 0;
 	const struct backend_entry *be = NULL;
 
 	path = NULL;
 	for (argi = 1; argi < argc; argi++) {
 		if (strcmp(argv[argi], "--no-threaded") == 0) {
 			threaded = 0;
+		} else if (strcmp(argv[argi], "--no-gamma") == 0) {
+			no_gamma = 1;
 		} else if (argv[argi][0] == '-' && argv[argi][1] == '-') {
 			be = find_backend(argv[argi]);
 			if (!be) {
@@ -579,7 +597,7 @@ int main(int argc, char **argv) {
 		}
 	}
 	if (!path) {
-		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] [--no-threaded] <image>\n", argv[0]);
+		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] [--no-threaded] [--no-gamma] <image>\n", argv[0]);
 		return 1;
 	}
 	if (!be) be = default_backend();
@@ -604,7 +622,7 @@ int main(int argc, char **argv) {
 
 	last_displayed_ypos = 0;
 	resize_start_time = SDL_GetTicks();
-	if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded) < 0) {
+	if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma) < 0) {
 		SDL_DestroyRenderer(renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
@@ -644,7 +662,7 @@ int main(int argc, char **argv) {
 			resize_pending = 0;
 			last_displayed_ypos = 0;
 			resize_start_time = SDL_GetTicks();
-			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded) == 0) {
+			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma) == 0) {
 				render_in_progress = 1;
 			}
 		}

@@ -40,8 +40,17 @@ static const struct backend_entry *default_backend(void) {
 #endif
 }
 
+static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
+	switch (cs) {
+	case OIL_CS_RGB:  return OIL_CS_RGB_NOGAMMA;
+	case OIL_CS_RGBA: return OIL_CS_RGBA_NOGAMMA;
+	case OIL_CS_RGBX: return OIL_CS_RGBX_NOGAMMA;
+	default: return cs;
+	}
+}
+
 static void png(FILE *input, FILE *output, int width, int height,
-	const struct backend_entry *be)
+	const struct backend_entry *be, int no_gamma)
 {
 	int i, in_width, in_height, ret, ol_inited = 0, interlaced;
 	png_structp rpng, wpng = NULL;
@@ -95,6 +104,7 @@ static void png(FILE *input, FILE *output, int width, int height,
 		exit(1);
 	}
 	ol_inited = 1;
+	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
 	interlaced = png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7;
 
 	ctype = png_get_color_type(rpng, rinfo);
@@ -152,7 +162,7 @@ static void prepare_jpeg_decompress(FILE *input,
 }
 
 static void jpeg(FILE *input, FILE *output, int width_out, int height_out,
-	const struct backend_entry *be)
+	const struct backend_entry *be, int no_gamma)
 {
 	struct jpeg_decompress_struct dinfo;
 	struct jpeg_compress_struct cinfo;
@@ -178,6 +188,7 @@ static void jpeg(FILE *input, FILE *output, int width_out, int height_out,
 		fclose(output);
 		exit(1);
 	}
+	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
 
 	/* Allocate linear converter output buffer */
 	outbuf = malloc(width_out * OIL_CMP(ol.os.cs));
@@ -238,6 +249,7 @@ static int looks_like_png(FILE *io)
 int main(int argc, char *argv[])
 {
 	int width, height, argi, n_pos = 0;
+	int no_gamma = 0;
 	char *end;
 	char *pos[4] = {NULL, NULL, NULL, NULL};
 	const struct backend_entry *be = NULL;
@@ -247,7 +259,9 @@ int main(int argc, char *argv[])
 	io_out = stdout;
 
 	for (argi = 1; argi < argc; argi++) {
-		if (argv[argi][0] == '-' && argv[argi][1] == '-') {
+		if (strcmp(argv[argi], "--no-gamma") == 0) {
+			no_gamma = 1;
+		} else if (argv[argi][0] == '-' && argv[argi][1] == '-') {
 			be = find_backend(argv[argi]);
 			if (!be) {
 				fprintf(stderr, "Error: unknown or unavailable backend: %s\n", argv[argi]);
@@ -264,7 +278,7 @@ int main(int argc, char *argv[])
 	if (!be) be = default_backend();
 
 	if (n_pos < 2) {
-		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] WIDTH HEIGHT [file] [file]\n", argv[0]);
+		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] [--no-gamma] WIDTH HEIGHT [file] [file]\n", argv[0]);
 		return 1;
 	}
 
@@ -297,9 +311,9 @@ int main(int argc, char *argv[])
 	}
 
 	if (looks_like_png(io_in)) {
-		png(io_in, io_out, width, height, be);
+		png(io_in, io_out, width, height, be, no_gamma);
 	} else {
-		jpeg(io_in, io_out, width, height, be);
+		jpeg(io_in, io_out, width, height, be, no_gamma);
 	}
 
 	if (io_in != stdin)
