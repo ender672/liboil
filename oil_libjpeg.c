@@ -103,6 +103,7 @@ J_COLOR_SPACE oil_cs_to_jpeg(enum oil_colorspace cs)
 	case OIL_CS_G:
 		return JCS_GRAYSCALE;
 	case OIL_CS_RGB:
+	case OIL_CS_RGB_NOGAMMA:
 		return JCS_RGB;
 	case OIL_CS_CMYK:
 		return JCS_CMYK;
