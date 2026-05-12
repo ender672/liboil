@@ -54,6 +54,8 @@ struct resumable_resize {
 	int in_height;
 	int in_rowbytes;
 	int cmp;
+	int threaded;
+	int n_slots;
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
 
@@ -72,6 +74,7 @@ struct resumable_resize {
 
 	SDL_Thread *decoder_thread;
 	SDL_Thread *scaler_thread;
+	SDL_Thread *worker_thread;
 	SDL_Mutex *mutex;
 	SDL_Condition *cv;
 	unsigned char *slots[LINE_QUEUE_DEPTH];
@@ -334,9 +337,47 @@ done:
 	return 0;
 }
 
+static int worker_thread_fn(void *arg)
+{
+	struct resumable_resize *rr = arg;
+	unsigned char *inbuf = rr->slots[0];
+	int local_ypos = 0;
+	int row = 0;
+	int aborted;
+
+	while (local_ypos < rr->out_height) {
+		unsigned char *tmp;
+
+		SDL_LockMutex(rr->mutex);
+		aborted = rr->aborted;
+		SDL_UnlockMutex(rr->mutex);
+		if (aborted) goto done;
+
+		while (oil_scale_slots(rr->os) > 0) {
+			rr->decode_row(rr, inbuf, row++);
+			rr->scale_in(rr->os, inbuf);
+		}
+
+		rr->scale_out(rr->os, rr->outbuf);
+		tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
+		translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
+		local_ypos++;
+
+		SDL_LockMutex(rr->mutex);
+		rr->ypos = local_ypos;
+		SDL_UnlockMutex(rr->mutex);
+	}
+
+done:
+	SDL_LockMutex(rr->mutex);
+	rr->scaler_done = 1;
+	SDL_UnlockMutex(rr->mutex);
+	return 0;
+}
+
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
                                   int surface_width, int surface_height,
-                                  const struct backend_entry *be)
+                                  const struct backend_entry *be, int threaded)
 {
 	int i;
 	int is_png;
@@ -346,6 +387,8 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	rr->surface_height = surface_height;
 	rr->scale_in = be->scale_in;
 	rr->scale_out = be->scale_out;
+	rr->threaded = threaded;
+	rr->n_slots = threaded ? LINE_QUEUE_DEPTH : 1;
 
 	rr->io = fopen(path, "r");
 	if (!rr->io) {
@@ -361,7 +404,7 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	rr->scaled_buf = malloc((size_t)rr->out_width * rr->out_height * 4);
 	if (!rr->scaled_buf) goto fail_decoder;
 
-	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
+	for (i = 0; i < rr->n_slots; i++) {
 		rr->slots[i] = malloc(rr->in_rowbytes);
 		if (!rr->slots[i]) goto fail_slots;
 	}
@@ -373,17 +416,25 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 		goto fail_sync;
 	}
 
-	rr->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
-	rr->scaler_thread = SDL_CreateThread(scaler_thread_fn, "oil-scaler", rr);
-	if (!rr->decoder_thread || !rr->scaler_thread) {
-		fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
-		SDL_LockMutex(rr->mutex);
-		rr->aborted = 1;
-		SDL_BroadcastCondition(rr->cv);
-		SDL_UnlockMutex(rr->mutex);
-		SDL_WaitThread(rr->decoder_thread, NULL);
-		SDL_WaitThread(rr->scaler_thread, NULL);
-		goto fail_sync;
+	if (rr->threaded) {
+		rr->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
+		rr->scaler_thread = SDL_CreateThread(scaler_thread_fn, "oil-scaler", rr);
+		if (!rr->decoder_thread || !rr->scaler_thread) {
+			fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
+			SDL_LockMutex(rr->mutex);
+			rr->aborted = 1;
+			SDL_BroadcastCondition(rr->cv);
+			SDL_UnlockMutex(rr->mutex);
+			SDL_WaitThread(rr->decoder_thread, NULL);
+			SDL_WaitThread(rr->scaler_thread, NULL);
+			goto fail_sync;
+		}
+	} else {
+		rr->worker_thread = SDL_CreateThread(worker_thread_fn, "oil-worker", rr);
+		if (!rr->worker_thread) {
+			fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
+			goto fail_sync;
+		}
 	}
 
 	return 0;
@@ -392,7 +443,7 @@ fail_sync:
 	SDL_DestroyMutex(rr->mutex);
 	SDL_DestroyCondition(rr->cv);
 fail_slots:
-	for (i = 0; i < LINE_QUEUE_DEPTH; i++) free(rr->slots[i]);
+	for (i = 0; i < rr->n_slots; i++) free(rr->slots[i]);
 	free(rr->scaled_buf);
 fail_decoder:
 	rr->format_end(rr);
@@ -410,13 +461,17 @@ static void resumable_resize_end(struct resumable_resize *rr)
 	SDL_BroadcastCondition(rr->cv);
 	SDL_UnlockMutex(rr->mutex);
 
-	SDL_WaitThread(rr->decoder_thread, NULL);
-	SDL_WaitThread(rr->scaler_thread, NULL);
+	if (rr->threaded) {
+		SDL_WaitThread(rr->decoder_thread, NULL);
+		SDL_WaitThread(rr->scaler_thread, NULL);
+	} else {
+		SDL_WaitThread(rr->worker_thread, NULL);
+	}
 
 	SDL_DestroyMutex(rr->mutex);
 	SDL_DestroyCondition(rr->cv);
 
-	for (i = 0; i < LINE_QUEUE_DEPTH; i++) {
+	for (i = 0; i < rr->n_slots; i++) {
 		free(rr->slots[i]);
 	}
 	free(rr->scaled_buf);
@@ -484,11 +539,11 @@ static SDL_Texture *create_blank_texture(SDL_Renderer *renderer, int w, int h)
 
 static int start_resize_session(struct resumable_resize *rr, char *path,
                                 SDL_Renderer *renderer, SDL_Texture **display_tex,
-                                const struct backend_entry *be)
+                                const struct backend_entry *be, int threaded)
 {
 	int rw, rh;
 	SDL_GetRenderOutputSize(renderer, &rw, &rh);
-	if (resumable_resize_start(rr, path, rw, rh, be) < 0) return -1;
+	if (resumable_resize_start(rr, path, rw, rh, be, threaded) < 0) return -1;
 	if (*display_tex) SDL_DestroyTexture(*display_tex);
 	*display_tex = create_blank_texture(renderer, rr->out_width, rr->out_height);
 	return 0;
@@ -506,11 +561,14 @@ int main(int argc, char **argv) {
 	Uint64 resize_start_time, elapsed_time;
 	int resize_pending = 0;
 	int argi;
+	int threaded = 1;
 	const struct backend_entry *be = NULL;
 
 	path = NULL;
 	for (argi = 1; argi < argc; argi++) {
-		if (argv[argi][0] == '-' && argv[argi][1] == '-') {
+		if (strcmp(argv[argi], "--no-threaded") == 0) {
+			threaded = 0;
+		} else if (argv[argi][0] == '-' && argv[argi][1] == '-') {
 			be = find_backend(argv[argi]);
 			if (!be) {
 				fprintf(stderr, "Error: unknown or unavailable backend: %s\n", argv[argi]);
@@ -521,7 +579,7 @@ int main(int argc, char **argv) {
 		}
 	}
 	if (!path) {
-		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] <image>\n", argv[0]);
+		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] [--no-threaded] <image>\n", argv[0]);
 		return 1;
 	}
 	if (!be) be = default_backend();
@@ -546,7 +604,7 @@ int main(int argc, char **argv) {
 
 	last_displayed_ypos = 0;
 	resize_start_time = SDL_GetTicks();
-	if (start_resize_session(&rr, path, renderer, &display_tex, be) < 0) {
+	if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded) < 0) {
 		SDL_DestroyRenderer(renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
@@ -586,7 +644,7 @@ int main(int argc, char **argv) {
 			resize_pending = 0;
 			last_displayed_ypos = 0;
 			resize_start_time = SDL_GetTicks();
-			if (start_resize_session(&rr, path, renderer, &display_tex, be) == 0) {
+			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded) == 0) {
 				render_in_progress = 1;
 			}
 		}
