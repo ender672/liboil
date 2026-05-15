@@ -91,6 +91,7 @@ struct resumable_resize {
 	int threaded;
 	int no_gamma;
 	int n_slots;
+	int is_zoomed;
 
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
@@ -206,17 +207,67 @@ static void clamp_crop(struct resumable_resize *rr) {
 	if (rr->src_y + rr->src_h > rr->img_height) rr->src_h = rr->img_height - rr->src_y;
 }
 
+/* When zoomed, expand the logical source rect to match the window aspect
+ * ratio so the output texture fills the window: the user's selection is a
+ * minimum, extra content is captured on the under-sized axis (centered on
+ * the selection center, shifted to stay inside the image). If expansion
+ * would exceed the image, clamp to the image and shrink the perpendicular
+ * axis to keep window aspect.
+ *
+ * When not zoomed, preserve the full image via oil_fix_ratio (letterbox if
+ * window aspect differs from image aspect). */
 static int compute_fed_and_out(struct resumable_resize *rr) {
-	int src_iw, src_ih;
-	src_iw = (int)(rr->src_w + 0.5);
-	src_ih = (int)(rr->src_h + 0.5);
-	if (src_iw < 1) src_iw = 1;
-	if (src_ih < 1) src_ih = 1;
-	rr->out_width = rr->surface_width;
-	rr->out_height = rr->surface_height;
-	if (oil_fix_ratio(src_iw, src_ih, &rr->out_width, &rr->out_height) < 0) return -1;
-	if (rr->out_width < 1) rr->out_width = 1;
-	if (rr->out_height < 1) rr->out_height = 1;
+	if (rr->is_zoomed) {
+		double win_aspect, sel_aspect, cx, cy, new_w, new_h, new_x, new_y;
+
+		rr->out_width = rr->surface_width;
+		rr->out_height = rr->surface_height;
+		if (rr->out_width < 1) rr->out_width = 1;
+		if (rr->out_height < 1) rr->out_height = 1;
+
+		win_aspect = (double)rr->out_width / rr->out_height;
+		sel_aspect = rr->src_w / rr->src_h;
+		cx = rr->src_x + rr->src_w / 2.0;
+		cy = rr->src_y + rr->src_h / 2.0;
+
+		if (sel_aspect < win_aspect) {
+			new_h = rr->src_h;
+			new_w = new_h * win_aspect;
+		} else {
+			new_w = rr->src_w;
+			new_h = new_w / win_aspect;
+		}
+		if (new_w > rr->img_width) {
+			new_w = rr->img_width;
+			new_h = new_w / win_aspect;
+		}
+		if (new_h > rr->img_height) {
+			new_h = rr->img_height;
+			new_w = new_h * win_aspect;
+		}
+
+		new_x = cx - new_w / 2.0;
+		new_y = cy - new_h / 2.0;
+		if (new_x < 0) new_x = 0;
+		if (new_y < 0) new_y = 0;
+		if (new_x + new_w > rr->img_width) new_x = rr->img_width - new_w;
+		if (new_y + new_h > rr->img_height) new_y = rr->img_height - new_h;
+
+		rr->src_x = new_x;
+		rr->src_y = new_y;
+		rr->src_w = new_w;
+		rr->src_h = new_h;
+	} else {
+		int src_iw = (int)(rr->src_w + 0.5);
+		int src_ih = (int)(rr->src_h + 0.5);
+		if (src_iw < 1) src_iw = 1;
+		if (src_ih < 1) src_ih = 1;
+		rr->out_width = rr->surface_width;
+		rr->out_height = rr->surface_height;
+		if (oil_fix_ratio(src_iw, src_ih, &rr->out_width, &rr->out_height) < 0) return -1;
+		if (rr->out_width < 1) rr->out_width = 1;
+		if (rr->out_height < 1) rr->out_height = 1;
+	}
 
 	return oil_required_input_rect(rr->img_height, rr->img_width,
 		rr->src_y, rr->src_h, rr->src_x, rr->src_w,
@@ -551,7 +602,7 @@ done:
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
                                   int surface_width, int surface_height,
                                   const struct backend_entry *be, int threaded,
-                                  int no_gamma,
+                                  int no_gamma, int is_zoomed,
                                   double src_x, double src_y,
                                   double src_w, double src_h)
 {
@@ -566,6 +617,7 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	rr->threaded = threaded;
 	rr->no_gamma = no_gamma;
 	rr->n_slots = threaded ? LINE_QUEUE_DEPTH : 1;
+	rr->is_zoomed = is_zoomed;
 	rr->src_x = src_x;
 	rr->src_y = src_y;
 	rr->src_w = src_w;
@@ -727,14 +779,14 @@ static SDL_Texture *create_blank_texture(SDL_Renderer *renderer, int w, int h)
 static int start_resize_session(struct resumable_resize *rr, char *path,
                                 SDL_Renderer *renderer, SDL_Texture **display_tex,
                                 const struct backend_entry *be, int threaded,
-                                int no_gamma,
+                                int no_gamma, int is_zoomed,
                                 double src_x, double src_y,
                                 double src_w, double src_h)
 {
 	int rw, rh;
 	SDL_GetRenderOutputSize(renderer, &rw, &rh);
 	if (resumable_resize_start(rr, path, rw, rh, be, threaded, no_gamma,
-	                           src_x, src_y, src_w, src_h) < 0) return -1;
+	                           is_zoomed, src_x, src_y, src_w, src_h) < 0) return -1;
 	if (*display_tex) SDL_DestroyTexture(*display_tex);
 	*display_tex = create_blank_texture(renderer, rr->out_width, rr->out_height);
 	return 0;
@@ -758,6 +810,7 @@ struct view_stash {
 	double crop_y;
 	double crop_w;
 	double crop_h;
+	int is_zoomed;
 };
 
 static void stash_clear(struct view_stash *s, int *count)
@@ -781,7 +834,7 @@ static void stash_invalidate_textures(struct view_stash *s, int count)
 }
 
 static void stash_push(struct view_stash *s, int *count, SDL_Texture *tex,
-                       double cx, double cy, double cw, double ch)
+                       double cx, double cy, double cw, double ch, int zoomed)
 {
 	if (*count == STASH_DEPTH) {
 		SDL_DestroyTexture(s[0].tex);
@@ -793,6 +846,7 @@ static void stash_push(struct view_stash *s, int *count, SDL_Texture *tex,
 	s[*count].crop_y = cy;
 	s[*count].crop_w = cw;
 	s[*count].crop_h = ch;
+	s[*count].is_zoomed = zoomed;
 	(*count)++;
 }
 
@@ -848,6 +902,7 @@ int main(int argc, char **argv) {
 	int no_gamma = 0;
 	const struct backend_entry *be = NULL;
 	int img_w = 0;
+	int is_zoomed = 0;
 	double crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
 	int drag_active = 0;
 	float drag_start_x = 0, drag_start_y = 0;
@@ -899,7 +954,7 @@ int main(int argc, char **argv) {
 	last_displayed_ypos = 0;
 	resize_start_time = SDL_GetTicks();
 	if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma,
-	                         crop_x, crop_y, crop_w, crop_h) < 0) {
+	                         is_zoomed, crop_x, crop_y, crop_w, crop_h) < 0) {
 		SDL_DestroyRenderer(renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
@@ -965,6 +1020,7 @@ int main(int argc, char **argv) {
 					crop_y = stash[stash_count].crop_y;
 					crop_w = stash[stash_count].crop_w;
 					crop_h = stash[stash_count].crop_h;
+					is_zoomed = stash[stash_count].is_zoomed;
 					if (stash[stash_count].tex) {
 						SDL_DestroyTexture(display_tex);
 						display_tex = stash[stash_count].tex;
@@ -1003,12 +1059,13 @@ int main(int argc, char **argv) {
 						render_in_progress = 0;
 					}
 					stash_push(stash, &stash_count, display_tex,
-					           crop_x, crop_y, crop_w, crop_h);
+					           crop_x, crop_y, crop_w, crop_h, is_zoomed);
 					display_tex = NULL;
 					crop_x = nx;
 					crop_y = ny;
 					crop_w = nw;
 					crop_h = nh;
+					is_zoomed = 1;
 					resize_pending = 1;
 				}
 				need_present = 1;
@@ -1021,7 +1078,7 @@ int main(int argc, char **argv) {
 			last_displayed_ypos = 0;
 			resize_start_time = SDL_GetTicks();
 			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma,
-			                         crop_x, crop_y, crop_w, crop_h) == 0) {
+			                         is_zoomed, crop_x, crop_y, crop_w, crop_h) == 0) {
 				render_in_progress = 1;
 				if (img_w == 0) {
 					img_w = rr.img_width;
