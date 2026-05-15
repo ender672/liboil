@@ -160,8 +160,12 @@ static void decode_png_streaming(struct resumable_resize *rr, unsigned char *slo
 
 static void decode_jpeg_row(struct resumable_resize *rr, unsigned char *slot, int row) {
 	(void)row;
+#ifdef LIBJPEG_TURBO_VERSION
+	jpeg_read_scanlines(rr->dinfo, &slot, 1);
+#else
 	jpeg_read_scanlines(rr->dinfo, &rr->scratch, 1);
 	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
+#endif
 }
 
 static unsigned char **alloc_image(int height, int rowbytes) {
@@ -400,7 +404,11 @@ static int jpeg_start(struct resumable_resize *rr)
 {
 	struct jpeg_decompress_struct *dinfo;
 	struct jpeg_err *jerr;
+#ifdef LIBJPEG_TURBO_VERSION
+	JDIMENSION crop_x, crop_w;
+#else
 	int i;
+#endif
 
 	dinfo = malloc(sizeof(struct jpeg_decompress_struct));
 	if (!dinfo) {
@@ -441,26 +449,37 @@ static int jpeg_start(struct resumable_resize *rr)
 	clamp_crop(rr);
 	if (rr->src_w < 1 || rr->src_h < 1) goto fail_jpeg;
 	if (compute_fed_and_out(rr) < 0) goto fail_jpeg;
+
+#ifdef LIBJPEG_TURBO_VERSION
+	crop_x = rr->fed_x;
+	crop_w = rr->fed_width;
+	jpeg_crop_scanline(dinfo, &crop_x, &crop_w);
+	rr->fed_x = crop_x;
+	rr->fed_width = crop_w;
+#endif
 	rr->slot_rowbytes = rr->fed_width * rr->cmp;
 
 	if (init_scaler(rr) != 0) goto fail_jpeg;
 
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
 	if (!rr->outbuf) goto fail_os;
-	rr->scratch = malloc(rr->in_rowbytes);
-	if (!rr->scratch) goto fail_outbuf;
 
+#ifdef LIBJPEG_TURBO_VERSION
+	if (rr->fed_y > 0) jpeg_skip_scanlines(dinfo, rr->fed_y);
+#else
+	rr->scratch = malloc(rr->in_rowbytes);
+	if (!rr->scratch) goto fail_os;
 	for (i = 0; i < rr->fed_y; i++) {
 		jpeg_read_scanlines(dinfo, &rr->scratch, 1);
 	}
+#endif
 
 	rr->decode_row = decode_jpeg_row;
 	rr->format_end = jpeg_end;
 	return 0;
 
-fail_outbuf:
-	free(rr->outbuf);
 fail_os:
+	free(rr->outbuf);
 	oil_scale_free(&rr->os);
 fail_jpeg:
 	jpeg_destroy_decompress(dinfo);
