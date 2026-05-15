@@ -74,10 +74,14 @@ enum oil_colorspace {
  * results.
  */
 struct oil_scale {
-	int in_height; // input image height.
+	int in_height; // height of the fed input buffer (rows fed via oil_scale_in).
 	int out_height; // output image height.
-	int in_width; // input image width.
+	int in_width; // width of the fed input buffer.
 	int out_width; // output image height.
+	double src_y_off; // start of logical source region within fed buffer (y).
+	double src_x_off; // start of logical source region within fed buffer (x).
+	double src_height; // logical source region height; drives y scale factor.
+	double src_width; // logical source region width; drives x scale factor.
 	enum oil_colorspace cs; // color space of input & output.
 	int in_pos; // current row of input image.
 	int out_pos; // current row of output image.
@@ -146,6 +150,77 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
  */
 int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	int in_width, int out_width, enum oil_colorspace cs);
+
+/**
+ * Initialize an oil scaler that consumes a fed input buffer of the given
+ * dimensions but treats a sub-rectangle of that buffer as the logical source
+ * for scaling. Fed pixels outside the logical rect serve as halo for the
+ * Catmull-Rom kernel; trailing halo is consumed but not sampled.
+ *
+ * @os: Pointer to the scaler struct to be initialized.
+ * @in_height: Height of the fed input buffer (rows the caller will feed).
+ * @out_height: Output image height in pixels.
+ * @in_width: Width of the fed input buffer in pixels.
+ * @out_width: Output image width in pixels.
+ * @src_y: Start of the logical source rect within the fed buffer (rows;
+ *         may be fractional).
+ * @src_height: Logical source rect height; sets the y scale factor.
+ * @src_x: Start of the logical source rect within the fed buffer (columns;
+ *         may be fractional).
+ * @src_width: Logical source rect width; sets the x scale factor.
+ * @cs: Color space of the input/output images.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ * Returns -2 if unable to allocate memory.
+ *
+ * Calling oil_scale_init_ex with src_y = src_x = 0, src_height = in_height,
+ * src_width = in_width is equivalent to oil_scale_init.
+ */
+int oil_scale_init_ex(struct oil_scale *os, int in_height, int out_height,
+	int in_width, int out_width, double src_y, double src_height,
+	double src_x, double src_width, enum oil_colorspace cs);
+
+/**
+ * Same as oil_scale_init_ex but with a caller-supplied buffer.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ */
+int oil_scale_init_allocated_ex(struct oil_scale *os, int in_height,
+	int out_height, int in_width, int out_width, double src_y,
+	double src_height, double src_x, double src_width,
+	enum oil_colorspace cs, void *buf);
+
+/**
+ * Calculate the buffer size for an oil scaler with the _ex parameters.
+ */
+int oil_scale_alloc_size_ex(int in_height, int out_height, int in_width,
+	int out_width, double src_height, double src_width,
+	enum oil_colorspace cs);
+
+/**
+ * Compute the input rectangle the caller must feed to a scaler that operates
+ * on a logical source rect inside a larger image. The returned rect is the
+ * logical rect padded by the filter's half-support on each side and clamped
+ * to the image bounds.
+ *
+ * @img_height/@img_width: Dimensions of the full source image.
+ * @src_y, @src_height, @src_x, @src_width: The logical source rect.
+ * @out_height, @out_width: Output image dimensions.
+ * @fed_y, @fed_height, @fed_x, @fed_width: Output; the rect the caller's
+ *         decoder must produce and feed into oil_scale_in.
+ *
+ * The caller passes (fed_y, fed_height, fed_x, fed_width) as the in_* args
+ * to oil_scale_init_ex, and (src_y - fed_y, src_height, src_x - fed_x,
+ * src_width) as the src_* args.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ */
+int oil_required_input_rect(int img_height, int img_width, double src_y,
+	double src_height, double src_x, double src_width, int out_height,
+	int out_width, int *fed_y, int *fed_height, int *fed_x, int *fed_width);
 
 /**
  * Reset rows counters in an oil scaler struct.

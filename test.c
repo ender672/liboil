@@ -97,17 +97,12 @@ static void fill_rand8(unsigned char *buf, int len)
 	}
 }
 
-static int max_taps_check(int dim_in, int dim_out)
+static int max_taps_check_ld(long double src_dim, int out_dim)
 {
-	if (dim_in <= dim_out) {
+	if (src_dim <= (long double)out_dim) {
 		return 4;
 	}
-	return (int)ceill(4.0L * dim_in / dim_out) + 1;
-}
-
-static long double ref_map(int dim_in, int dim_out, int pos)
-{
-	return (pos + 0.5l) * (long double)dim_in / dim_out - 0.5l;
+	return (int)ceill(4.0L * src_dim / out_dim) + 1;
 }
 
 static double worst;
@@ -320,21 +315,31 @@ static void free_2d_ld(long double **ptr, int height)
 	free(ptr);
 }
 
-static void ref_xscale(long double *in, int in_width, long double *out,
-	int out_width, int cmp)
+/* Reference horizontal scaler.
+ *
+ * The input scanline holds fed_width samples; the logical source region
+ * starts at src_off (may be sub-pixel) and spans src_width source pixels.
+ * Output is out_width samples. When src_off=0 and src_width=fed_width this
+ * matches the no-crop case. Coefficients are renormalized at every output
+ * sample, matching oil's edge handling. */
+static void ref_xscale(long double *in, int fed_width, long double src_off,
+	long double src_width, long double *out, int out_width, int cmp)
 {
 	int i, j, k, smp_start, smp_end, n_samples, max_pos;
 	long double *coeffs, tap_mult, center, radius;
 
 	/* Upscale: fixed 4-tap Catmull-Rom (tap_mult=1).
 	 * Downscale: widen kernel to cover input range, preventing aliasing. */
-	tap_mult = in_width <= out_width ? 1.0L : (long double)in_width / out_width;
+	tap_mult = src_width <= (long double)out_width
+		? 1.0L
+		: src_width / out_width;
 	radius = 2.0L * tap_mult;
-	coeffs = malloc(max_taps_check(in_width, out_width) * sizeof(long double));
-	max_pos = in_width - 1;
+	coeffs = malloc(max_taps_check_ld(src_width, out_width)
+		* sizeof(long double));
+	max_pos = fed_width - 1;
 
 	for (i=0; i<out_width; i++) {
-		center = ref_map(in_width, out_width, i);
+		center = src_off + (i + 0.5L) * src_width / out_width - 0.5L;
 
 		smp_start = (int)ceill(center - radius);
 		smp_end = (int)floorl(center + radius);
@@ -387,53 +392,61 @@ static void ref_transpose_column(long double **in, int height,
 	}
 }
 
-static void ref_yscale(long double **in, int width, int in_height,
-	long double **out, int out_height, int cmp)
+static void ref_yscale(long double **in, int width, int fed_height,
+	long double src_off, long double src_height, long double **out,
+	int out_height, int cmp)
 {
 	int i;
 	long double *transposed, *trans_scaled;
 
-	transposed = malloc(in_height * cmp * sizeof(long double));
+	transposed = malloc(fed_height * cmp * sizeof(long double));
 	trans_scaled = malloc(out_height * cmp * sizeof(long double));
 	for (i=0; i<width; i++) {
-		ref_transpose_column(in, in_height, transposed, i * cmp, cmp);
-		ref_xscale(transposed, in_height, trans_scaled, out_height, cmp);
+		ref_transpose_column(in, fed_height, transposed, i * cmp, cmp);
+		ref_xscale(transposed, fed_height, src_off, src_height,
+			trans_scaled, out_height, cmp);
 		ref_transpose_line(trans_scaled, out_height, out, i * cmp, cmp);
 	}
 	free(transposed);
 	free(trans_scaled);
 }
 
-static void ref_scale(unsigned char **in, int in_width, int in_height,
-	long double **out, int out_width, int out_height,
-	enum oil_colorspace cs)
+/* Reference scaler with explicit crop. The fed image is fed_width x
+ * fed_height; the logical source rect is (src_x_off, src_y_off, src_width,
+ * src_height) inside it. Output is out_width x out_height. */
+static void ref_scale_crop(unsigned char **in, int fed_width, int fed_height,
+	long double src_x_off, long double src_y_off, long double src_width,
+	long double src_height, long double **out, int out_width,
+	int out_height, enum oil_colorspace cs)
 {
 	int i, j, cmp, stride;
 	long double *pre_line, **intermediate;
 
 	cmp = OIL_CMP(cs);
-	stride = cmp * in_width;
+	stride = cmp * fed_width;
 
 	// horizontal scaling
 	pre_line = malloc(stride * sizeof(long double));
-	intermediate = alloc_2d_ld(out_width * cmp, in_height);
-	for (i=0; i<in_height; i++) {
+	intermediate = alloc_2d_ld(out_width * cmp, fed_height);
+	for (i=0; i<fed_height; i++) {
 		// Convert chars to floats
 		for (j=0; j<stride; j++) {
 			pre_line[j] = in[i][j] / 255.0F;
 		}
 
 		// Preprocess
-		for (j=0; j<in_width; j++) {
+		for (j=0; j<fed_width; j++) {
 			preprocess(pre_line + j * cmp, cs);
 		}
 
 		// xscale
-		ref_xscale(pre_line, in_width, intermediate[i], out_width, cmp);
+		ref_xscale(pre_line, fed_width, src_x_off, src_width,
+			intermediate[i], out_width, cmp);
 	}
 
 	// vertical scaling
-	ref_yscale(intermediate, out_width, in_height, out, out_height, cmp);
+	ref_yscale(intermediate, out_width, fed_height, src_y_off, src_height,
+		out, out_height, cmp);
 	for (i=0; i<out_height; i++) {
 		for (j=0; j<out_width; j++) {
 			postprocess(out[i] + j * cmp, cs);
@@ -441,7 +454,16 @@ static void ref_scale(unsigned char **in, int in_width, int in_height,
 	}
 
 	free(pre_line);
-	free_2d_ld(intermediate, in_height);
+	free_2d_ld(intermediate, fed_height);
+}
+
+static void ref_scale(unsigned char **in, int in_width, int in_height,
+	long double **out, int out_width, int out_height,
+	enum oil_colorspace cs)
+{
+	ref_scale_crop(in, in_width, in_height, 0.0L, 0.0L,
+		(long double)in_width, (long double)in_height,
+		out, out_width, out_height, cs);
 }
 
 static void do_oil_scale(unsigned char **input_image, int in_width,
@@ -1001,6 +1023,160 @@ static void test_scale_restart_all(void)
 	test_scale_restart(50, 100, OIL_CS_RGBA);
 }
 
+/* Drive a single oil_scale_init_ex run end-to-end and compare its output
+ * against the long-double reference (ref_scale_crop) at every output byte.
+ * fed_image is fed_width x fed_height; the logical source rect inside it is
+ * (src_x_off, src_y_off, src_width, src_height). */
+static void test_scale_crop(int fed_width, int fed_height,
+	unsigned char **fed_image, long double src_x_off,
+	long double src_y_off, long double src_width, long double src_height,
+	int out_width, int out_height, enum oil_colorspace cs)
+{
+	struct oil_scale os;
+	unsigned char **oil_output;
+	long double **ref_output;
+	int i, in_line, out_row_stride;
+
+	out_row_stride = OIL_CMP(cs) * out_width;
+	oil_output = alloc_2d_uchar(out_row_stride, out_height);
+	ref_output = alloc_2d_ld(out_row_stride, out_height);
+
+	assert(oil_scale_init_ex(&os, fed_height, out_height, fed_width,
+		out_width, (double)src_y_off, (double)src_height,
+		(double)src_x_off, (double)src_width, cs) == 0);
+
+	in_line = 0;
+	for (i=0; i<out_height; i++) {
+		while (oil_scale_slots(&os)) {
+			assert(in_line < fed_height &&
+				"crop test: fed input exhausted before output");
+			assert(cur_scale_in(&os, fed_image[in_line++]) == 0);
+		}
+		assert(cur_scale_out(&os, oil_output[i]) == 0);
+	}
+	oil_scale_free(&os);
+
+	ref_scale_crop(fed_image, fed_width, fed_height, src_x_off, src_y_off,
+		src_width, src_height, ref_output, out_width, out_height, cs);
+
+	for (i=0; i<out_height; i++) {
+		validate_scanline8(oil_output[i], ref_output[i], out_width,
+			OIL_CMP(cs));
+	}
+
+	free_2d_uchar(oil_output, out_height);
+	free_2d_ld(ref_output, out_height);
+}
+
+static void test_scale_crop_random(int fed_width, int fed_height,
+	long double src_x_off, long double src_y_off, long double src_width,
+	long double src_height, int out_width, int out_height,
+	enum oil_colorspace cs)
+{
+	int i, in_row_stride;
+	unsigned char **fed_image;
+
+	in_row_stride = OIL_CMP(cs) * fed_width;
+	fed_image = alloc_2d_uchar(in_row_stride, fed_height);
+	for (i=0; i<fed_height; i++) {
+		fill_rand8(fed_image[i], in_row_stride);
+	}
+
+	test_scale_crop(fed_width, fed_height, fed_image, src_x_off, src_y_off,
+		src_width, src_height, out_width, out_height, cs);
+
+	free_2d_uchar(fed_image, fed_height);
+}
+
+static void test_scale_crop_all(void)
+{
+	/* No-crop equivalence: src_off=0, src_dim=fed_dim. Must match the
+	 * non-_ex path bit-for-bit (different test from the existing suite
+	 * because it exercises the new code path explicitly). */
+	test_scale_crop_random(64, 64, 0.0L, 0.0L, 64.0L, 64.0L,
+		32, 32, OIL_CS_RGB);
+	test_scale_crop_random(50, 50, 0.0L, 0.0L, 50.0L, 50.0L,
+		100, 100, OIL_CS_RGBA);
+
+	/* Interior downscale crop with integer-pixel halo on every side. */
+	test_scale_crop_random(64, 64, 8.0L, 8.0L, 48.0L, 48.0L,
+		16, 16, OIL_CS_RGB);
+	test_scale_crop_random(64, 64, 8.0L, 8.0L, 48.0L, 48.0L,
+		16, 16, OIL_CS_RGBA);
+	test_scale_crop_random(64, 64, 8.0L, 8.0L, 48.0L, 48.0L,
+		16, 16, OIL_CS_G);
+	test_scale_crop_random(64, 64, 8.0L, 8.0L, 48.0L, 48.0L,
+		16, 16, OIL_CS_GA);
+
+	/* Sub-pixel offset (the aspect-fix use case): src_off and src_dim
+	 * are both fractional, so the resampler reverse-map lands at
+	 * non-integer source positions on every output. */
+	test_scale_crop_random(40, 40, 1.5L, 0.75L, 36.25L, 38.0L,
+		20, 20, OIL_CS_RGB);
+	test_scale_crop_random(40, 40, 1.5L, 0.75L, 36.25L, 38.0L,
+		20, 20, OIL_CS_RGBA);
+
+	/* Crop touching the true image edge on one side (left/top); the
+	 * resampler must drop and renormalize taps there. */
+	test_scale_crop_random(64, 64, 0.0L, 0.0L, 32.0L, 32.0L,
+		16, 16, OIL_CS_RGB);
+	test_scale_crop_random(64, 64, 32.0L, 32.0L, 32.0L, 32.0L,
+		16, 16, OIL_CS_RGB);
+
+	/* Upscale crop. The halo is just 2 pixels on each side; src_off
+	 * shifts the reverse map within the fed buffer. */
+	test_scale_crop_random(32, 32, 4.0L, 4.0L, 24.0L, 24.0L,
+		48, 48, OIL_CS_RGB);
+	test_scale_crop_random(32, 32, 4.0L, 4.0L, 24.0L, 24.0L,
+		48, 48, OIL_CS_RGBA);
+	test_scale_crop_random(32, 32, 2.5L, 2.5L, 27.0L, 27.0L,
+		54, 54, OIL_CS_G);
+
+	/* Heavy downscale with a small interior crop. tap_mult > 4 means
+	 * the kernel spans many fed samples and the trailing-halo border
+	 * extension matters. */
+	test_scale_crop_random(128, 32, 16.0L, 4.0L, 96.0L, 24.0L,
+		8, 4, OIL_CS_RGB);
+}
+
+/* oil_required_input_rect should return a fed_rect that contains the logical
+ * src_rect plus enough halo for cubic interpolation, clamped to the image.
+ * Spot-checks against expectations. */
+static void test_required_input_rect(void)
+{
+	int fed_y, fed_h, fed_x, fed_w;
+
+	/* Interior crop, downscale 4x: halo = 2 * 4 = 8 source pixels. */
+	assert(oil_required_input_rect(200, 200, 50.0, 100.0, 50.0, 100.0,
+		25, 25, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	assert(fed_x == 42 && fed_y == 42);
+	assert(fed_w == 116 && fed_h == 116);
+
+	/* Crop at top-left corner: halo clamps to 0 on top/left sides. */
+	assert(oil_required_input_rect(200, 200, 0.0, 50.0, 0.0, 50.0,
+		25, 25, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	assert(fed_x == 0 && fed_y == 0);
+	assert(fed_w == 54 && fed_h == 54);
+
+	/* Crop equal to full image: halo clamps to 0 on all sides. */
+	assert(oil_required_input_rect(64, 64, 0.0, 64.0, 0.0, 64.0,
+		32, 32, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	assert(fed_x == 0 && fed_y == 0 && fed_w == 64 && fed_h == 64);
+
+	/* Upscale: halo is 2 pixels each side regardless of scale. */
+	assert(oil_required_input_rect(100, 100, 10.0, 20.0, 10.0, 20.0,
+		60, 60, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	assert(fed_x == 8 && fed_y == 8 && fed_w == 24 && fed_h == 24);
+
+	/* Bad arguments are rejected. */
+	assert(oil_required_input_rect(100, 100, -1.0, 10.0, 0.0, 10.0,
+		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
+	assert(oil_required_input_rect(100, 100, 0.0, 0.0, 0.0, 10.0,
+		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
+	assert(oil_required_input_rect(100, 100, 95.0, 10.0, 0.0, 10.0,
+		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -1024,6 +1200,7 @@ static void run_tests(struct impl *impl)
 	test_scale_near_identity();
 	test_g_linear_ramp_all();
 	test_scale_restart_all();
+	test_scale_crop_all();
 }
 
 int main(void)
@@ -1066,6 +1243,8 @@ int main(void)
 	for (i=0; i<num_impls; i++) {
 		run_tests(&impls[i]);
 	}
+
+	test_required_input_rect();
 
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");

@@ -2359,7 +2359,7 @@ int oil_scale_in_neon(struct oil_scale *os, unsigned char *in)
 	if (oil_scale_slots(os) == 0) {
 		return -1;
 	}
-	if (os->out_width > os->in_width) {
+	if ((double)os->out_width > os->src_width) {
 		up_scale_in_neon(os, in);
 	} else {
 		down_scale_in_neon(os, in);
@@ -2369,14 +2369,15 @@ int oil_scale_in_neon(struct oil_scale *os, unsigned char *in)
 
 int oil_scale_out_neon(struct oil_scale *os, unsigned char *out)
 {
-	int i, sl_len;
+	int i, sl_len, is_down;
 	float *in[4];
 
 	if (oil_scale_slots(os) != 0) {
 		return -1;
 	}
 
-	if (os->out_height <= os->in_height) {
+	is_down = (double)os->out_height <= os->src_height;
+	if (is_down) {
 		yscale_out_neon(os->sums_y, os->out_width, out, os->cs, os->sums_y_tap);
 		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
 	} else {
@@ -2390,7 +2391,7 @@ int oil_scale_out_neon(struct oil_scale *os, unsigned char *out)
 	}
 
 	os->out_pos++;
-	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+	if (is_down && os->out_pos < os->out_height) {
 		os->slots_y = os->borders_y[os->out_pos];
 	}
 	return 0;

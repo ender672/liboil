@@ -653,25 +653,31 @@ static void build_i2f(void)
 }
 
 /**
- * Given input & output dimensions, populate a buffer of coefficients and border counters.
+ * Given fed buffer width, logical source width, source offset, and output
+ * width, populate a buffer of coefficients and border counters.
  *
- * This method assumes that in_dim >= out_dim.
+ * src_dim drives the scale factor (tap_mult = src_dim / out_dim) and src_off
+ * shifts the reverse map within the fed buffer to express a sub-pixel crop.
  *
- * It generates 4 * in_dim coefficients -- 4 for every input sample.
+ * Generates 4 * fed_dim coefficients -- 4 for every fed input sample. Samples
+ * outside [src_off-halo, src_off+src_dim+halo] receive zero coefficients (the
+ * caller zeros coeff_buf before calling); they are still consumed by the
+ * border counters so the resampler advances through the full fed buffer.
  *
- * It generates out_dim border counters, these indicate how many input samples to process before
- * the next output sample is finished.
+ * Generates out_dim border counters that sum to fed_dim, indicating how many
+ * fed samples to consume before each output is finished. The final border is
+ * extended to cover any trailing halo so the caller can feed all fed_dim rows.
  */
-static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf,
-	float *tmp_coeffs)
+static void scale_down_coeffs(int fed_dim, double src_dim, double src_off,
+	int out_dim, float *coeff_buf, int *border_buf, float *tmp_coeffs)
 {
 	int i, j, offset, pos, smp_end, smp_start, n_samples, ends[4];
 	float fudge;
 	double tap_mult, radius, center, left_edge, right_edge, dist;
 
-	tap_mult = (double)in_dim / out_dim;
+	tap_mult = src_dim / out_dim;
 	radius = 2.0 * tap_mult;
-	center = 0.5 * tap_mult - 0.5;
+	center = src_off + 0.5 * tap_mult - 0.5;
 
 	for (i=0; i<4; i++) {
 		ends[i] = -1;
@@ -688,8 +694,8 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 		if (smp_start < 0) {
 			smp_start = 0;
 		}
-		if (smp_end >= in_dim) {
-			smp_end = in_dim - 1;
+		if (smp_end >= fed_dim) {
+			smp_end = fed_dim - 1;
 		}
 		n_samples = smp_end - smp_start + 1;
 
@@ -724,28 +730,34 @@ static void scale_down_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bo
 
 		center += tap_mult;
 	}
+
+	/* If trailing halo extends past the last sampled position, fold it
+	 * into the final border so the caller's fed_dim scanlines are all
+	 * consumed. Those samples have zero coefficients (no output sampled
+	 * them) so they contribute nothing to the result. */
+	if (out_dim > 0 && ends[(out_dim - 1) % 4] < fed_dim - 1) {
+		border_buf[out_dim - 1] += fed_dim - 1 - ends[(out_dim - 1) % 4];
+	}
 }
 
 /**
  * Precalculate coefficients and borders for an upscale.
  *
- * coeff_buf will be populated with 4 input coefficients for every output sample.
- *
- * border_buf will be populated with the number of output samples to produce for every input
- * sample.
- *
- * users of coeff_buf & border_buf are expected to keep a buffer of the last 4 input samples, and
- * multiply them with each output sample's coefficients.
+ * src_dim drives the scale factor (step = src_dim / out_dim) and src_off
+ * shifts the reverse map within the fed buffer. coeff_buf gets 4 entries per
+ * output sample; border_buf is fed_dim entries (indices outside the sampled
+ * region remain 0).
  */
-static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *border_buf)
+static void scale_up_coeffs(int fed_dim, double src_dim, double src_off,
+	int out_dim, float *coeff_buf, int *border_buf)
 {
 	int i, smp_i, start, end, ltrim, rtrim, safe_end, max_pos;
 	double pos_d, step;
 	float tx;
 
-	max_pos = in_dim - 1;
-	step = (double)in_dim / out_dim;
-	pos_d = 0.5 * step - 0.5;
+	max_pos = fed_dim - 1;
+	step = src_dim / out_dim;
+	pos_d = src_off + 0.5 * step - 0.5;
 
 	for (i=0; i<out_dim; i++) {
 		/* split_map inlined: smp_i is floor toward -inf, but pos_d in
@@ -763,6 +775,9 @@ static void scale_up_coeffs(int in_dim, int out_dim, float *coeff_buf, int *bord
 		// This is the border position at which we will tell the
 		// interpolator to calculate the output sample.
 		safe_end = min(end, max_pos);
+		if (safe_end < 0) {
+			safe_end = 0;
+		}
 
 		ltrim = 0;
 		rtrim = 0;
@@ -1350,18 +1365,16 @@ static int calc_coeffs_len(int in_dim, int out_dim)
 	return TAPS * max(in_dim, out_dim) * sizeof(float);
 }
 
-static int calc_borders_len(int in_dim, int out_dim)
-{
-	return min(in_dim, out_dim) * sizeof(int);
-}
-
-static int upscale_alloc_size(int in_height, int out_height, int in_width,
+static int upscale_alloc_size(int fed_height, int out_height, int fed_width,
 	int out_width, enum oil_colorspace cs)
 {
-	return ALIGN16(calc_coeffs_len(in_width, out_width))
-		+ ALIGN16(calc_borders_len(in_width, out_width))
-		+ ALIGN16(calc_coeffs_len(in_height, out_height))
-		+ ALIGN16(calc_borders_len(in_height, out_height))
+	/* For upscale the coeff buffer is indexed by output sample (4 per
+	 * output) and the border buffer is indexed by fed input sample. With
+	 * crop padding, fed_dim may exceed out_dim, so size borders by fed. */
+	return ALIGN16(calc_coeffs_len(fed_width, out_width))
+		+ ALIGN16(fed_width * sizeof(int))
+		+ ALIGN16(calc_coeffs_len(fed_height, out_height))
+		+ ALIGN16(fed_height * sizeof(int))
 		+ ALIGN16(out_width * OIL_CMP(cs) * TAPS * sizeof(float));
 }
 
@@ -1371,9 +1384,9 @@ static void upscale_init(struct oil_scale *os)
 	char *p;
 
 	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
-	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
+	borders_x_len = ALIGN16(os->in_width * sizeof(int));
 	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
-	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
+	borders_y_len = ALIGN16(os->in_height * sizeof(int));
 
 	p = os->buf;
 	os->coeffs_x = (float *)p;		p += coeffs_x_len;
@@ -1382,23 +1395,31 @@ static void upscale_init(struct oil_scale *os)
 	os->borders_y = (int *)p;		p += borders_y_len;
 	os->rb = (float *)p;
 
-	scale_up_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x);
-	scale_up_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y);
+	scale_up_coeffs(os->in_width, os->src_width, os->src_x_off,
+		os->out_width, os->coeffs_x, os->borders_x);
+	scale_up_coeffs(os->in_height, os->src_height, os->src_y_off,
+		os->out_height, os->coeffs_y, os->borders_y);
 	os->slots_y = 0;
 }
 
-static int downscale_alloc_size(int in_height, int out_height, int in_width,
-	int out_width, enum oil_colorspace cs)
+static int downscale_alloc_size(int fed_height, int out_height, int fed_width,
+	int out_width, double src_height, double src_width,
+	enum oil_colorspace cs)
 {
-	int taps_x, taps_y;
+	int taps_x, taps_y, ceil_src_w, ceil_src_h;
 
-	taps_x = max_taps(in_width, out_width);
-	taps_y = max_taps(in_height, out_height);
+	/* max_taps is bounded by the kernel span in source pixels. Use the
+	 * ceiling of src_dim so we don't under-allocate; passing fed_dim
+	 * would also be safe but over-allocates with halo. */
+	ceil_src_w = (int)ceil(src_width);
+	ceil_src_h = (int)ceil(src_height);
+	taps_x = max_taps(ceil_src_w, out_width);
+	taps_y = max_taps(ceil_src_h, out_height);
 
-	return ALIGN16(calc_coeffs_len(in_width, out_width))
-		+ ALIGN16(calc_borders_len(in_width, out_width))
-		+ ALIGN16(calc_coeffs_len(in_height, out_height))
-		+ ALIGN16(calc_borders_len(in_height, out_height))
+	return ALIGN16(calc_coeffs_len(fed_width, out_width))
+		+ ALIGN16(out_width * sizeof(int))
+		+ ALIGN16(calc_coeffs_len(fed_height, out_height))
+		+ ALIGN16(out_height * sizeof(int))
 		+ ALIGN16(max(taps_x, taps_y) * sizeof(float))
 		+ ALIGN16(out_width * OIL_CMP(cs) * TAPS * sizeof(float));
 }
@@ -1409,9 +1430,9 @@ static void downscale_init(struct oil_scale *os)
 	char *p;
 
 	coeffs_x_len = ALIGN16(calc_coeffs_len(os->in_width, os->out_width));
-	borders_x_len = ALIGN16(calc_borders_len(os->in_width, os->out_width));
+	borders_x_len = ALIGN16(os->out_width * sizeof(int));
 	coeffs_y_len = ALIGN16(calc_coeffs_len(os->in_height, os->out_height));
-	borders_y_len = ALIGN16(calc_borders_len(os->in_height, os->out_height));
+	borders_y_len = ALIGN16(os->out_height * sizeof(int));
 	sums_len = ALIGN16(os->out_width * OIL_CMP(os->cs) * TAPS * sizeof(float));
 
 	p = os->buf;
@@ -1422,28 +1443,37 @@ static void downscale_init(struct oil_scale *os)
 	os->sums_y = (float *)p;		p += sums_len;
 	os->tmp_coeffs = (float *)p;
 
-	scale_down_coeffs(os->in_width, os->out_width, os->coeffs_x, os->borders_x,
-		os->tmp_coeffs);
-	scale_down_coeffs(os->in_height, os->out_height, os->coeffs_y, os->borders_y,
-		os->tmp_coeffs);
+	scale_down_coeffs(os->in_width, os->src_width, os->src_x_off,
+		os->out_width, os->coeffs_x, os->borders_x, os->tmp_coeffs);
+	scale_down_coeffs(os->in_height, os->src_height, os->src_y_off,
+		os->out_height, os->coeffs_y, os->borders_y, os->tmp_coeffs);
 	os->slots_y = os->borders_y[0];
+}
+
+int oil_scale_alloc_size_ex(int in_height, int out_height, int in_width,
+	int out_width, double src_height, double src_width,
+	enum oil_colorspace cs)
+{
+	if (out_width > src_width) {
+		return upscale_alloc_size(in_height, out_height, in_width,
+			out_width, cs);
+	} else {
+		return downscale_alloc_size(in_height, out_height, in_width,
+			out_width, src_height, src_width, cs);
+	}
 }
 
 int oil_scale_alloc_size(int in_height, int out_height, int in_width,
 	int out_width, enum oil_colorspace cs)
 {
-	if (out_width > in_width) {
-		return upscale_alloc_size(in_height, out_height, in_width,
-			out_width, cs);
-	} else {
-		return downscale_alloc_size(in_height, out_height, in_width,
-			out_width, cs);
-	}
+	return oil_scale_alloc_size_ex(in_height, out_height, in_width,
+		out_width, in_height, in_width, cs);
 }
 
-int oil_scale_init_allocated(struct oil_scale *os, int in_height,
-	int out_height, int in_width, int out_width, enum oil_colorspace cs,
-	void *buf)
+int oil_scale_init_allocated_ex(struct oil_scale *os, int in_height,
+	int out_height, int in_width, int out_width, double src_y,
+	double src_height, double src_x, double src_width,
+	enum oil_colorspace cs, void *buf)
 {
 	/* sanity check on arguments */
 	if (!os || !buf || in_height > MAX_DIMENSION || out_height > MAX_DIMENSION ||
@@ -1453,8 +1483,15 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
 		return -1;
 	}
 
+	/* logical source rect must fit inside the fed buffer */
+	if (src_x < 0.0 || src_y < 0.0 || src_width <= 0.0 ||
+		src_height <= 0.0 || src_x + src_width > (double)in_width ||
+		src_y + src_height > (double)in_height) {
+		return -1;
+	}
+
 	/* only allow upscaling if both dimensions are being upscaled */
-	if ((out_height > in_height) != (out_width > in_width)) {
+	if ((out_height > src_height) != (out_width > src_width)) {
 		return -1;
 	}
 
@@ -1469,10 +1506,14 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
 	os->out_height = out_height;
 	os->in_width = in_width;
 	os->out_width = out_width;
+	os->src_y_off = src_y;
+	os->src_x_off = src_x;
+	os->src_height = src_height;
+	os->src_width = src_width;
 	os->cs = cs;
 	os->buf = buf;
 
-	if (out_width > in_width) {
+	if (out_width > src_width) {
 		upscale_init(os);
 	} else {
 		downscale_init(os);
@@ -1481,21 +1522,31 @@ int oil_scale_init_allocated(struct oil_scale *os, int in_height,
 	return 0;
 }
 
-int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
-	int in_width, int out_width, enum oil_colorspace cs)
+int oil_scale_init_allocated(struct oil_scale *os, int in_height,
+	int out_height, int in_width, int out_width, enum oil_colorspace cs,
+	void *buf)
+{
+	return oil_scale_init_allocated_ex(os, in_height, out_height, in_width,
+		out_width, 0.0, (double)in_height, 0.0, (double)in_width, cs,
+		buf);
+}
+
+int oil_scale_init_ex(struct oil_scale *os, int in_height, int out_height,
+	int in_width, int out_width, double src_y, double src_height,
+	double src_x, double src_width, enum oil_colorspace cs)
 {
 	int alloc_size, ret;
 	void *buf;
 
-	alloc_size = oil_scale_alloc_size(in_height, out_height, in_width,
-		out_width, cs);
+	alloc_size = oil_scale_alloc_size_ex(in_height, out_height, in_width,
+		out_width, src_height, src_width, cs);
 	buf = calloc(1, alloc_size);
 	if (!buf) {
 		return -2;
 	}
 
-	ret = oil_scale_init_allocated(os, in_height, out_height, in_width,
-		out_width, cs, buf);
+	ret = oil_scale_init_allocated_ex(os, in_height, out_height, in_width,
+		out_width, src_y, src_height, src_x, src_width, cs, buf);
 	if (ret) {
 		free(buf);
 		return ret;
@@ -1504,11 +1555,18 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 	return 0;
 }
 
+int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
+	int in_width, int out_width, enum oil_colorspace cs)
+{
+	return oil_scale_init_ex(os, in_height, out_height, in_width, out_width,
+		0.0, (double)in_height, 0.0, (double)in_width, cs);
+}
+
 void oil_scale_restart(struct oil_scale *os)
 {
 	os->in_pos = os->out_pos = 0;
 	os->sums_y_tap = 0;
-	if (os->out_height <= os->in_height) {
+	if ((double)os->out_height <= os->src_height) {
 		/* downscale: sums_y accumulates partial output across input rows;
 		 * stale state from a prior pass would corrupt the next output. */
 		memset(os->sums_y, 0,
@@ -1538,7 +1596,7 @@ void oil_scale_free(struct oil_scale *os)
 
 int oil_scale_slots(struct oil_scale *ys)
 {
-	if (ys->out_height <= ys->in_height) {
+	if ((double)ys->out_height <= ys->src_height) {
 		return ys->slots_y;
 	}
 	if (ys->in_pos) {
@@ -1615,7 +1673,7 @@ int oil_scale_in(struct oil_scale *os, unsigned char *in)
 	if (oil_scale_slots(os) == 0) {
 		return -1;
 	}
-	if (os->out_width > os->in_width) {
+	if ((double)os->out_width > os->src_width) {
 		up_scale_in(os, in);
 	} else {
 		down_scale_in(os, in);
@@ -1625,14 +1683,15 @@ int oil_scale_in(struct oil_scale *os, unsigned char *in)
 
 int oil_scale_out(struct oil_scale *os, unsigned char *out)
 {
-	int i, sl_len;
+	int i, sl_len, is_down;
 	float *in[4];
 
 	if (oil_scale_slots(os) != 0) {
 		return -1;
 	}
 
-	if (os->out_height <= os->in_height) {
+	is_down = (double)os->out_height <= os->src_height;
+	if (is_down) {
 		yscale_out(os->sums_y, os->out_width, out, os->cs, os->sums_y_tap);
 		os->sums_y_tap = (os->sums_y_tap + 1) & 3;
 	} else {
@@ -1646,7 +1705,7 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 	}
 
 	os->out_pos++;
-	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+	if (is_down && os->out_pos < os->out_height) {
 		os->slots_y = os->borders_y[os->out_pos];
 	}
 	return 0;
@@ -1654,11 +1713,14 @@ int oil_scale_out(struct oil_scale *os, unsigned char *out)
 
 int oil_scale_out_discard(struct oil_scale *os)
 {
+	int is_down;
+
 	if (oil_scale_slots(os) != 0) {
 		return -1;
 	}
 
-	if (os->out_height <= os->in_height) {
+	is_down = (double)os->out_height <= os->src_height;
+	if (is_down) {
 		/* Use yscale_out to shift the sums_y accumulators, discarding
 		 * the output pixels. This avoids needing layout-specific shift
 		 * logic for each colorspace's sums_y memory layout. */
@@ -1671,9 +1733,51 @@ int oil_scale_out_discard(struct oil_scale *os)
 	}
 
 	os->out_pos++;
-	if (os->out_height <= os->in_height && os->out_pos < os->out_height) {
+	if (is_down && os->out_pos < os->out_height) {
 		os->slots_y = os->borders_y[os->out_pos];
 	}
+	return 0;
+}
+
+int oil_required_input_rect(int img_height, int img_width, double src_y,
+	double src_height, double src_x, double src_width, int out_height,
+	int out_width, int *fed_y, int *fed_height, int *fed_x, int *fed_width)
+{
+	double tap_mult_x, tap_mult_y, halo_x, halo_y;
+	int fy0, fx0, fy1, fx1;
+
+	if (!fed_y || !fed_height || !fed_x || !fed_width) {
+		return -1;
+	}
+	if (img_height < 1 || img_width < 1 || out_height < 1 || out_width < 1 ||
+		src_x < 0.0 || src_y < 0.0 || src_width <= 0.0 ||
+		src_height <= 0.0 ||
+		src_x + src_width > (double)img_width ||
+		src_y + src_height > (double)img_height) {
+		return -1;
+	}
+
+	/* Catmull-Rom half-support is 2 * tap_mult in source pixels;
+	 * tap_mult = max(1, src_dim/out_dim). */
+	tap_mult_x = src_width > (double)out_width ? src_width / out_width : 1.0;
+	tap_mult_y = src_height > (double)out_height ? src_height / out_height : 1.0;
+	halo_x = 2.0 * tap_mult_x;
+	halo_y = 2.0 * tap_mult_y;
+
+	fx0 = (int)floor(src_x - halo_x);
+	fy0 = (int)floor(src_y - halo_y);
+	fx1 = (int)ceil(src_x + src_width + halo_x);
+	fy1 = (int)ceil(src_y + src_height + halo_y);
+
+	if (fx0 < 0) fx0 = 0;
+	if (fy0 < 0) fy0 = 0;
+	if (fx1 > img_width) fx1 = img_width;
+	if (fy1 > img_height) fy1 = img_height;
+
+	*fed_x = fx0;
+	*fed_y = fy0;
+	*fed_width = fx1 - fx0;
+	*fed_height = fy1 - fy0;
 	return 0;
 }
 
