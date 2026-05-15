@@ -66,6 +66,12 @@ Reference Documentation
 
 Refer to oil_resample.h for reference documentation.
 
+Related Projects
+----------------
+
+ * [ender672/oil](https://github.com/ender672/oil) - Ruby port/extension of this library.
+ * [ender672/oil-scale](https://github.com/ender672/oil-scale) - Rust port of this library.
+
 Building
 --------
 
