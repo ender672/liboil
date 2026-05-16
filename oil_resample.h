@@ -368,4 +368,35 @@ int oil_compute_cover_rect(int img_width, int img_height,
 	int out_width, int out_height, enum oil_gravity gravity,
 	double *src_x, double *src_y, double *src_width, double *src_height);
 
+/**
+ * Compute a contain (bounding-box) source rect with exact aspect preservation.
+ *
+ * Adjusts the output dimensions to fit within the given bounding box while
+ * approximating the input's aspect ratio (same rounding as oil_fix_ratio),
+ * then returns a fractional source rect that, paired with those output dims,
+ * gives exact aspect preservation by absorbing the rounding remainder as a
+ * sub-pixel centered crop of the input.
+ *
+ * For bounding boxes whose aspect is close to the input's, the trim is
+ * sub-pixel and the difference vs oil_fix_ratio alone is imperceptible. For
+ * bounding boxes whose aspect differs sharply from the input (e.g. a
+ * panorama scaled into a near-square box), the trim can remove a noticeable
+ * slice of the input -- callers who want to preserve all input content
+ * should use oil_fix_ratio alone and accept the mild aspect distortion.
+ *
+ * Pair with oil_scale_init_ex (or the libjpeg/libpng init_ex wrappers).
+ *
+ * @img_width, @img_height: Source image dimensions.
+ * @out_width, @out_height: In/out. Caller passes the desired bounding box;
+ *         these are adjusted to integer dims that approximate input aspect.
+ * @src_x, @src_y, @src_width, @src_height: Filled with the computed rect.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ * Returns -3 if an adjusted dimension would be out of range.
+ */
+int oil_compute_contain_rect(int img_width, int img_height,
+	int *out_width, int *out_height,
+	double *src_x, double *src_y, double *src_width, double *src_height);
+
 #endif

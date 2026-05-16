@@ -1483,6 +1483,87 @@ static void test_compute_cover_rect(void)
 		&sx, &sy, &sw, &sh) == -1);
 }
 
+static void test_compute_contain_rect(void)
+{
+	double sx, sy, sw, sh;
+	int ow, oh;
+
+	/* Matching aspect: bb passes through, rect is the whole image. */
+	ow = 150; oh = 100;
+	assert(oil_compute_contain_rect(300, 200, &ow, &oh,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(ow == 150 && oh == 100);
+	assert(sx == 0.0 && sy == 0.0 && sw == 300.0 && sh == 200.0);
+
+	/* Non-matching aspect, no rounding remainder: oil_fix_ratio adjusts
+	 * one bb dim, src rect is the full image. */
+	ow = 200; oh = 200;
+	assert(oil_compute_contain_rect(400, 200, &ow, &oh,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(ow == 200 && oh == 100);
+	assert(sx == 0.0 && sy == 0.0 && sw == 400.0 && sh == 200.0);
+
+	/* Worst-case rounding: in 200x310, bb 10x16. oil_fix_ratio yields
+	 * 10x16 (height was the natural 15.5, rounded to 16). Cover rect
+	 * crops x by 3.125 each side to match aspect exactly. */
+	ow = 10; oh = 16;
+	assert(oil_compute_contain_rect(200, 310, &ow, &oh,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(ow == 10 && oh == 16);
+	assert(sx == 3.125 && sy == 0.0);
+	assert(sw == 193.75 && sh == 310.0);
+
+	/* Panorama: in 800x55, bb 80x6. Height was natural 5.5, rounded to 6.
+	 * Result crops a significant slice of x to preserve aspect. */
+	ow = 80; oh = 6;
+	assert(oil_compute_contain_rect(800, 55, &ow, &oh,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(ow == 80 && oh == 6);
+	assert(sy == 0.0 && sh == 55.0);
+	/* sw = 55*80/6 = 733.333... */
+	assert(sw > 733.3 && sw < 733.4);
+	assert(sx > 33.3 && sx < 33.4);
+
+	/* The src rect derived from the adjusted out dims must always be
+	 * inside the image (precondition for oil_scale_init_ex). Sweep a
+	 * range of dimensions that exercises rounding. */
+	{
+		int img_w_i, img_h_i, bb_w, bb_h;
+		for (img_w_i = 100; img_w_i < 120; img_w_i++) {
+			for (img_h_i = 100; img_h_i < 120; img_h_i++) {
+				for (bb_w = 1; bb_w < 30; bb_w++) {
+					for (bb_h = 1; bb_h < 30; bb_h++) {
+						ow = bb_w; oh = bb_h;
+						assert(oil_compute_contain_rect(
+							img_w_i, img_h_i,
+							&ow, &oh, &sx, &sy,
+							&sw, &sh) == 0);
+						assert(sx >= 0.0 && sy >= 0.0);
+						assert(sx + sw <= (double)img_w_i);
+						assert(sy + sh <= (double)img_h_i);
+						assert(ow >= 1 && oh >= 1);
+						assert(ow <= bb_w && oh <= bb_h);
+					}
+				}
+			}
+		}
+	}
+
+	/* Bad arguments rejected (forwarded from oil_fix_ratio). */
+	ow = 100; oh = 100;
+	assert(oil_compute_contain_rect(0, 100, &ow, &oh,
+		&sx, &sy, &sw, &sh) == -1);
+	ow = 100; oh = 100;
+	assert(oil_compute_contain_rect(100, 0, &ow, &oh,
+		&sx, &sy, &sw, &sh) == -1);
+	ow = 0; oh = 100;
+	assert(oil_compute_contain_rect(100, 100, &ow, &oh,
+		&sx, &sy, &sw, &sh) == -1);
+	ow = 100; oh = 0;
+	assert(oil_compute_contain_rect(100, 100, &ow, &oh,
+		&sx, &sy, &sw, &sh) == -1);
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -1554,6 +1635,7 @@ int main(void)
 
 	test_required_input_rect();
 	test_compute_cover_rect();
+	test_compute_contain_rect();
 
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");

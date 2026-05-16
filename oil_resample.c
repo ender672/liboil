@@ -1884,3 +1884,18 @@ int oil_compute_cover_rect(int img_width, int img_height,
 	*src_height = sh;
 	return 0;
 }
+
+int oil_compute_contain_rect(int img_width, int img_height,
+	int *out_width, int *out_height,
+	double *src_x, double *src_y, double *src_width, double *src_height)
+{
+	int ret;
+
+	ret = oil_fix_ratio(img_width, img_height, out_width, out_height);
+	if (ret) {
+		return ret;
+	}
+	return oil_compute_cover_rect(img_width, img_height, *out_width,
+		*out_height, OIL_GRAVITY_CENTER, src_x, src_y, src_width,
+		src_height);
+}
