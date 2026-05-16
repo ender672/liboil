@@ -324,4 +324,45 @@ int oil_scale_out_discard(struct oil_scale *os);
  int oil_fix_ratio(int src_width, int src_height, int *out_width,
 	int *out_height);
 
+/**
+ * Gravity hints for oil_compute_cover_rect. The hint selects which edge or
+ * corner of the source rect stays anchored when the rect is smaller than the
+ * image on the cropped axis. Hints on a non-cropped axis are ignored.
+ */
+enum oil_gravity {
+	OIL_GRAVITY_CENTER,
+	OIL_GRAVITY_TOP,
+	OIL_GRAVITY_BOTTOM,
+	OIL_GRAVITY_LEFT,
+	OIL_GRAVITY_RIGHT,
+	OIL_GRAVITY_TOP_LEFT,
+	OIL_GRAVITY_TOP_RIGHT,
+	OIL_GRAVITY_BOTTOM_LEFT,
+	OIL_GRAVITY_BOTTOM_RIGHT
+};
+
+/**
+ * Compute a source crop rect that fills the output dimensions exactly,
+ * preserving aspect (CSS "cover" semantics). The returned rect is the largest
+ * sub-rect of the image that shares the output aspect ratio.
+ *
+ * Pair with oil_scale_init_ex (or the libjpeg/libpng init_ex wrappers) to
+ * feed only the cropped region into the resampler.
+ *
+ * For "contain" semantics (fit the whole image inside the output, preserve
+ * aspect, no crop), use oil_fix_ratio on the output dimensions instead. For
+ * "stretch" semantics, pass the image dimensions as the src rect directly.
+ *
+ * @img_width, @img_height: Source image dimensions.
+ * @out_width, @out_height: Desired output dimensions.
+ * @gravity: Which edge of the source rect to anchor on the cropped axis.
+ * @src_x, @src_y, @src_width, @src_height: Filled with the computed rect.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ */
+int oil_compute_cover_rect(int img_width, int img_height,
+	int out_width, int out_height, enum oil_gravity gravity,
+	double *src_x, double *src_y, double *src_width, double *src_height);
+
 #endif

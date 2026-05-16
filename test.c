@@ -1177,6 +1177,57 @@ static void test_required_input_rect(void)
 		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
 }
 
+static void test_compute_cover_rect(void)
+{
+	double sx, sy, sw, sh;
+
+	/* Wider-than-output image: crop horizontally, center by default. */
+	assert(oil_compute_cover_rect(400, 200, 100, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 100.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+
+	/* Same image, gravity left: anchor crop at x=0. */
+	assert(oil_compute_cover_rect(400, 200, 100, 100, OIL_GRAVITY_LEFT,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+
+	/* Same image, gravity right: anchor crop at x=img_w-sw. */
+	assert(oil_compute_cover_rect(400, 200, 100, 100, OIL_GRAVITY_RIGHT,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 200.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+
+	/* Taller-than-output image: crop vertically, center default. */
+	assert(oil_compute_cover_rect(200, 400, 100, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 100.0 && sw == 200.0 && sh == 200.0);
+
+	/* Gravity top: anchor crop at y=0. */
+	assert(oil_compute_cover_rect(200, 400, 100, 100, OIL_GRAVITY_TOP,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+
+	/* Gravity bottom: anchor crop at y=img_h-sh. */
+	assert(oil_compute_cover_rect(200, 400, 100, 100, OIL_GRAVITY_BOTTOM,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 200.0 && sw == 200.0 && sh == 200.0);
+
+	/* Matching aspect: rect is the whole image. */
+	assert(oil_compute_cover_rect(300, 200, 150, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 300.0 && sh == 200.0);
+
+	/* Sub-pixel: crop width may not be integral. */
+	assert(oil_compute_cover_rect(300, 200, 100, 99, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == 0);
+	assert(sh == 200.0 && sw > 200.0 && sw < 300.0 && sy == 0.0);
+
+	/* Bad arguments rejected. */
+	assert(oil_compute_cover_rect(0, 100, 100, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == -1);
+	assert(oil_compute_cover_rect(100, 100, 0, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == -1);
+}
+
 struct impl {
 	char *name;
 	scale_in_fn in;
@@ -1245,6 +1296,7 @@ int main(void)
 	}
 
 	test_required_input_rect();
+	test_compute_cover_rect();
 
 	printf("worst error: %f\n", worst);
 	printf("All tests pass.\n");

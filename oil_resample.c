@@ -1806,3 +1806,62 @@ int oil_fix_ratio(int src_width, int src_height, int *out_width,
 	*adjust_dim = tmp ? tmp : 1;
 	return 0;
 }
+
+int oil_compute_cover_rect(int img_width, int img_height,
+	int out_width, int out_height, enum oil_gravity gravity,
+	double *src_x, double *src_y, double *src_width, double *src_height)
+{
+	double sw, sh, sx, sy;
+
+	if (img_width < 1 || img_height < 1 || out_width < 1 || out_height < 1) {
+		return -1;
+	}
+
+	if ((double)img_width * out_height > (double)img_height * out_width) {
+		/* Image is wider than the output aspect: crop horizontally. */
+		sh = img_height;
+		sw = (double)img_height * out_width / out_height;
+		sy = 0.0;
+		switch (gravity) {
+		case OIL_GRAVITY_LEFT:
+		case OIL_GRAVITY_TOP_LEFT:
+		case OIL_GRAVITY_BOTTOM_LEFT:
+			sx = 0.0;
+			break;
+		case OIL_GRAVITY_RIGHT:
+		case OIL_GRAVITY_TOP_RIGHT:
+		case OIL_GRAVITY_BOTTOM_RIGHT:
+			sx = img_width - sw;
+			break;
+		default:
+			sx = (img_width - sw) / 2.0;
+			break;
+		}
+	} else {
+		/* Image is taller (or equal): crop vertically (or not at all). */
+		sw = img_width;
+		sh = (double)img_width * out_height / out_width;
+		sx = 0.0;
+		switch (gravity) {
+		case OIL_GRAVITY_TOP:
+		case OIL_GRAVITY_TOP_LEFT:
+		case OIL_GRAVITY_TOP_RIGHT:
+			sy = 0.0;
+			break;
+		case OIL_GRAVITY_BOTTOM:
+		case OIL_GRAVITY_BOTTOM_LEFT:
+		case OIL_GRAVITY_BOTTOM_RIGHT:
+			sy = img_height - sh;
+			break;
+		default:
+			sy = (img_height - sh) / 2.0;
+			break;
+		}
+	}
+
+	*src_x = sx;
+	*src_y = sy;
+	*src_width = sw;
+	*src_height = sh;
+	return 0;
+}
