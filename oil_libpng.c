@@ -56,12 +56,26 @@ static void free_full_image_buf(unsigned char **imgbuf, int height)
 int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	int out_width, int out_height)
 {
-	int ret, in_width, in_height, buf_len;
+	return oil_libpng_init_ex(ol, rpng, rinfo, out_width, out_height,
+		0.0, 0.0,
+		(double)png_get_image_width(rpng, rinfo),
+		(double)png_get_image_height(rpng, rinfo));
+}
+
+int oil_libpng_init_ex(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
+	int out_width, int out_height,
+	double src_x, double src_y, double src_width, double src_height)
+{
+	int ret, in_width, in_height, buf_len, cmp;
+	int fed_x, fed_y, fed_w, fed_h;
+	int i;
 	enum oil_colorspace cs;
 
 	ol->rpng = rpng;
 	ol->rinfo = rinfo;
 	ol->in_vpos = 0;
+	ol->inbuf_offset = 0;
+	ol->img_height = 0;
 	ol->inbuf = NULL;
 	ol->inimage = NULL;
 
@@ -69,15 +83,28 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	if (cs == OIL_CS_UNKNOWN) {
 		return -1;
 	}
+	cmp = OIL_CMP(cs);
 
 	in_width = png_get_image_width(rpng, rinfo);
 	in_height = png_get_image_height(rpng, rinfo);
-	ret = oil_scale_init(&ol->os, in_height, out_height, in_width,
-		out_width, cs);
-	if (ret!=0) {
+	ol->img_height = in_height;
+
+	if (oil_required_input_rect(in_height, in_width,
+		src_y, src_height, src_x, src_width,
+		out_height, out_width,
+		&fed_y, &fed_h, &fed_x, &fed_w) < 0) {
+		return -1;
+	}
+
+	ret = oil_scale_init_ex(&ol->os, fed_h, out_height, fed_w, out_width,
+		src_y - fed_y, src_height,
+		src_x - fed_x, src_width,
+		cs);
+	if (ret != 0) {
 		return ret;
 	}
 
+	ol->inbuf_offset = fed_x * cmp;
 	buf_len = png_get_rowbytes(rpng, rinfo);
 	switch (png_get_interlace_type(rpng, rinfo)) {
 	case PNG_INTERLACE_NONE:
@@ -85,6 +112,9 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 		if (!ol->inbuf) {
 			oil_scale_free(&ol->os);
 			return -2;
+		}
+		for (i = 0; i < fed_y; i++) {
+			png_read_row(rpng, ol->inbuf, NULL);
 		}
 		break;
 	case PNG_INTERLACE_ADAM7:
@@ -94,6 +124,7 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 			return -2;
 		}
 		png_read_image(rpng, ol->inimage);
+		ol->in_vpos = fed_y;
 		break;
 	}
 
@@ -106,7 +137,7 @@ void oil_libpng_free(struct oil_libpng *ol)
 		free(ol->inbuf);
 	}
 	if (ol->inimage) {
-		free_full_image_buf(ol->inimage, ol->os.in_height);
+		free_full_image_buf(ol->inimage, ol->img_height);
 	}
 	oil_scale_free(&ol->os);
 }
@@ -114,7 +145,7 @@ void oil_libpng_free(struct oil_libpng *ol)
 static void read_scanline_interlaced(struct oil_libpng *ol)
 {
 	while (oil_scale_slots(&ol->os)) {
-		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++]);
+		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++] + ol->inbuf_offset);
 	}
 }
 
@@ -122,7 +153,7 @@ static void read_scanline(struct oil_libpng *ol)
 {
 	while (oil_scale_slots(&ol->os)) {
 		png_read_row(ol->rpng, ol->inbuf, NULL);
-		oil_scale_in(&ol->os, ol->inbuf);
+		oil_scale_in(&ol->os, ol->inbuf + ol->inbuf_offset);
 	}
 }
 
@@ -135,10 +166,10 @@ int oil_libpng_proccess_scanline_part(struct oil_libpng *ol)
 	switch (png_get_interlace_type(ol->rpng, ol->rinfo)) {
 	case PNG_INTERLACE_NONE:
 		png_read_row(ol->rpng, ol->inbuf, NULL);
-		oil_scale_in(&ol->os, ol->inbuf);
+		oil_scale_in(&ol->os, ol->inbuf + ol->inbuf_offset);
 		break;
 	case PNG_INTERLACE_ADAM7:
-		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++]);
+		oil_scale_in(&ol->os, ol->inimage[ol->in_vpos++] + ol->inbuf_offset);
 		break;
 	}
 	return oil_scale_slots(&ol->os) == 0;

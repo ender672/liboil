@@ -30,6 +30,7 @@ struct oil_libjpeg {
 	struct oil_scale os;
 	struct jpeg_decompress_struct *dinfo;
 	unsigned char *inbuf;
+	int inbuf_offset;
 };
 
 /**
@@ -45,6 +46,31 @@ struct oil_libjpeg {
  */
 int oil_libjpeg_init(struct oil_libjpeg *ol,
 	struct jpeg_decompress_struct *dinfo, int out_width, int out_height);
+
+/**
+ * Initialize an oil_libjpeg struct with a sub-pixel source rect.
+ *
+ * The wrapper computes the required fed input rect (with halo for the
+ * Catmull-Rom kernel) via oil_required_input_rect and advances the libjpeg
+ * decoder past rows outside the rect. When built against libjpeg-turbo, it
+ * also uses jpeg_crop_scanline to restrict IDCT to the MCU columns covering
+ * the fed rect.
+ *
+ * @ol: Pointer to the struct to be initialized.
+ * @dinfo: Pointer to a libjpeg decompress struct, with header already read.
+ * @out_width, @out_height: Desired output dimensions in pixels.
+ * @src_x, @src_y, @src_width, @src_height: Source rect inside the full image,
+ *     in source pixels (may be fractional). Must satisfy
+ *     0 <= src_x, src_x + src_width <= dinfo->output_width, and the
+ *     equivalent for the vertical axis.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ * Returns -2 if unable to allocate memory.
+ */
+int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
+	struct jpeg_decompress_struct *dinfo, int out_width, int out_height,
+	double src_x, double src_y, double src_width, double src_height);
 
 void oil_libjpeg_free(struct oil_libjpeg *ol);
 

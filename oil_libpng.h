@@ -31,6 +31,8 @@ struct oil_libpng {
 	png_structp rpng;
 	png_infop rinfo;
 	int in_vpos;
+	int inbuf_offset;
+	int img_height;
 	unsigned char *inbuf;
 	unsigned char **inimage;
 };
@@ -48,6 +50,28 @@ struct oil_libpng {
  */
 int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	int out_width, int out_height);
+
+/**
+ * Initialize an oil_libpng struct with a sub-pixel source rect.
+ *
+ * The wrapper computes the required fed input rect (with halo for the
+ * Catmull-Rom kernel) via oil_required_input_rect and advances the libpng
+ * decoder past rows outside the rect (non-interlaced). Interlaced PNGs are
+ * always read in full at init time, since Adam7 forbids row-skipping.
+ *
+ * @ol: Pointer to the struct to be initialized.
+ * @rpng, @rinfo: Active libpng read structs.
+ * @out_width, @out_height: Desired output dimensions in pixels.
+ * @src_x, @src_y, @src_width, @src_height: Source rect inside the full image,
+ *     in source pixels (may be fractional). Must fit within the image bounds.
+ *
+ * Returns 0 on success.
+ * Returns -1 if an argument is bad.
+ * Returns -2 if unable to allocate memory.
+ */
+int oil_libpng_init_ex(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
+	int out_width, int out_height,
+	double src_x, double src_y, double src_width, double src_height);
 
 void oil_libpng_free(struct oil_libpng *ol);
 

@@ -25,27 +25,74 @@
 int oil_libjpeg_init(struct oil_libjpeg *ol,
 	struct jpeg_decompress_struct *dinfo, int out_width, int out_height)
 {
-	int ret;
+	return oil_libjpeg_init_ex(ol, dinfo, out_width, out_height,
+		0.0, 0.0,
+		(double)dinfo->output_width, (double)dinfo->output_height);
+}
+
+int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
+	struct jpeg_decompress_struct *dinfo, int out_width, int out_height,
+	double src_x, double src_y, double src_width, double src_height)
+{
+	int ret, fed_x, fed_y, fed_w, fed_h, buf_w;
 	enum oil_colorspace cs;
+#ifdef LIBJPEG_TURBO_VERSION
+	JDIMENSION crop_x, crop_w;
+#else
+	int i;
+#endif
 
 	ol->dinfo = dinfo;
+	ol->inbuf = NULL;
+	ol->inbuf_offset = 0;
 
 	cs = jpeg_cs_to_oil(dinfo->out_color_space);
 	if (cs == OIL_CS_UNKNOWN) {
 		return -1;
 	}
 
-	ol->inbuf = malloc(dinfo->output_width * dinfo->output_components);
+	if (oil_required_input_rect(dinfo->output_height, dinfo->output_width,
+		src_y, src_height, src_x, src_width,
+		out_height, out_width,
+		&fed_y, &fed_h, &fed_x, &fed_w) < 0) {
+		return -1;
+	}
+
+#ifdef LIBJPEG_TURBO_VERSION
+	crop_x = fed_x;
+	crop_w = fed_w;
+	jpeg_crop_scanline(dinfo, &crop_x, &crop_w);
+	fed_x = crop_x;
+	fed_w = crop_w;
+	buf_w = fed_w;
+#else
+	buf_w = dinfo->output_width;
+	ol->inbuf_offset = fed_x * dinfo->output_components;
+#endif
+
+	ret = oil_scale_init_ex(&ol->os, fed_h, out_height, fed_w, out_width,
+		src_y - fed_y, src_height,
+		src_x - fed_x, src_width,
+		cs);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ol->inbuf = malloc((size_t)buf_w * dinfo->output_components);
 	if (!ol->inbuf) {
+		oil_scale_free(&ol->os);
 		return -2;
 	}
 
-	ret = oil_scale_init(&ol->os, dinfo->output_height, out_height,
-		dinfo->output_width, out_width, cs);
-	if (ret!=0) {
-		free(ol->inbuf);
-		return ret;
+#ifdef LIBJPEG_TURBO_VERSION
+	if (fed_y > 0) {
+		jpeg_skip_scanlines(dinfo, fed_y);
 	}
+#else
+	for (i = 0; i < fed_y; i++) {
+		jpeg_read_scanlines(dinfo, &ol->inbuf, 1);
+	}
+#endif
 
 	return 0;
 }
@@ -65,7 +112,7 @@ int oil_libjpeg_proccess_scanline_part(struct oil_libjpeg *ol)
 	}
 
 	jpeg_read_scanlines(ol->dinfo, &ol->inbuf, 1);
-	oil_scale_in(&ol->os, ol->inbuf);
+	oil_scale_in(&ol->os, ol->inbuf + ol->inbuf_offset);
 	return oil_scale_slots(&ol->os) == 0;
 }
 
@@ -73,7 +120,7 @@ void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf)
 {
 	while (oil_scale_slots(&ol->os)) {
 		jpeg_read_scanlines(ol->dinfo, &ol->inbuf, 1);
-		oil_scale_in(&ol->os, ol->inbuf);
+		oil_scale_in(&ol->os, ol->inbuf + ol->inbuf_offset);
 	}
 	oil_scale_out(&ol->os, outbuf);
 }
