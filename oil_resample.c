@@ -22,6 +22,7 @@
 #include "oil_resample.h"
 #include "oil_resample_internal.h"
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
@@ -1817,10 +1818,16 @@ int oil_compute_cover_rect(int img_width, int img_height,
 		return -1;
 	}
 
-	if ((double)img_width * out_height > (double)img_height * out_width) {
+	/* int64 cross-product keeps the branch deterministic up to
+	 * MAX_DIMENSION; doubles would lose precision near aspect equality
+	 * if MAX_DIMENSION ever grew past 2^26 or so. */
+	if ((int64_t)img_width * out_height > (int64_t)img_height * out_width) {
 		/* Image is wider than the output aspect: crop horizontally. */
 		sh = img_height;
 		sw = (double)img_height * out_width / out_height;
+		if (sw > (double)img_width) {
+			sw = img_width;
+		}
 		sy = 0.0;
 		switch (gravity) {
 		case OIL_GRAVITY_LEFT:
@@ -1837,10 +1844,19 @@ int oil_compute_cover_rect(int img_width, int img_height,
 			sx = (img_width - sw) / 2.0;
 			break;
 		}
+		/* Floating-point rounding in the sw computation above could
+		 * still leave sx as a tiny negative; oil_scale_init_ex rejects
+		 * any src_x < 0 so clamp defensively. */
+		if (sx < 0.0) {
+			sx = 0.0;
+		}
 	} else {
 		/* Image is taller (or equal): crop vertically (or not at all). */
 		sw = img_width;
 		sh = (double)img_width * out_height / out_width;
+		if (sh > (double)img_height) {
+			sh = img_height;
+		}
 		sx = 0.0;
 		switch (gravity) {
 		case OIL_GRAVITY_TOP:
@@ -1856,6 +1872,9 @@ int oil_compute_cover_rect(int img_width, int img_height,
 		default:
 			sy = (img_height - sh) / 2.0;
 			break;
+		}
+		if (sy < 0.0) {
+			sy = 0.0;
 		}
 	}
 
