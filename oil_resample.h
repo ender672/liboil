@@ -77,7 +77,7 @@ struct oil_scale {
 	int in_height; // height of the fed input buffer (rows fed via oil_scale_in).
 	int out_height; // output image height.
 	int in_width; // width of the fed input buffer.
-	int out_width; // output image height.
+	int out_width; // output image width.
 	double src_y_off; // start of logical source region within fed buffer (y).
 	double src_x_off; // start of logical source region within fed buffer (x).
 	double src_height; // logical source region height; drives y scale factor.
@@ -113,7 +113,8 @@ void oil_global_init(void);
  * @out_width: Width, in pixels, of the output image.
  * @cs: Color space of the input/output images.
  *
- * Returns the required buffer size in bytes.
+ * Returns the required buffer size in bytes. The caller must zero-initialize
+ * the allocation before passing it to oil_scale_init_allocated.
  */
 int oil_scale_alloc_size(int in_height, int out_height, int in_width,
 	int out_width, enum oil_colorspace cs);
@@ -126,7 +127,7 @@ int oil_scale_alloc_size(int in_height, int out_height, int in_width,
  * @in_width: Width, in pixels, of the input image.
  * @out_width: Width, in pixels, of the output image.
  * @cs: Color space of the input/output images.
- * @buf: Pre-allocated buffer for internal use.
+ * @buf: Pre-allocated buffer for internal use; MUST be zero-initialized.
  *
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
@@ -184,6 +185,11 @@ int oil_scale_init_ex(struct oil_scale *os, int in_height, int out_height,
 /**
  * Same as oil_scale_init_ex but with a caller-supplied buffer.
  *
+ * The buffer MUST be zero-initialized (use calloc, or memset to 0). Halo
+ * regions of the coefficient and border tables receive no writes during
+ * init; non-zero residue there would corrupt the resampler. The same applies
+ * to oil_scale_init_allocated, which forwards to this entry point.
+ *
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
  */
@@ -193,7 +199,9 @@ int oil_scale_init_allocated_ex(struct oil_scale *os, int in_height,
 	enum oil_colorspace cs, void *buf);
 
 /**
- * Calculate the buffer size for an oil scaler with the _ex parameters.
+ * Calculate the buffer size for an oil scaler with the _ex parameters. The
+ * returned size is the allocation that must be passed to
+ * oil_scale_init_allocated_ex; the caller must zero-initialize the buffer.
  */
 int oil_scale_alloc_size_ex(int in_height, int out_height, int in_width,
 	int out_width, double src_height, double src_width,
