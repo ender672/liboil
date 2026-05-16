@@ -58,7 +58,6 @@ static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
 
 struct resumable_resize {
 	FILE *io;
-	int is_png;
 	int png_interlaced;
 
 	int surface_width;
@@ -1068,7 +1067,7 @@ int main(int argc, char **argv) {
 				drag_cur_x = rx;
 				drag_cur_y = ry;
 				drag = make_drag_rect(drag_start_x, drag_start_y, drag_cur_x, drag_cur_y);
-				if (drag.w >= MIN_DRAG_PIXELS && drag.h >= MIN_DRAG_PIXELS &&
+				if ((drag.w >= MIN_DRAG_PIXELS || drag.h >= MIN_DRAG_PIXELS) &&
 				    img_w > 0 &&
 				    drag_rect_to_crop(renderer, display_tex, drag,
 				                      crop_x, crop_y, crop_w, crop_h,
@@ -1099,9 +1098,7 @@ int main(int argc, char **argv) {
 			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma,
 			                         is_zoomed, crop_x, crop_y, crop_w, crop_h) == 0) {
 				render_in_progress = 1;
-				if (img_w == 0) {
-					img_w = rr.img_width;
-				}
+				img_w = rr.img_width;
 				crop_x = rr.src_x;
 				crop_y = rr.src_y;
 				crop_w = rr.src_w;
