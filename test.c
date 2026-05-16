@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include "oil_resample.h"
 
 typedef int (*scale_in_fn)(struct oil_scale *, unsigned char *);
@@ -1137,6 +1138,162 @@ static void test_scale_crop_all(void)
 	 * extension matters. */
 	test_scale_crop_random(128, 32, 16.0L, 4.0L, 96.0L, 24.0L,
 		8, 4, OIL_CS_RGB);
+
+	/* Severe upscale-of-crop: 4-pixel-wide source region blown up 16x.
+	 * Each source pixel covers many output samples; halo dominates the
+	 * fed buffer. */
+	test_scale_crop_random(16, 16, 6.0L, 6.0L, 4.0L, 4.0L,
+		64, 64, OIL_CS_RGB);
+	test_scale_crop_random(16, 16, 6.0L, 6.0L, 4.0L, 4.0L,
+		64, 64, OIL_CS_RGBA);
+}
+
+/* Backwards-compat: oil_scale_init must produce byte-identical output to
+ * oil_scale_init_ex with the full-image src rect. Sweeps a few scale regimes
+ * and colorspaces to catch any divergence in the shim wiring. */
+static void test_init_ex_shim_equivalence(void)
+{
+	static const int dims[][2] = {
+		{64, 32}, {32, 64}, {99, 100}, {100, 99}, {16, 16},
+	};
+	static const enum oil_colorspace spaces[] = {
+		OIL_CS_G, OIL_CS_RGB, OIL_CS_RGBA, OIL_CS_ARGB,
+	};
+	int d, c, i, in_line, in_row_stride, out_row_stride;
+	int n_dims = sizeof(dims) / sizeof(dims[0]);
+	int n_spaces = sizeof(spaces) / sizeof(spaces[0]);
+	unsigned char **input, **shim_out, **ex_out;
+	struct oil_scale os;
+
+	for (d=0; d<n_dims; d++) {
+		int in_dim = dims[d][0], out_dim = dims[d][1];
+		for (c=0; c<n_spaces; c++) {
+			enum oil_colorspace cs = spaces[c];
+			in_row_stride = OIL_CMP(cs) * in_dim;
+			out_row_stride = OIL_CMP(cs) * out_dim;
+
+			input = alloc_2d_uchar(in_row_stride, in_dim);
+			for (i=0; i<in_dim; i++) {
+				fill_rand8(input[i], in_row_stride);
+			}
+			shim_out = alloc_2d_uchar(out_row_stride, out_dim);
+			ex_out = alloc_2d_uchar(out_row_stride, out_dim);
+
+			/* shim path */
+			assert(oil_scale_init(&os, in_dim, out_dim, in_dim,
+				out_dim, cs) == 0);
+			in_line = 0;
+			for (i=0; i<out_dim; i++) {
+				while (oil_scale_slots(&os)) {
+					assert(cur_scale_in(&os, input[in_line++]) == 0);
+				}
+				assert(cur_scale_out(&os, shim_out[i]) == 0);
+			}
+			oil_scale_free(&os);
+
+			/* _ex path with full-image src rect */
+			assert(oil_scale_init_ex(&os, in_dim, out_dim, in_dim,
+				out_dim, 0.0, (double)in_dim, 0.0,
+				(double)in_dim, cs) == 0);
+			in_line = 0;
+			for (i=0; i<out_dim; i++) {
+				while (oil_scale_slots(&os)) {
+					assert(cur_scale_in(&os, input[in_line++]) == 0);
+				}
+				assert(cur_scale_out(&os, ex_out[i]) == 0);
+			}
+			oil_scale_free(&os);
+
+			for (i=0; i<out_dim; i++) {
+				if (memcmp(shim_out[i], ex_out[i], out_row_stride) != 0) {
+					fprintf(stderr, "shim/ex mismatch %d->%d cs=%d row %d\n",
+						in_dim, out_dim, cs, i);
+					assert(0 && "oil_scale_init not byte-identical to _ex shim");
+				}
+			}
+
+			free_2d_uchar(input, in_dim);
+			free_2d_uchar(shim_out, out_dim);
+			free_2d_uchar(ex_out, out_dim);
+		}
+	}
+}
+
+/* oil_scale_init_allocated_ex with a caller-supplied calloc buffer must
+ * produce byte-identical output to oil_scale_init_ex on the same inputs.
+ * Also verifies oil_scale_alloc_size_ex returns a sufficient size. */
+static void test_init_allocated_ex(void)
+{
+	struct oil_scale os_alloc, os_managed;
+	int fed_dim = 64, out_dim = 32, in_line, i, alloc_size;
+	int in_row_stride, out_row_stride;
+	enum oil_colorspace cs = OIL_CS_RGBA;
+	double src_off = 4.5, src_dim = 55.0;
+	void *buf;
+	unsigned char **input, **alloc_out, **managed_out;
+
+	in_row_stride = OIL_CMP(cs) * fed_dim;
+	out_row_stride = OIL_CMP(cs) * out_dim;
+
+	input = alloc_2d_uchar(in_row_stride, fed_dim);
+	for (i=0; i<fed_dim; i++) {
+		fill_rand8(input[i], in_row_stride);
+	}
+	alloc_out = alloc_2d_uchar(out_row_stride, out_dim);
+	managed_out = alloc_2d_uchar(out_row_stride, out_dim);
+
+	alloc_size = oil_scale_alloc_size_ex(fed_dim, out_dim, fed_dim, out_dim,
+		src_dim, src_dim, cs);
+	assert(alloc_size > 0);
+
+	/* zero-initialize per the documented contract */
+	buf = calloc(1, alloc_size);
+	assert(buf);
+	assert(oil_scale_init_allocated_ex(&os_alloc, fed_dim, out_dim, fed_dim,
+		out_dim, src_off, src_dim, src_off, src_dim, cs, buf) == 0);
+
+	in_line = 0;
+	for (i=0; i<out_dim; i++) {
+		while (oil_scale_slots(&os_alloc)) {
+			assert(cur_scale_in(&os_alloc, input[in_line++]) == 0);
+		}
+		assert(cur_scale_out(&os_alloc, alloc_out[i]) == 0);
+	}
+	/* oil_scale_free would free the caller's buf — skip it; free buf
+	 * directly. */
+	free(buf);
+
+	assert(oil_scale_init_ex(&os_managed, fed_dim, out_dim, fed_dim, out_dim,
+		src_off, src_dim, src_off, src_dim, cs) == 0);
+	in_line = 0;
+	for (i=0; i<out_dim; i++) {
+		while (oil_scale_slots(&os_managed)) {
+			assert(cur_scale_in(&os_managed, input[in_line++]) == 0);
+		}
+		assert(cur_scale_out(&os_managed, managed_out[i]) == 0);
+	}
+	oil_scale_free(&os_managed);
+
+	for (i=0; i<out_dim; i++) {
+		if (memcmp(alloc_out[i], managed_out[i], out_row_stride) != 0) {
+			fprintf(stderr, "alloc/managed mismatch row %d\n", i);
+			assert(0 && "init_allocated_ex output diverges from init_ex");
+		}
+	}
+
+	/* Bad args rejected. */
+	assert(oil_scale_init_allocated_ex(NULL, fed_dim, out_dim, fed_dim,
+		out_dim, 0.0, (double)fed_dim, 0.0, (double)fed_dim, cs,
+		(void*)0x1) == -1);
+	buf = calloc(1, alloc_size);
+	assert(oil_scale_init_allocated_ex(&os_alloc, fed_dim, out_dim, fed_dim,
+		out_dim, 0.0, (double)fed_dim, 0.0, (double)fed_dim, cs,
+		NULL) == -1);
+	free(buf);
+
+	free_2d_uchar(input, fed_dim);
+	free_2d_uchar(alloc_out, out_dim);
+	free_2d_uchar(managed_out, out_dim);
 }
 
 /* oil_required_input_rect should return a fed_rect that contains the logical
@@ -1168,6 +1325,25 @@ static void test_required_input_rect(void)
 		60, 60, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
 	assert(fed_x == 8 && fed_y == 8 && fed_w == 24 && fed_h == 24);
 
+	/* Sub-pixel src rect: floor of (src - halo) and ceil of (src+dim+halo)
+	 * must still contain the logical rect. Interior 2x downscale with
+	 * integer src_width to keep halo at exactly 2 * (100/50) = 4. */
+	assert(oil_required_input_rect(200, 200, 50.25, 100.0, 50.75, 100.0,
+		50, 50, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	/* halo = 4. x: floor(50.75-4) = 46; ceil(50.75+100+4) = 155.
+	 * y: floor(50.25-4) = 46; ceil(50.25+100+4) = 155. */
+	assert(fed_x == 46 && fed_y == 46);
+	assert(fed_w == 109 && fed_h == 109);
+
+	/* Sub-pixel src rect at the image edge: halo on the edge side clamps
+	 * to 0; the un-clamped side gets the full halo. */
+	assert(oil_required_input_rect(100, 100, 0.5, 30.0, 0.25, 30.0,
+		15, 15, &fed_y, &fed_h, &fed_x, &fed_w) == 0);
+	/* halo = 2 * 30/15 = 4. x left: floor(0.25-4) = -4 -> clamp 0;
+	 * right: ceil(0.25+30+4) = ceil(34.25) = 35. */
+	assert(fed_x == 0 && fed_y == 0);
+	assert(fed_w == 35 && fed_h == 35);
+
 	/* Bad arguments are rejected. */
 	assert(oil_required_input_rect(100, 100, -1.0, 10.0, 0.0, 10.0,
 		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
@@ -1175,6 +1351,12 @@ static void test_required_input_rect(void)
 		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
 	assert(oil_required_input_rect(100, 100, 95.0, 10.0, 0.0, 10.0,
 		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
+	/* Symmetric: zero src_width is rejected. */
+	assert(oil_required_input_rect(100, 100, 0.0, 10.0, 0.0, 0.0,
+		10, 10, &fed_y, &fed_h, &fed_x, &fed_w) == -1);
+	/* NULL output pointer rejected. */
+	assert(oil_required_input_rect(100, 100, 0.0, 10.0, 0.0, 10.0,
+		10, 10, NULL, &fed_h, &fed_x, &fed_w) == -1);
 }
 
 static void test_compute_cover_rect(void)
@@ -1221,10 +1403,83 @@ static void test_compute_cover_rect(void)
 		&sx, &sy, &sw, &sh) == 0);
 	assert(sh == 200.0 && sw > 200.0 && sw < 300.0 && sy == 0.0);
 
+	/* Corner gravities on a horizontally-cropped image: y is unconstrained
+	 * (image height matches), x anchors per the horizontal half of the
+	 * gravity. */
+	assert(oil_compute_cover_rect(400, 200, 100, 100,
+		OIL_GRAVITY_TOP_LEFT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(400, 200, 100, 100,
+		OIL_GRAVITY_TOP_RIGHT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 200.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(400, 200, 100, 100,
+		OIL_GRAVITY_BOTTOM_LEFT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(400, 200, 100, 100,
+		OIL_GRAVITY_BOTTOM_RIGHT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 200.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+
+	/* Corner gravities on a vertically-cropped image. */
+	assert(oil_compute_cover_rect(200, 400, 100, 100,
+		OIL_GRAVITY_TOP_LEFT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(200, 400, 100, 100,
+		OIL_GRAVITY_TOP_RIGHT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(200, 400, 100, 100,
+		OIL_GRAVITY_BOTTOM_LEFT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 200.0 && sw == 200.0 && sh == 200.0);
+	assert(oil_compute_cover_rect(200, 400, 100, 100,
+		OIL_GRAVITY_BOTTOM_RIGHT, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 200.0 && sw == 200.0 && sh == 200.0);
+
+	/* Near-aspect-equality with right/bottom anchors: every produced
+	 * (sx, sy) must satisfy the resampler's src_x >= 0 / src_y >= 0
+	 * precondition. Exhaustively sweep a range that exercises rounding
+	 * in the sw/sh divisions. */
+	{
+		int img_w_i, img_h_i, out_w_i, out_h_i;
+		enum oil_gravity gravities[] = {
+			OIL_GRAVITY_RIGHT, OIL_GRAVITY_BOTTOM,
+			OIL_GRAVITY_TOP_RIGHT, OIL_GRAVITY_BOTTOM_LEFT,
+			OIL_GRAVITY_BOTTOM_RIGHT,
+		};
+		int n_g = sizeof(gravities) / sizeof(gravities[0]);
+		int gi;
+		for (img_w_i=999000; img_w_i<999010; img_w_i++) {
+			for (img_h_i=999000; img_h_i<999010; img_h_i++) {
+				out_w_i = img_w_i;
+				out_h_i = img_h_i;
+				for (gi=0; gi<n_g; gi++) {
+					assert(oil_compute_cover_rect(img_w_i,
+						img_h_i, out_w_i, out_h_i,
+						gravities[gi], &sx, &sy, &sw,
+						&sh) == 0);
+					assert(sx >= 0.0);
+					assert(sy >= 0.0);
+					assert(sx + sw <= (double)img_w_i);
+					assert(sy + sh <= (double)img_h_i);
+				}
+			}
+		}
+	}
+
+	/* Matching aspect but with int-overflow-risk dimensions: int64 cross
+	 * product must produce a deterministic branch (the "taller or equal"
+	 * else branch yields the full image). */
+	assert(oil_compute_cover_rect(999999, 999999, 999999, 999999,
+		OIL_GRAVITY_CENTER, &sx, &sy, &sw, &sh) == 0);
+	assert(sx == 0.0 && sy == 0.0);
+	assert(sw == 999999.0 && sh == 999999.0);
+
 	/* Bad arguments rejected. */
 	assert(oil_compute_cover_rect(0, 100, 100, 100, OIL_GRAVITY_CENTER,
 		&sx, &sy, &sw, &sh) == -1);
 	assert(oil_compute_cover_rect(100, 100, 0, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == -1);
+	assert(oil_compute_cover_rect(100, 0, 100, 100, OIL_GRAVITY_CENTER,
+		&sx, &sy, &sw, &sh) == -1);
+	assert(oil_compute_cover_rect(100, 100, 100, 0, OIL_GRAVITY_CENTER,
 		&sx, &sy, &sw, &sh) == -1);
 }
 
@@ -1252,6 +1507,8 @@ static void run_tests(struct impl *impl)
 	test_g_linear_ramp_all();
 	test_scale_restart_all();
 	test_scale_crop_all();
+	test_init_ex_shim_equivalence();
+	test_init_allocated_ex();
 }
 
 int main(void)
