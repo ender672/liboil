@@ -155,8 +155,7 @@ int oil_scale_init(struct oil_scale *os, int in_height, int out_height,
 /**
  * Initialize an oil scaler that consumes a fed input buffer of the given
  * dimensions but treats a sub-rectangle of that buffer as the logical source
- * for scaling. Fed pixels outside the logical rect serve as halo for the
- * Catmull-Rom kernel; trailing halo is consumed but not sampled.
+ * for scaling. See oil_required_input_rect for sizing the fed buffer.
  *
  * @os: Pointer to the scaler struct to be initialized.
  * @in_height: Height of the fed input buffer (rows the caller will feed).
@@ -183,12 +182,8 @@ int oil_scale_init_ex(struct oil_scale *os, int in_height, int out_height,
 	double src_x, double src_width, enum oil_colorspace cs);
 
 /**
- * Same as oil_scale_init_ex but with a caller-supplied buffer.
- *
- * The buffer MUST be zero-initialized (use calloc, or memset to 0). Halo
- * regions of the coefficient and border tables receive no writes during
- * init; non-zero residue there would corrupt the resampler. The same applies
- * to oil_scale_init_allocated, which forwards to this entry point.
+ * Same as oil_scale_init_ex but with a caller-supplied buffer. The buffer
+ * MUST be zero-initialized (use calloc, or memset to 0).
  *
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
