@@ -64,6 +64,10 @@ int oil_libjpeg_init(struct oil_libjpeg *ol,
  *     0 <= src_x, src_x + src_width <= dinfo->output_width, and the
  *     equivalent for the vertical axis.
  *
+ * When built against libjpeg-turbo this function invokes jpeg_crop_scanline,
+ * which mutates dinfo. On a -2 (memory) failure the decoder is left in
+ * cropped state and the caller must reinitialize dinfo before retrying.
+ *
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
  * Returns -2 if unable to allocate memory.

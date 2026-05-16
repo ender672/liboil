@@ -58,6 +58,11 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 		return -1;
 	}
 
+	/* turbo's jpeg_crop_scanline can widen fed_x/fed_w to iMCU
+	 * boundaries, so the scaler must be initialized with the
+	 * post-rounding fed rect. Note: this is a decoder side effect on
+	 * dinfo; any subsequent failure here leaves dinfo in cropped state
+	 * and the caller must reset it before retrying init. */
 #ifdef LIBJPEG_TURBO_VERSION
 	crop_x = fed_x;
 	crop_w = fed_w;
