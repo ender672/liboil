@@ -61,6 +61,58 @@ for(i=0; i<out_height; i++) {
 }
 ```
 
+Example: crop and scale
+-----------------------
+
+To produce a thumbnail that fills the output dimensions exactly (CSS "cover"
+semantics), crop the largest sub-rect of the input that matches the output
+aspect ratio, then scale that crop:
+
+```C
+#include "oil_resample.h"
+
+unsigned char *inbuf, *outbuf;
+int i, ret;
+int out_width = 400, out_height = 300;
+double src_x, src_y, src_width, src_height;
+int fed_x, fed_y, fed_width, fed_height;
+struct oil_scale os;
+
+// Pick the crop rect inside the source image.
+oil_compute_cover_rect(in_width, in_height, out_width, out_height,
+    OIL_GRAVITY_CENTER, &src_x, &src_y, &src_width, &src_height);
+
+// Expand the crop with filter halo; this is the rect the decoder must produce.
+oil_required_input_rect(in_height, in_width, src_y, src_height,
+    src_x, src_width, out_height, out_width,
+    &fed_y, &fed_height, &fed_x, &fed_width);
+
+inbuf = malloc(fed_width * 3);
+outbuf = malloc(out_width * 3);
+
+// in_* args describe the fed buffer; src_* args describe the crop's
+// position relative to it.
+ret = oil_scale_init_ex(&os, fed_height, out_height, fed_width, out_width,
+    src_y - fed_y, src_height, src_x - fed_x, src_width, OIL_CS_RGB);
+if (ret!=0) {
+    fprintf(stderr, "Unable to allocate buffers.");
+    exit(1);
+}
+
+for(i=0; i<out_height; i++) {
+    while (oil_scale_slots(&os)) {
+        fill_with_next_scanline_of_fed_rect(inbuf);
+        oil_scale_in(&os, inbuf);
+    }
+    oil_scale_out(&os, outbuf);
+    write_to_next_scanline_of_destination_image(outbuf);
+}
+```
+
+When decoding JPEG or PNG, `oil_libjpeg_init_ex` and `oil_libpng_init_ex`
+take the same `src_*` rect and handle the decode-side cropping for you (the
+JPEG wrapper uses libjpeg-turbo's skip and crop fast paths when available).
+
 Reference Documentation
 -----------------------
 
