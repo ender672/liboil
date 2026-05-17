@@ -13,6 +13,7 @@
 #define LINE_QUEUE_DEPTH 16
 #define MIN_DRAG_PIXELS 5.0f
 #define STASH_DEPTH 16
+#define PNG_FIRST_MAGIC_BYTE 0x89  /* first byte of the 8-byte PNG signature */
 
 /* ===========================================================================
  * Backend selection
@@ -66,24 +67,53 @@ static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
 }
 
 /* ===========================================================================
- * Resumable resize — shared state
+ * Resumable resize — types
  * =========================================================================== */
 
-struct resumable_resize {
-	FILE *io;
-	int png_interlaced;
-
+/* Caller-supplied request, carried in struct resumable_resize. src_* may be
+ * normalized during start: when is_zoomed, the rect is expanded to window
+ * aspect, and callers should read the adjusted values back from rr->cfg
+ * after start. */
+struct rr_config {
 	int surface_width;
 	int surface_height;
-
-	int img_width;
-	int img_height;
-
-	/* Logical source rect within the full image (may be fractional). */
+	int threaded;
+	int no_gamma;
+	int is_zoomed;
 	double src_x;
 	double src_y;
 	double src_w;
 	double src_h;
+};
+
+/* Threaded pipeline state. Fields below the barrier comment are mutated by
+ * multiple threads and must only be touched while holding `mutex`. */
+struct rr_pipeline {
+	SDL_Thread *decoder_thread;
+	SDL_Thread *scaler_thread;
+	SDL_Thread *worker_thread;
+	SDL_Mutex *mutex;
+	SDL_Condition *cv;
+	unsigned char *slots[LINE_QUEUE_DEPTH];
+	int n_slots;
+	/* mutex-protected from here down */
+	int head;
+	int tail;
+	int count;
+	int ypos;
+	int decoder_done;
+	int scaler_done;
+	int aborted;
+};
+
+struct resumable_resize {
+	struct rr_config cfg;
+
+	FILE *io;
+	int png_interlaced;
+
+	int img_width;
+	int img_height;
 
 	/* Fed input rect: integer-pixel sub-image inside the full image that
 	 * the decoder will read and hand to the scaler. */
@@ -100,11 +130,6 @@ struct resumable_resize {
 	int in_rowbytes;
 	int slot_rowbytes;
 
-	int threaded;
-	int no_gamma;
-	int n_slots;
-	int is_zoomed;
-
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
 	unsigned char *scratch;
@@ -120,19 +145,7 @@ struct resumable_resize {
 	png_structp rpng;
 	png_infop rinfo;
 
-	SDL_Thread *decoder_thread;
-	SDL_Thread *scaler_thread;
-	SDL_Thread *worker_thread;
-	SDL_Mutex *mutex;
-	SDL_Condition *cv;
-	unsigned char *slots[LINE_QUEUE_DEPTH];
-	int head;
-	int tail;
-	int count;
-	int ypos;
-	int decoder_done;
-	int scaler_done;
-	int aborted;
+	struct rr_pipeline pipe;
 };
 
 /* ===========================================================================
@@ -140,23 +153,24 @@ struct resumable_resize {
  * =========================================================================== */
 
 static void clamp_crop(struct resumable_resize *rr) {
-	if (rr->src_w <= 0 || rr->src_h <= 0) {
-		rr->src_x = 0;
-		rr->src_y = 0;
-		rr->src_w = rr->img_width;
-		rr->src_h = rr->img_height;
+	struct rr_config *c = &rr->cfg;
+	if (c->src_w <= 0 || c->src_h <= 0) {
+		c->src_x = 0;
+		c->src_y = 0;
+		c->src_w = rr->img_width;
+		c->src_h = rr->img_height;
 		return;
 	}
-	if (rr->src_x < 0) {
-		rr->src_w += rr->src_x;
-		rr->src_x = 0;
+	if (c->src_x < 0) {
+		c->src_w += c->src_x;
+		c->src_x = 0;
 	}
-	if (rr->src_y < 0) {
-		rr->src_h += rr->src_y;
-		rr->src_y = 0;
+	if (c->src_y < 0) {
+		c->src_h += c->src_y;
+		c->src_y = 0;
 	}
-	if (rr->src_x + rr->src_w > rr->img_width) rr->src_w = rr->img_width - rr->src_x;
-	if (rr->src_y + rr->src_h > rr->img_height) rr->src_h = rr->img_height - rr->src_y;
+	if (c->src_x + c->src_w > rr->img_width) c->src_w = rr->img_width - c->src_x;
+	if (c->src_y + c->src_h > rr->img_height) c->src_h = rr->img_height - c->src_y;
 }
 
 /* When zoomed, expand the logical source rect to match the window aspect
@@ -164,29 +178,31 @@ static void clamp_crop(struct resumable_resize *rr) {
  * minimum, extra content is captured on the under-sized axis (centered on
  * the selection center, shifted to stay inside the image). If expansion
  * would exceed the image, clamp to the image and shrink the perpendicular
- * axis to keep window aspect.
+ * axis to keep window aspect. The adjusted rect is written back to
+ * rr->cfg.src_*; the caller mirrors it for the next session.
  *
  * When not zoomed, preserve the full image via oil_fix_ratio (letterbox if
- * window aspect differs from image aspect). */
+ * window aspect differs from image aspect); rr->cfg.src_* is left alone. */
 static int compute_fed_and_out(struct resumable_resize *rr) {
-	if (rr->is_zoomed) {
+	struct rr_config *c = &rr->cfg;
+	if (c->is_zoomed) {
 		double win_aspect, sel_aspect, cx, cy, new_w, new_h, new_x, new_y;
 
-		rr->out_width = rr->surface_width;
-		rr->out_height = rr->surface_height;
+		rr->out_width = c->surface_width;
+		rr->out_height = c->surface_height;
 		if (rr->out_width < 1) rr->out_width = 1;
 		if (rr->out_height < 1) rr->out_height = 1;
 
 		win_aspect = (double)rr->out_width / rr->out_height;
-		sel_aspect = rr->src_w / rr->src_h;
-		cx = rr->src_x + rr->src_w / 2.0;
-		cy = rr->src_y + rr->src_h / 2.0;
+		sel_aspect = c->src_w / c->src_h;
+		cx = c->src_x + c->src_w / 2.0;
+		cy = c->src_y + c->src_h / 2.0;
 
 		if (sel_aspect < win_aspect) {
-			new_h = rr->src_h;
+			new_h = c->src_h;
 			new_w = new_h * win_aspect;
 		} else {
-			new_w = rr->src_w;
+			new_w = c->src_w;
 			new_h = new_w / win_aspect;
 		}
 		if (new_w > rr->img_width) {
@@ -205,24 +221,24 @@ static int compute_fed_and_out(struct resumable_resize *rr) {
 		if (new_x + new_w > rr->img_width) new_x = rr->img_width - new_w;
 		if (new_y + new_h > rr->img_height) new_y = rr->img_height - new_h;
 
-		rr->src_x = new_x;
-		rr->src_y = new_y;
-		rr->src_w = new_w;
-		rr->src_h = new_h;
+		c->src_x = new_x;
+		c->src_y = new_y;
+		c->src_w = new_w;
+		c->src_h = new_h;
 	} else {
-		int src_iw = (int)(rr->src_w + 0.5);
-		int src_ih = (int)(rr->src_h + 0.5);
+		int src_iw = (int)(c->src_w + 0.5);
+		int src_ih = (int)(c->src_h + 0.5);
 		if (src_iw < 1) src_iw = 1;
 		if (src_ih < 1) src_ih = 1;
-		rr->out_width = rr->surface_width;
-		rr->out_height = rr->surface_height;
+		rr->out_width = c->surface_width;
+		rr->out_height = c->surface_height;
 		if (oil_fix_ratio(src_iw, src_ih, &rr->out_width, &rr->out_height) < 0) return -1;
 		if (rr->out_width < 1) rr->out_width = 1;
 		if (rr->out_height < 1) rr->out_height = 1;
 	}
 
 	return oil_required_input_rect(rr->img_height, rr->img_width,
-		rr->src_y, rr->src_h, rr->src_x, rr->src_w,
+		c->src_y, c->src_h, c->src_x, c->src_w,
 		rr->out_height, rr->out_width,
 		&rr->fed_y, &rr->fed_height, &rr->fed_x, &rr->fed_width);
 }
@@ -230,8 +246,8 @@ static int compute_fed_and_out(struct resumable_resize *rr) {
 static int init_scaler(struct resumable_resize *rr) {
 	return oil_scale_init_ex(&rr->os, rr->fed_height, rr->out_height,
 		rr->fed_width, rr->out_width,
-		rr->src_y - rr->fed_y, rr->src_h,
-		rr->src_x - rr->fed_x, rr->src_w,
+		rr->cfg.src_y - rr->fed_y, rr->cfg.src_h,
+		rr->cfg.src_x - rr->fed_x, rr->cfg.src_w,
 		rr->cs);
 }
 
@@ -320,13 +336,13 @@ static int png_start(struct resumable_resize *rr) {
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		return -1;
 	}
-	if (rr->no_gamma) rr->cs = nogamma_cs(rr->cs);
+	if (rr->cfg.no_gamma) rr->cs = nogamma_cs(rr->cs);
 	rr->cmp = OIL_CMP(rr->cs);
 	rr->in_rowbytes = png_get_rowbytes(rpng, rinfo);
 	rr->png_interlaced = (png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7);
 
 	clamp_crop(rr);
-	if (rr->src_w < 1 || rr->src_h < 1) {
+	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) {
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		return -1;
 	}
@@ -447,12 +463,12 @@ static int jpeg_start(struct resumable_resize *rr)
 	rr->img_height = dinfo->output_height;
 	rr->cs = jpeg_cs_to_oil(dinfo->out_color_space);
 	if (rr->cs == OIL_CS_UNKNOWN) goto fail_jpeg;
-	if (rr->no_gamma) rr->cs = nogamma_cs(rr->cs);
+	if (rr->cfg.no_gamma) rr->cs = nogamma_cs(rr->cs);
 	rr->cmp = dinfo->output_components;
 	rr->in_rowbytes = dinfo->output_width * dinfo->output_components;
 
 	clamp_crop(rr);
-	if (rr->src_w < 1 || rr->src_h < 1) goto fail_jpeg;
+	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) goto fail_jpeg;
 	if (compute_fed_and_out(rr) < 0) goto fail_jpeg;
 
 #ifdef LIBJPEG_TURBO_VERSION
@@ -514,103 +530,110 @@ static void translate(unsigned char *in, unsigned char *out, int width, int cmp)
 	}
 }
 
+/* Emit one scaled row from rr->outbuf into rr->scaled_buf at row index
+ * local_ypos, then publish the new progress count. */
+static void finish_output_row(struct resumable_resize *rr, int local_ypos)
+{
+	unsigned char *tmp;
+	rr->scale_out(&rr->os, rr->outbuf);
+	tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
+	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
+
+	SDL_LockMutex(rr->pipe.mutex);
+	rr->pipe.ypos = local_ypos + 1;
+	SDL_UnlockMutex(rr->pipe.mutex);
+}
+
 static int decoder_thread_fn(void *arg)
 {
 	struct resumable_resize *rr = arg;
+	struct rr_pipeline *p = &rr->pipe;
 	int row;
 
 	for (row = 0; row < rr->fed_height; row++) {
 		unsigned char *slot;
 
-		SDL_LockMutex(rr->mutex);
-		while (rr->count == LINE_QUEUE_DEPTH && !rr->aborted) {
-			SDL_WaitCondition(rr->cv, rr->mutex);
+		SDL_LockMutex(p->mutex);
+		while (p->count == LINE_QUEUE_DEPTH && !p->aborted) {
+			SDL_WaitCondition(p->cv, p->mutex);
 		}
-		if (rr->aborted) {
-			SDL_UnlockMutex(rr->mutex);
+		if (p->aborted) {
+			SDL_UnlockMutex(p->mutex);
 			return 0;
 		}
-		slot = rr->slots[rr->head];
-		SDL_UnlockMutex(rr->mutex);
+		slot = p->slots[p->head];
+		SDL_UnlockMutex(p->mutex);
 
 		rr->decode_row(rr, slot, row);
 
-		SDL_LockMutex(rr->mutex);
-		rr->head = (rr->head + 1) % LINE_QUEUE_DEPTH;
-		rr->count++;
-		SDL_SignalCondition(rr->cv);
-		SDL_UnlockMutex(rr->mutex);
+		SDL_LockMutex(p->mutex);
+		p->head = (p->head + 1) % LINE_QUEUE_DEPTH;
+		p->count++;
+		SDL_SignalCondition(p->cv);
+		SDL_UnlockMutex(p->mutex);
 	}
 
-	SDL_LockMutex(rr->mutex);
-	rr->decoder_done = 1;
-	SDL_SignalCondition(rr->cv);
-	SDL_UnlockMutex(rr->mutex);
+	SDL_LockMutex(p->mutex);
+	p->decoder_done = 1;
+	SDL_SignalCondition(p->cv);
+	SDL_UnlockMutex(p->mutex);
 	return 0;
 }
 
 static int scaler_thread_fn(void *arg)
 {
 	struct resumable_resize *rr = arg;
+	struct rr_pipeline *p = &rr->pipe;
 	int local_ypos = 0;
 
 	while (local_ypos < rr->out_height) {
-		unsigned char *tmp;
-
 		while (oil_scale_slots(&rr->os) > 0) {
 			unsigned char *slot;
 
-			SDL_LockMutex(rr->mutex);
-			while (rr->count == 0 && !rr->decoder_done && !rr->aborted) {
-				SDL_WaitCondition(rr->cv, rr->mutex);
+			SDL_LockMutex(p->mutex);
+			while (p->count == 0 && !p->decoder_done && !p->aborted) {
+				SDL_WaitCondition(p->cv, p->mutex);
 			}
-			if (rr->aborted || rr->count == 0) {
-				SDL_UnlockMutex(rr->mutex);
+			if (p->aborted || p->count == 0) {
+				SDL_UnlockMutex(p->mutex);
 				goto done;
 			}
-			slot = rr->slots[rr->tail];
-			SDL_UnlockMutex(rr->mutex);
+			slot = p->slots[p->tail];
+			SDL_UnlockMutex(p->mutex);
 
 			rr->scale_in(&rr->os, slot);
 
-			SDL_LockMutex(rr->mutex);
-			rr->tail = (rr->tail + 1) % LINE_QUEUE_DEPTH;
-			rr->count--;
-			SDL_SignalCondition(rr->cv);
-			SDL_UnlockMutex(rr->mutex);
+			SDL_LockMutex(p->mutex);
+			p->tail = (p->tail + 1) % LINE_QUEUE_DEPTH;
+			p->count--;
+			SDL_SignalCondition(p->cv);
+			SDL_UnlockMutex(p->mutex);
 		}
 
-		rr->scale_out(&rr->os, rr->outbuf);
-		tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
-		translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
+		finish_output_row(rr, local_ypos);
 		local_ypos++;
-
-		SDL_LockMutex(rr->mutex);
-		rr->ypos = local_ypos;
-		SDL_UnlockMutex(rr->mutex);
 	}
 
 done:
-	SDL_LockMutex(rr->mutex);
-	rr->scaler_done = 1;
-	SDL_UnlockMutex(rr->mutex);
+	SDL_LockMutex(p->mutex);
+	p->scaler_done = 1;
+	SDL_UnlockMutex(p->mutex);
 	return 0;
 }
 
 static int worker_thread_fn(void *arg)
 {
 	struct resumable_resize *rr = arg;
-	unsigned char *inbuf = rr->slots[0];
+	struct rr_pipeline *p = &rr->pipe;
+	unsigned char *inbuf = p->slots[0];
 	int local_ypos = 0;
 	int row = 0;
 	int aborted;
 
 	while (local_ypos < rr->out_height) {
-		unsigned char *tmp;
-
-		SDL_LockMutex(rr->mutex);
-		aborted = rr->aborted;
-		SDL_UnlockMutex(rr->mutex);
+		SDL_LockMutex(p->mutex);
+		aborted = p->aborted;
+		SDL_UnlockMutex(p->mutex);
 		if (aborted) goto done;
 
 		while (oil_scale_slots(&rr->os) > 0) {
@@ -618,20 +641,14 @@ static int worker_thread_fn(void *arg)
 			rr->scale_in(&rr->os, inbuf);
 		}
 
-		rr->scale_out(&rr->os, rr->outbuf);
-		tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
-		translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
+		finish_output_row(rr, local_ypos);
 		local_ypos++;
-
-		SDL_LockMutex(rr->mutex);
-		rr->ypos = local_ypos;
-		SDL_UnlockMutex(rr->mutex);
 	}
 
 done:
-	SDL_LockMutex(rr->mutex);
-	rr->scaler_done = 1;
-	SDL_UnlockMutex(rr->mutex);
+	SDL_LockMutex(p->mutex);
+	p->scaler_done = 1;
+	SDL_UnlockMutex(p->mutex);
 	return 0;
 }
 
@@ -644,32 +661,23 @@ static int looks_like_png(FILE *io)
 	int peek;
 	peek = getc(io);
 	ungetc(peek, io);
-	return peek == 137;
+	return peek == PNG_FIRST_MAGIC_BYTE;
 }
 
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
-                                  int surface_width, int surface_height,
-                                  const struct backend_entry *be, int threaded,
-                                  int no_gamma, int is_zoomed,
-                                  double src_x, double src_y,
-                                  double src_w, double src_h)
+                                  const struct backend_entry *be,
+                                  const struct rr_config *cfg)
 {
+	struct rr_pipeline *p;
 	int i;
 	int is_png;
 
 	memset(rr, 0, sizeof(*rr));
-	rr->surface_width = surface_width;
-	rr->surface_height = surface_height;
+	rr->cfg = *cfg;
 	rr->scale_in = be->scale_in;
 	rr->scale_out = be->scale_out;
-	rr->threaded = threaded;
-	rr->no_gamma = no_gamma;
-	rr->n_slots = threaded ? LINE_QUEUE_DEPTH : 1;
-	rr->is_zoomed = is_zoomed;
-	rr->src_x = src_x;
-	rr->src_y = src_y;
-	rr->src_w = src_w;
-	rr->src_h = src_h;
+	p = &rr->pipe;
+	p->n_slots = rr->cfg.threaded ? LINE_QUEUE_DEPTH : 1;
 
 	rr->io = fopen(path, "r");
 	if (!rr->io) {
@@ -685,34 +693,34 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	rr->scaled_buf = malloc((size_t)rr->out_width * rr->out_height * 4);
 	if (!rr->scaled_buf) goto fail_decoder;
 
-	for (i = 0; i < rr->n_slots; i++) {
-		rr->slots[i] = malloc(rr->slot_rowbytes);
-		if (!rr->slots[i]) goto fail_slots;
+	for (i = 0; i < p->n_slots; i++) {
+		p->slots[i] = malloc(rr->slot_rowbytes);
+		if (!p->slots[i]) goto fail_slots;
 	}
 
-	rr->mutex = SDL_CreateMutex();
-	rr->cv = SDL_CreateCondition();
-	if (!rr->mutex || !rr->cv) {
+	p->mutex = SDL_CreateMutex();
+	p->cv = SDL_CreateCondition();
+	if (!p->mutex || !p->cv) {
 		fprintf(stderr, "Error: SDL sync init failed: %s\n", SDL_GetError());
 		goto fail_sync;
 	}
 
-	if (rr->threaded) {
-		rr->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
-		rr->scaler_thread = SDL_CreateThread(scaler_thread_fn, "oil-scaler", rr);
-		if (!rr->decoder_thread || !rr->scaler_thread) {
+	if (rr->cfg.threaded) {
+		p->decoder_thread = SDL_CreateThread(decoder_thread_fn, "oil-decoder", rr);
+		p->scaler_thread = SDL_CreateThread(scaler_thread_fn, "oil-scaler", rr);
+		if (!p->decoder_thread || !p->scaler_thread) {
 			fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
-			SDL_LockMutex(rr->mutex);
-			rr->aborted = 1;
-			SDL_BroadcastCondition(rr->cv);
-			SDL_UnlockMutex(rr->mutex);
-			SDL_WaitThread(rr->decoder_thread, NULL);
-			SDL_WaitThread(rr->scaler_thread, NULL);
+			SDL_LockMutex(p->mutex);
+			p->aborted = 1;
+			SDL_BroadcastCondition(p->cv);
+			SDL_UnlockMutex(p->mutex);
+			SDL_WaitThread(p->decoder_thread, NULL);
+			SDL_WaitThread(p->scaler_thread, NULL);
 			goto fail_sync;
 		}
 	} else {
-		rr->worker_thread = SDL_CreateThread(worker_thread_fn, "oil-worker", rr);
-		if (!rr->worker_thread) {
+		p->worker_thread = SDL_CreateThread(worker_thread_fn, "oil-worker", rr);
+		if (!p->worker_thread) {
 			fprintf(stderr, "Error: SDL_CreateThread failed: %s\n", SDL_GetError());
 			goto fail_sync;
 		}
@@ -721,10 +729,10 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	return 0;
 
 fail_sync:
-	SDL_DestroyMutex(rr->mutex);
-	SDL_DestroyCondition(rr->cv);
+	SDL_DestroyMutex(p->mutex);
+	SDL_DestroyCondition(p->cv);
 fail_slots:
-	for (i = 0; i < rr->n_slots; i++) free(rr->slots[i]);
+	for (i = 0; i < p->n_slots; i++) free(p->slots[i]);
 	free(rr->scaled_buf);
 fail_decoder:
 	rr->format_end(rr);
@@ -735,25 +743,26 @@ fail_io:
 
 static void resumable_resize_end(struct resumable_resize *rr)
 {
+	struct rr_pipeline *p = &rr->pipe;
 	int i;
 
-	SDL_LockMutex(rr->mutex);
-	rr->aborted = 1;
-	SDL_BroadcastCondition(rr->cv);
-	SDL_UnlockMutex(rr->mutex);
+	SDL_LockMutex(p->mutex);
+	p->aborted = 1;
+	SDL_BroadcastCondition(p->cv);
+	SDL_UnlockMutex(p->mutex);
 
-	if (rr->threaded) {
-		SDL_WaitThread(rr->decoder_thread, NULL);
-		SDL_WaitThread(rr->scaler_thread, NULL);
+	if (rr->cfg.threaded) {
+		SDL_WaitThread(p->decoder_thread, NULL);
+		SDL_WaitThread(p->scaler_thread, NULL);
 	} else {
-		SDL_WaitThread(rr->worker_thread, NULL);
+		SDL_WaitThread(p->worker_thread, NULL);
 	}
 
-	SDL_DestroyMutex(rr->mutex);
-	SDL_DestroyCondition(rr->cv);
+	SDL_DestroyMutex(p->mutex);
+	SDL_DestroyCondition(p->cv);
 
-	for (i = 0; i < rr->n_slots; i++) {
-		free(rr->slots[i]);
+	for (i = 0; i < p->n_slots; i++) {
+		free(p->slots[i]);
 	}
 	free(rr->scaled_buf);
 
@@ -826,22 +835,6 @@ static SDL_Texture *create_blank_texture(SDL_Renderer *renderer, int w, int h)
 		}
 	}
 	return tex;
-}
-
-static int start_resize_session(struct resumable_resize *rr, char *path,
-                                SDL_Renderer *renderer, SDL_Texture **display_tex,
-                                const struct backend_entry *be, int threaded,
-                                int no_gamma, int is_zoomed,
-                                double src_x, double src_y,
-                                double src_w, double src_h)
-{
-	int rw, rh;
-	SDL_GetRenderOutputSize(renderer, &rw, &rh);
-	if (resumable_resize_start(rr, path, rw, rh, be, threaded, no_gamma,
-	                           is_zoomed, src_x, src_y, src_w, src_h) < 0) return -1;
-	if (*display_tex) SDL_DestroyTexture(*display_tex);
-	*display_tex = create_blank_texture(renderer, rr->out_width, rr->out_height);
-	return 0;
 }
 
 /* ===========================================================================
@@ -945,242 +938,307 @@ static void stash_push(struct view_stash *s, int *count, SDL_Texture *tex,
 }
 
 /* ===========================================================================
- * Main — argument parsing and event loop
+ * App state and event handlers
  * =========================================================================== */
 
-int main(int argc, char **argv) {
+struct app_state {
 	SDL_Window *window;
 	SDL_Renderer *renderer;
-	SDL_Texture *display_tex = NULL;
-	SDL_Event event;
+	SDL_Texture *display_tex;
 	char *path;
-	int event_happened, render_in_progress;
-	int last_displayed_ypos;
-	struct resumable_resize rr;
-	Uint64 resize_start_time, elapsed_time;
-	int resize_pending = 0;
-	int argi;
-	int threaded = 1;
-	int no_gamma = 0;
-	const struct backend_entry *be = NULL;
-	int img_w = 0;
-	int is_zoomed = 0;
-	double crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
-	int drag_active = 0;
-	float drag_start_x = 0, drag_start_y = 0;
-	float drag_cur_x = 0, drag_cur_y = 0;
-	int need_present;
-	struct view_stash stash[STASH_DEPTH];
-	int stash_count = 0;
+	const struct backend_entry *be;
 
-	path = NULL;
+	struct resumable_resize rr;
+	struct rr_config cfg;     /* carried across sessions */
+	int img_w;
+
+	int render_in_progress;
+	int resize_pending;
+	int last_displayed_ypos;
+	Uint64 resize_start_time;
+
+	int drag_active;
+	float drag_start_x, drag_start_y;
+	float drag_cur_x, drag_cur_y;
+
+	struct view_stash stash[STASH_DEPTH];
+	int stash_count;
+
+	int need_present;
+	int should_exit;
+};
+
+static int start_resize_session(struct app_state *app)
+{
+	int rw, rh;
+	SDL_GetRenderOutputSize(app->renderer, &rw, &rh);
+	app->cfg.surface_width = rw;
+	app->cfg.surface_height = rh;
+	if (resumable_resize_start(&app->rr, app->path, app->be, &app->cfg) < 0) return -1;
+	if (app->display_tex) SDL_DestroyTexture(app->display_tex);
+	app->display_tex = create_blank_texture(app->renderer, app->rr.out_width, app->rr.out_height);
+	app->cfg = app->rr.cfg;            /* mirror back any expanded crop */
+	app->img_w = app->rr.img_width;
+	return 0;
+}
+
+static void abort_current_session(struct app_state *app)
+{
+	if (app->render_in_progress) {
+		resumable_resize_end(&app->rr);
+		app->render_in_progress = 0;
+	}
+}
+
+static void handle_redraw_request(struct app_state *app, int from_window_resize)
+{
+	abort_current_session(app);
+	app->drag_active = 0;
+	if (from_window_resize) {
+		stash_invalidate_textures(app->stash, app->stash_count);
+		present_frame(app->renderer, app->display_tex, NULL);
+	}
+	app->resize_pending = 1;
+}
+
+static void handle_left_button_down(struct app_state *app, const SDL_Event *ev)
+{
+	float rx, ry;
+	SDL_RenderCoordinatesFromWindow(app->renderer,
+		ev->button.x, ev->button.y, &rx, &ry);
+	app->drag_start_x = app->drag_cur_x = rx;
+	app->drag_start_y = app->drag_cur_y = ry;
+	app->drag_active = 1;
+	app->need_present = 1;
+}
+
+static void handle_right_button_down(struct app_state *app)
+{
+	struct view_stash *top;
+
+	app->drag_active = 0;
+	if (app->stash_count == 0) return;
+
+	abort_current_session(app);
+	app->stash_count--;
+	top = &app->stash[app->stash_count];
+	app->cfg.src_x = top->crop_x;
+	app->cfg.src_y = top->crop_y;
+	app->cfg.src_w = top->crop_w;
+	app->cfg.src_h = top->crop_h;
+	app->cfg.is_zoomed = top->is_zoomed;
+	if (top->tex) {
+		SDL_DestroyTexture(app->display_tex);
+		app->display_tex = top->tex;
+		app->need_present = 1;
+	} else {
+		app->resize_pending = 1;
+	}
+}
+
+static void handle_motion(struct app_state *app, const SDL_Event *ev)
+{
+	float rx, ry;
+	SDL_RenderCoordinatesFromWindow(app->renderer,
+		ev->motion.x, ev->motion.y, &rx, &ry);
+	app->drag_cur_x = rx;
+	app->drag_cur_y = ry;
+	app->need_present = 1;
+}
+
+static void handle_left_button_up(struct app_state *app, const SDL_Event *ev)
+{
+	float rx, ry;
+	SDL_FRect drag;
+	double nx, ny, nw, nh;
+
+	app->drag_active = 0;
+	SDL_RenderCoordinatesFromWindow(app->renderer,
+		ev->button.x, ev->button.y, &rx, &ry);
+	app->drag_cur_x = rx;
+	app->drag_cur_y = ry;
+	drag = make_drag_rect(app->drag_start_x, app->drag_start_y,
+	                      app->drag_cur_x, app->drag_cur_y);
+	if ((drag.w >= MIN_DRAG_PIXELS || drag.h >= MIN_DRAG_PIXELS) &&
+	    app->img_w > 0 &&
+	    drag_rect_to_crop(app->renderer, app->display_tex, drag,
+	                      app->cfg.src_x, app->cfg.src_y,
+	                      app->cfg.src_w, app->cfg.src_h,
+	                      &nx, &ny, &nw, &nh) == 0) {
+		abort_current_session(app);
+		stash_push(app->stash, &app->stash_count, app->display_tex,
+		           app->cfg.src_x, app->cfg.src_y,
+		           app->cfg.src_w, app->cfg.src_h, app->cfg.is_zoomed);
+		app->display_tex = NULL;
+		app->cfg.src_x = nx;
+		app->cfg.src_y = ny;
+		app->cfg.src_w = nw;
+		app->cfg.src_h = nh;
+		app->cfg.is_zoomed = 1;
+		app->resize_pending = 1;
+	}
+	app->need_present = 1;
+}
+
+static void dispatch_event(struct app_state *app, const SDL_Event *ev)
+{
+	switch (ev->type) {
+	case SDL_EVENT_QUIT:
+		app->should_exit = 1;
+		break;
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+		handle_redraw_request(app, 1);
+		break;
+	case SDL_EVENT_KEY_DOWN:
+		if (ev->key.key == SDLK_F5) handle_redraw_request(app, 0);
+		break;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		if (ev->button.button == SDL_BUTTON_LEFT) handle_left_button_down(app, ev);
+		else if (ev->button.button == SDL_BUTTON_RIGHT) handle_right_button_down(app);
+		break;
+	case SDL_EVENT_MOUSE_MOTION:
+		if (app->drag_active) handle_motion(app, ev);
+		break;
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+		if (ev->button.button == SDL_BUTTON_LEFT && app->drag_active)
+			handle_left_button_up(app, ev);
+		break;
+	}
+}
+
+static void maybe_start_session(struct app_state *app)
+{
+	if (!app->resize_pending || app->render_in_progress) return;
+	if (SDL_GetMouseState(NULL, NULL) != 0) return;
+	app->resize_pending = 0;
+	app->last_displayed_ypos = 0;
+	app->resize_start_time = SDL_GetTicks();
+	if (start_resize_session(app) == 0) app->render_in_progress = 1;
+}
+
+static void pump_render(struct app_state *app)
+{
+	struct resumable_resize *rr = &app->rr;
+	int local_ypos, local_done;
+
+	if (!app->render_in_progress) return;
+
+	SDL_LockMutex(rr->pipe.mutex);
+	local_ypos = rr->pipe.ypos;
+	local_done = rr->pipe.scaler_done;
+	SDL_UnlockMutex(rr->pipe.mutex);
+
+	if (local_done) {
+		Uint64 elapsed;
+		app->render_in_progress = 0;
+		if (app->last_displayed_ypos < rr->out_height) {
+			update_texture_rows(app->display_tex, rr,
+			                    app->last_displayed_ypos, rr->out_height);
+		}
+		resumable_resize_end(rr);
+		app->need_present = 1;
+		elapsed = SDL_GetTicks() - app->resize_start_time;
+		fprintf(stderr, "Resize ticks: %llu\n", (unsigned long long)elapsed);
+	} else if (local_ypos > app->last_displayed_ypos) {
+		update_texture_rows(app->display_tex, rr,
+		                    app->last_displayed_ypos, local_ypos);
+		app->last_displayed_ypos = local_ypos;
+		app->need_present = 1;
+	}
+}
+
+static void present_current(struct app_state *app)
+{
+	SDL_FRect drag, *overlay = NULL;
+	if (app->drag_active) {
+		drag = make_drag_rect(app->drag_start_x, app->drag_start_y,
+		                      app->drag_cur_x, app->drag_cur_y);
+		overlay = &drag;
+	}
+	present_frame(app->renderer, app->display_tex, overlay);
+	app->need_present = 0;
+}
+
+static void app_cleanup(struct app_state *app)
+{
+	if (app->render_in_progress) resumable_resize_end(&app->rr);
+	stash_clear(app->stash, &app->stash_count);
+	if (app->display_tex) SDL_DestroyTexture(app->display_tex);
+	if (app->renderer) SDL_DestroyRenderer(app->renderer);
+	if (app->window) SDL_DestroyWindow(app->window);
+	SDL_Quit();
+}
+
+/* ===========================================================================
+ * Main
+ * =========================================================================== */
+
+int main(int argc, char **argv)
+{
+	struct app_state app;
+	SDL_Event event;
+	int argi;
+
+	memset(&app, 0, sizeof(app));
+	app.cfg.threaded = 1;
+
 	for (argi = 1; argi < argc; argi++) {
 		if (strcmp(argv[argi], "--no-threaded") == 0) {
-			threaded = 0;
+			app.cfg.threaded = 0;
 		} else if (strcmp(argv[argi], "--no-gamma") == 0) {
-			no_gamma = 1;
+			app.cfg.no_gamma = 1;
 		} else if (argv[argi][0] == '-' && argv[argi][1] == '-') {
-			be = find_backend(argv[argi]);
-			if (!be) {
+			app.be = find_backend(argv[argi]);
+			if (!app.be) {
 				fprintf(stderr, "Error: unknown or unavailable backend: %s\n", argv[argi]);
 				return 1;
 			}
 		} else {
-			path = argv[argi];
+			app.path = argv[argi];
 		}
 	}
-	if (!path) {
+	if (!app.path) {
 		fprintf(stderr, "Usage: %s [--scalar|--sse2|--avx2|--neon] [--no-threaded] [--no-gamma] <image>\n", argv[0]);
 		return 1;
 	}
-	if (!be) be = default_backend();
+	if (!app.be) app.be = default_backend();
 
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
 		return 1;
 	}
-	window = SDL_CreateWindow(path, 640, 480, SDL_WINDOW_RESIZABLE);
-	if (!window) {
+	app.window = SDL_CreateWindow(app.path, 640, 480, SDL_WINDOW_RESIZABLE);
+	if (!app.window) {
 		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-		SDL_Quit();
+		app_cleanup(&app);
 		return 1;
 	}
-	renderer = SDL_CreateRenderer(window, NULL);
-	if (!renderer) {
+	app.renderer = SDL_CreateRenderer(app.window, NULL);
+	if (!app.renderer) {
 		fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-		SDL_DestroyWindow(window);
-		SDL_Quit();
+		app_cleanup(&app);
 		return 1;
 	}
 
-	last_displayed_ypos = 0;
-	resize_start_time = SDL_GetTicks();
-	if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma,
-	                         is_zoomed, crop_x, crop_y, crop_w, crop_h) < 0) {
-		SDL_DestroyRenderer(renderer);
-		SDL_DestroyWindow(window);
-		SDL_Quit();
+	app.resize_start_time = SDL_GetTicks();
+	if (start_resize_session(&app) < 0) {
+		app_cleanup(&app);
 		return 1;
 	}
-	render_in_progress = 1;
-	img_w = rr.img_width;
-	crop_x = rr.src_x;
-	crop_y = rr.src_y;
-	crop_w = rr.src_w;
-	crop_h = rr.src_h;
+	app.render_in_progress = 1;
 
-	while (1) {
-		int timeout = render_in_progress ? 16 : -1;
-		event_happened = SDL_WaitEventTimeout(&event, timeout);
-		need_present = 0;
-
-		if (event_happened) {
-			if (event.type == SDL_EVENT_QUIT) {
-				if (render_in_progress) {
-					resumable_resize_end(&rr);
-				}
-				stash_clear(stash, &stash_count);
-				SDL_DestroyTexture(display_tex);
-				SDL_DestroyRenderer(renderer);
-				SDL_DestroyWindow(window);
-				SDL_Quit();
-				return 0;
-			}
-			if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
-			    (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5)) {
-				if (render_in_progress) {
-					resumable_resize_end(&rr);
-					render_in_progress = 0;
-				}
-				drag_active = 0;
-				if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
-					stash_invalidate_textures(stash, stash_count);
-					present_frame(renderer, display_tex, NULL);
-				}
-				resize_pending = 1;
-			}
-			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-			    event.button.button == SDL_BUTTON_LEFT) {
-				float rx, ry;
-				SDL_RenderCoordinatesFromWindow(renderer,
-					event.button.x, event.button.y, &rx, &ry);
-				drag_start_x = drag_cur_x = rx;
-				drag_start_y = drag_cur_y = ry;
-				drag_active = 1;
-				need_present = 1;
-			}
-			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
-			    event.button.button == SDL_BUTTON_RIGHT) {
-				drag_active = 0;
-				if (stash_count > 0) {
-					if (render_in_progress) {
-						resumable_resize_end(&rr);
-						render_in_progress = 0;
-					}
-					stash_count--;
-					crop_x = stash[stash_count].crop_x;
-					crop_y = stash[stash_count].crop_y;
-					crop_w = stash[stash_count].crop_w;
-					crop_h = stash[stash_count].crop_h;
-					is_zoomed = stash[stash_count].is_zoomed;
-					if (stash[stash_count].tex) {
-						SDL_DestroyTexture(display_tex);
-						display_tex = stash[stash_count].tex;
-						need_present = 1;
-					} else {
-						resize_pending = 1;
-					}
-				}
-			}
-			if (event.type == SDL_EVENT_MOUSE_MOTION && drag_active) {
-				float rx, ry;
-				SDL_RenderCoordinatesFromWindow(renderer,
-					event.motion.x, event.motion.y, &rx, &ry);
-				drag_cur_x = rx;
-				drag_cur_y = ry;
-				need_present = 1;
-			}
-			if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
-			    event.button.button == SDL_BUTTON_LEFT && drag_active) {
-				float rx, ry;
-				SDL_FRect drag;
-				double nx, ny, nw, nh;
-				drag_active = 0;
-				SDL_RenderCoordinatesFromWindow(renderer,
-					event.button.x, event.button.y, &rx, &ry);
-				drag_cur_x = rx;
-				drag_cur_y = ry;
-				drag = make_drag_rect(drag_start_x, drag_start_y, drag_cur_x, drag_cur_y);
-				if ((drag.w >= MIN_DRAG_PIXELS || drag.h >= MIN_DRAG_PIXELS) &&
-				    img_w > 0 &&
-				    drag_rect_to_crop(renderer, display_tex, drag,
-				                      crop_x, crop_y, crop_w, crop_h,
-				                      &nx, &ny, &nw, &nh) == 0) {
-					if (render_in_progress) {
-						resumable_resize_end(&rr);
-						render_in_progress = 0;
-					}
-					stash_push(stash, &stash_count, display_tex,
-					           crop_x, crop_y, crop_w, crop_h, is_zoomed);
-					display_tex = NULL;
-					crop_x = nx;
-					crop_y = ny;
-					crop_w = nw;
-					crop_h = nh;
-					is_zoomed = 1;
-					resize_pending = 1;
-				}
-				need_present = 1;
-			}
+	while (!app.should_exit) {
+		int timeout = app.render_in_progress ? 16 : -1;
+		if (SDL_WaitEventTimeout(&event, timeout)) {
+			dispatch_event(&app, &event);
+			if (app.should_exit) break;
 		}
 
-		if (resize_pending && !render_in_progress &&
-		    SDL_GetMouseState(NULL, NULL) == 0) {
-			resize_pending = 0;
-			last_displayed_ypos = 0;
-			resize_start_time = SDL_GetTicks();
-			if (start_resize_session(&rr, path, renderer, &display_tex, be, threaded, no_gamma,
-			                         is_zoomed, crop_x, crop_y, crop_w, crop_h) == 0) {
-				render_in_progress = 1;
-				img_w = rr.img_width;
-				crop_x = rr.src_x;
-				crop_y = rr.src_y;
-				crop_w = rr.src_w;
-				crop_h = rr.src_h;
-			}
-		}
-
-		if (render_in_progress) {
-			int local_ypos, local_done;
-
-			SDL_LockMutex(rr.mutex);
-			local_ypos = rr.ypos;
-			local_done = rr.scaler_done;
-			SDL_UnlockMutex(rr.mutex);
-
-			if (local_done) {
-				render_in_progress = 0;
-				if (last_displayed_ypos < rr.out_height) {
-					update_texture_rows(display_tex, &rr, last_displayed_ypos, rr.out_height);
-				}
-				resumable_resize_end(&rr);
-				need_present = 1;
-				elapsed_time = SDL_GetTicks() - resize_start_time;
-				fprintf(stderr, "Resize ticks: %llu\n", (unsigned long long)elapsed_time);
-			} else if (local_ypos > last_displayed_ypos) {
-				update_texture_rows(display_tex, &rr, last_displayed_ypos, local_ypos);
-				last_displayed_ypos = local_ypos;
-				need_present = 1;
-			}
-		}
-
-		if (need_present) {
-			SDL_FRect drag, *overlay = NULL;
-			if (drag_active) {
-				drag = make_drag_rect(drag_start_x, drag_start_y, drag_cur_x, drag_cur_y);
-				overlay = &drag;
-			}
-			present_frame(renderer, display_tex, overlay);
-		}
+		maybe_start_session(&app);
+		pump_render(&app);
+		if (app.need_present) present_current(&app);
 	}
+
+	app_cleanup(&app);
+	return 0;
 }
