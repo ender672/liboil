@@ -12,6 +12,11 @@
 
 #define LINE_QUEUE_DEPTH 16
 #define MIN_DRAG_PIXELS 5.0f
+#define STASH_DEPTH 16
+
+/* ===========================================================================
+ * Backend selection
+ * =========================================================================== */
 
 struct backend_entry {
 	const char *flag;
@@ -47,6 +52,10 @@ static const struct backend_entry *default_backend(void) {
 #endif
 }
 
+/* ===========================================================================
+ * Colorspace helper
+ * =========================================================================== */
+
 static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
 	switch (cs) {
 	case OIL_CS_RGB:  return OIL_CS_RGB_NOGAMMA;
@@ -55,6 +64,10 @@ static enum oil_colorspace nogamma_cs(enum oil_colorspace cs) {
 	default: return cs;
 	}
 }
+
+/* ===========================================================================
+ * Resumable resize — shared state
+ * =========================================================================== */
 
 struct resumable_resize {
 	FILE *io;
@@ -122,73 +135,9 @@ struct resumable_resize {
 	int aborted;
 };
 
-static void translate(unsigned char *in, unsigned char *out, int width, int cmp) {
-	int i;
-	for (i=0; i<width; i++) {
-		if (cmp <= 2) {
-			out[0] = out[1] = out[2] = in[0];
-			out[3] = cmp == 2 ? in[1] : 0xFF;
-		} else {
-			out[0] = in[2];
-			out[1] = in[1];
-			out[2] = in[0];
-			out[3] = cmp >= 4 ? in[3] : 0xFF;
-		}
-		in += cmp;
-		out += 4;
-	}
-}
-
-static int looks_like_png(FILE *io)
-{
-	int peek;
-	peek = getc(io);
-	ungetc(peek, io);
-	return peek == 137;
-}
-
-static void decode_png_interlaced(struct resumable_resize *rr, unsigned char *slot, int row) {
-	memcpy(slot, rr->inimage[rr->fed_y + row] + rr->fed_x * rr->cmp, rr->slot_rowbytes);
-}
-
-static void decode_png_streaming(struct resumable_resize *rr, unsigned char *slot, int row) {
-	(void)row;
-	png_read_row(rr->rpng, rr->scratch, NULL);
-	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
-}
-
-static void decode_jpeg_row(struct resumable_resize *rr, unsigned char *slot, int row) {
-	(void)row;
-#ifdef LIBJPEG_TURBO_VERSION
-	jpeg_read_scanlines(rr->dinfo, &slot, 1);
-#else
-	jpeg_read_scanlines(rr->dinfo, &rr->scratch, 1);
-	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
-#endif
-}
-
-static unsigned char **alloc_image(int height, int rowbytes) {
-	unsigned char **img;
-	int i, j;
-	img = malloc((size_t)height * sizeof(unsigned char *));
-	if (!img) return NULL;
-	for (i=0; i<height; i++) {
-		img[i] = malloc(rowbytes);
-		if (!img[i]) {
-			for (j=0; j<i; j++) free(img[j]);
-			free(img);
-			return NULL;
-		}
-	}
-	return img;
-}
-
-static void free_image(unsigned char **img, int height) {
-	int i;
-	if (!img) return;
-	for (i=0; i<height; i++) free(img[i]);
-	free(img);
-}
+/* ===========================================================================
+ * Resumable resize — crop math
+ * =========================================================================== */
 
 static void clamp_crop(struct resumable_resize *rr) {
 	if (rr->src_w <= 0 || rr->src_h <= 0) {
@@ -286,8 +235,50 @@ static int init_scaler(struct resumable_resize *rr) {
 		rr->cs);
 }
 
-static void png_end(struct resumable_resize *rr);
-static void jpeg_end(struct resumable_resize *rr);
+/* ===========================================================================
+ * Resumable resize — PNG decoder
+ * =========================================================================== */
+
+static unsigned char **alloc_image(int height, int rowbytes) {
+	unsigned char **img;
+	int i, j;
+	img = malloc((size_t)height * sizeof(unsigned char *));
+	if (!img) return NULL;
+	for (i=0; i<height; i++) {
+		img[i] = malloc(rowbytes);
+		if (!img[i]) {
+			for (j=0; j<i; j++) free(img[j]);
+			free(img);
+			return NULL;
+		}
+	}
+	return img;
+}
+
+static void free_image(unsigned char **img, int height) {
+	int i;
+	if (!img) return;
+	for (i=0; i<height; i++) free(img[i]);
+	free(img);
+}
+
+static void decode_png_interlaced(struct resumable_resize *rr, unsigned char *slot, int row) {
+	memcpy(slot, rr->inimage[rr->fed_y + row] + rr->fed_x * rr->cmp, rr->slot_rowbytes);
+}
+
+static void decode_png_streaming(struct resumable_resize *rr, unsigned char *slot, int row) {
+	(void)row;
+	png_read_row(rr->rpng, rr->scratch, NULL);
+	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
+}
+
+static void png_end(struct resumable_resize *rr) {
+	if (rr->inimage) free_image(rr->inimage, rr->img_height);
+	free(rr->scratch);
+	free(rr->outbuf);
+	oil_scale_free(&rr->os);
+	png_destroy_read_struct(&rr->rpng, &rr->rinfo, NULL);
+}
 
 static int png_start(struct resumable_resize *rr) {
 	png_structp rpng;
@@ -380,13 +371,9 @@ fail_os:
 	return -1;
 }
 
-static void png_end(struct resumable_resize *rr) {
-	if (rr->inimage) free_image(rr->inimage, rr->img_height);
-	free(rr->scratch);
-	free(rr->outbuf);
-	oil_scale_free(&rr->os);
-	png_destroy_read_struct(&rr->rpng, &rr->rinfo, NULL);
-}
+/* ===========================================================================
+ * Resumable resize — JPEG decoder
+ * =========================================================================== */
 
 struct jpeg_err {
 	struct jpeg_error_mgr mgr;
@@ -397,6 +384,25 @@ static void jpeg_err_exit(j_common_ptr cinfo)
 {
 	struct jpeg_err *err = (struct jpeg_err *)cinfo->err;
 	longjmp(err->jmpbuf, 1);
+}
+
+static void decode_jpeg_row(struct resumable_resize *rr, unsigned char *slot, int row) {
+	(void)row;
+#ifdef LIBJPEG_TURBO_VERSION
+	jpeg_read_scanlines(rr->dinfo, &slot, 1);
+#else
+	jpeg_read_scanlines(rr->dinfo, &rr->scratch, 1);
+	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
+#endif
+}
+
+static void jpeg_end(struct resumable_resize *rr) {
+	free(rr->scratch);
+	free(rr->outbuf);
+	oil_scale_free(&rr->os);
+	free(rr->dinfo->err);
+	jpeg_destroy_decompress(rr->dinfo);
+	free(rr->dinfo);
 }
 
 static int jpeg_start(struct resumable_resize *rr)
@@ -487,13 +493,25 @@ fail_jpeg:
 	return -1;
 }
 
-static void jpeg_end(struct resumable_resize *rr) {
-	free(rr->scratch);
-	free(rr->outbuf);
-	oil_scale_free(&rr->os);
-	free(rr->dinfo->err);
-	jpeg_destroy_decompress(rr->dinfo);
-	free(rr->dinfo);
+/* ===========================================================================
+ * Resumable resize — worker threads
+ * =========================================================================== */
+
+static void translate(unsigned char *in, unsigned char *out, int width, int cmp) {
+	int i;
+	for (i=0; i<width; i++) {
+		if (cmp <= 2) {
+			out[0] = out[1] = out[2] = in[0];
+			out[3] = cmp == 2 ? in[1] : 0xFF;
+		} else {
+			out[0] = in[2];
+			out[1] = in[1];
+			out[2] = in[0];
+			out[3] = cmp >= 4 ? in[3] : 0xFF;
+		}
+		in += cmp;
+		out += 4;
+	}
 }
 
 static int decoder_thread_fn(void *arg)
@@ -617,6 +635,18 @@ done:
 	return 0;
 }
 
+/* ===========================================================================
+ * Resumable resize — session lifecycle
+ * =========================================================================== */
+
+static int looks_like_png(FILE *io)
+{
+	int peek;
+	peek = getc(io);
+	ungetc(peek, io);
+	return peek == 137;
+}
+
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
                                   int surface_width, int surface_height,
                                   const struct backend_entry *be, int threaded,
@@ -731,6 +761,10 @@ static void resumable_resize_end(struct resumable_resize *rr)
 	fclose(rr->io);
 }
 
+/* ===========================================================================
+ * Presentation
+ * =========================================================================== */
+
 static void compute_letterbox(int win_w, int win_h, int src_w, int src_h, SDL_FRect *dst)
 {
 	float sx = (float)win_w / src_w;
@@ -810,6 +844,10 @@ static int start_resize_session(struct resumable_resize *rr, char *path,
 	return 0;
 }
 
+/* ===========================================================================
+ * Drag-to-crop
+ * =========================================================================== */
+
 static SDL_FRect make_drag_rect(float ax, float ay, float bx, float by)
 {
 	SDL_FRect r;
@@ -820,7 +858,45 @@ static SDL_FRect make_drag_rect(float ax, float ay, float bx, float by)
 	return r;
 }
 
-#define STASH_DEPTH 16
+/* Map a render-coord rect to a logical source rect inside the current crop,
+ * clipped to the visible image area. Returns 0 on success, -1 if the rect
+ * collapses to nothing inside the image. */
+static int drag_rect_to_crop(SDL_Renderer *renderer, SDL_Texture *display_tex,
+                             SDL_FRect drag, double crop_x, double crop_y,
+                             double crop_w, double crop_h,
+                             double *out_x, double *out_y,
+                             double *out_w, double *out_h)
+{
+	int win_w, win_h;
+	float tex_w, tex_h;
+	SDL_FRect dst;
+	double sx, sy, sw, sh;
+
+	if (!display_tex) return -1;
+	SDL_GetRenderOutputSize(renderer, &win_w, &win_h);
+	SDL_GetTextureSize(display_tex, &tex_w, &tex_h);
+	compute_letterbox(win_w, win_h, (int)tex_w, (int)tex_h, &dst);
+
+	if (drag.x < dst.x) { drag.w -= dst.x - drag.x; drag.x = dst.x; }
+	if (drag.y < dst.y) { drag.h -= dst.y - drag.y; drag.y = dst.y; }
+	if (drag.x + drag.w > dst.x + dst.w) drag.w = dst.x + dst.w - drag.x;
+	if (drag.y + drag.h > dst.y + dst.h) drag.h = dst.y + dst.h - drag.y;
+	if (drag.w <= 0 || drag.h <= 0 || dst.w <= 0 || dst.h <= 0) return -1;
+
+	sx = (drag.x - dst.x) / dst.w;
+	sy = (drag.y - dst.y) / dst.h;
+	sw = drag.w / dst.w;
+	sh = drag.h / dst.h;
+	*out_x = crop_x + sx * crop_w;
+	*out_y = crop_y + sy * crop_h;
+	*out_w = sw * crop_w;
+	*out_h = sh * crop_h;
+	return (*out_w >= 1.0 && *out_h >= 1.0) ? 0 : -1;
+}
+
+/* ===========================================================================
+ * View stash (undo history of zoom states)
+ * =========================================================================== */
 
 struct view_stash {
 	SDL_Texture *tex;
@@ -868,41 +944,9 @@ static void stash_push(struct view_stash *s, int *count, SDL_Texture *tex,
 	(*count)++;
 }
 
-/* Map a render-coord rect to a logical source rect inside the current crop,
- * clipped to the visible image area. Returns 0 on success, -1 if the rect
- * collapses to nothing inside the image. */
-static int drag_rect_to_crop(SDL_Renderer *renderer, SDL_Texture *display_tex,
-                             SDL_FRect drag, double crop_x, double crop_y,
-                             double crop_w, double crop_h,
-                             double *out_x, double *out_y,
-                             double *out_w, double *out_h)
-{
-	int win_w, win_h;
-	float tex_w, tex_h;
-	SDL_FRect dst;
-	double sx, sy, sw, sh;
-
-	if (!display_tex) return -1;
-	SDL_GetRenderOutputSize(renderer, &win_w, &win_h);
-	SDL_GetTextureSize(display_tex, &tex_w, &tex_h);
-	compute_letterbox(win_w, win_h, (int)tex_w, (int)tex_h, &dst);
-
-	if (drag.x < dst.x) { drag.w -= dst.x - drag.x; drag.x = dst.x; }
-	if (drag.y < dst.y) { drag.h -= dst.y - drag.y; drag.y = dst.y; }
-	if (drag.x + drag.w > dst.x + dst.w) drag.w = dst.x + dst.w - drag.x;
-	if (drag.y + drag.h > dst.y + dst.h) drag.h = dst.y + dst.h - drag.y;
-	if (drag.w <= 0 || drag.h <= 0 || dst.w <= 0 || dst.h <= 0) return -1;
-
-	sx = (drag.x - dst.x) / dst.w;
-	sy = (drag.y - dst.y) / dst.h;
-	sw = drag.w / dst.w;
-	sh = drag.h / dst.h;
-	*out_x = crop_x + sx * crop_w;
-	*out_y = crop_y + sy * crop_h;
-	*out_w = sw * crop_w;
-	*out_h = sh * crop_h;
-	return (*out_w >= 1.0 && *out_h >= 1.0) ? 0 : -1;
-}
+/* ===========================================================================
+ * Main — argument parsing and event loop
+ * =========================================================================== */
 
 int main(int argc, char **argv) {
 	SDL_Window *window;
