@@ -597,7 +597,7 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 	p = &rr->pipe;
 	p->n_slots = rr->cfg.threaded ? LINE_QUEUE_DEPTH : 1;
 
-	rr->io = fopen(path, "r");
+	rr->io = fopen(path, "rb");
 	if (!rr->io) {
 		fprintf(stderr, "Error: unable to open %s\n", path);
 		return -1;
@@ -632,8 +632,8 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 			p->aborted = 1;
 			SDL_BroadcastCondition(p->cv);
 			SDL_UnlockMutex(p->mutex);
-			SDL_WaitThread(p->decoder_thread, NULL);
-			SDL_WaitThread(p->scaler_thread, NULL);
+			if (p->decoder_thread) SDL_WaitThread(p->decoder_thread, NULL);
+			if (p->scaler_thread) SDL_WaitThread(p->scaler_thread, NULL);
 			goto fail_sync;
 		}
 	} else {
