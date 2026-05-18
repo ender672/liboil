@@ -110,7 +110,6 @@ struct resumable_resize {
 	struct rr_config cfg;
 
 	FILE *io;
-	int png_interlaced;
 
 	int img_width;
 	int img_height;
@@ -127,17 +126,13 @@ struct resumable_resize {
 
 	int cmp;
 	enum oil_colorspace cs;
-	int in_rowbytes;
 	int slot_rowbytes;
 
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
-	unsigned char *scratch;
-	unsigned char **inimage;
 
-	/* Embedded scaler used by the PNG path. The JPEG path uses olj.os
-	 * instead; scale_os points at whichever is active. */
-	struct oil_scale os;
+	/* scale_os points at the active wrapper's oil_scale (olj.os for
+	 * JPEG, olp.os for PNG). */
 	struct oil_scale *scale_os;
 	int (*scale_in)(struct oil_scale *, unsigned char *);
 	int (*scale_out)(struct oil_scale *, unsigned char *);
@@ -145,8 +140,7 @@ struct resumable_resize {
 	void (*format_end)(struct resumable_resize *);
 
 	struct oil_libjpeg olj;
-	png_structp rpng;
-	png_infop rinfo;
+	struct oil_libpng olp;
 
 	struct rr_pipeline pipe;
 };
@@ -246,63 +240,26 @@ static int compute_fed_and_out(struct resumable_resize *rr) {
 		&rr->fed_y, &rr->fed_height, &rr->fed_x, &rr->fed_width);
 }
 
-static int init_scaler(struct resumable_resize *rr) {
-	return oil_scale_init_ex(&rr->os, rr->fed_height, rr->out_height,
-		rr->fed_width, rr->out_width,
-		rr->cfg.src_y - rr->fed_y, rr->cfg.src_h,
-		rr->cfg.src_x - rr->fed_x, rr->cfg.src_w,
-		rr->cs);
-}
-
 /* ===========================================================================
  * Resumable resize — PNG decoder
  * =========================================================================== */
 
-static unsigned char **alloc_image(int height, int rowbytes) {
-	unsigned char **img;
-	int i, j;
-	img = malloc((size_t)height * sizeof(unsigned char *));
-	if (!img) return NULL;
-	for (i=0; i<height; i++) {
-		img[i] = malloc(rowbytes);
-		if (!img[i]) {
-			for (j=0; j<i; j++) free(img[j]);
-			free(img);
-			return NULL;
-		}
-	}
-	return img;
-}
-
-static void free_image(unsigned char **img, int height) {
-	int i;
-	if (!img) return;
-	for (i=0; i<height; i++) free(img[i]);
-	free(img);
-}
-
-static void decode_png_interlaced(struct resumable_resize *rr, unsigned char *slot, int row) {
-	memcpy(slot, rr->inimage[rr->fed_y + row] + rr->fed_x * rr->cmp, rr->slot_rowbytes);
-}
-
-static void decode_png_streaming(struct resumable_resize *rr, unsigned char *slot, int row) {
+static void decode_png_row(struct resumable_resize *rr, unsigned char *slot, int row) {
 	(void)row;
-	png_read_row(rr->rpng, rr->scratch, NULL);
-	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
+	oil_libpng_decode_row(&rr->olp, slot);
 }
 
 static void png_end(struct resumable_resize *rr) {
-	if (rr->inimage) free_image(rr->inimage, rr->img_height);
-	free(rr->scratch);
+	png_structp rpng = rr->olp.rpng;
+	png_infop rinfo = rr->olp.rinfo;
 	free(rr->outbuf);
-	oil_scale_free(&rr->os);
-	png_destroy_read_struct(&rr->rpng, &rr->rinfo, NULL);
+	oil_libpng_free(&rr->olp);
+	png_destroy_read_struct(&rpng, &rinfo, NULL);
 }
 
 static int png_start(struct resumable_resize *rr) {
 	png_structp rpng;
 	png_infop rinfo;
-	int i;
 
 	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	if (!rpng) {
@@ -319,9 +276,6 @@ static int png_start(struct resumable_resize *rr) {
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		return -1;
 	}
-
-	rr->rpng = rpng;
-	rr->rinfo = rinfo;
 
 	png_init_io(rpng, rr->io);
 	png_read_info(rpng, rinfo);
@@ -341,8 +295,6 @@ static int png_start(struct resumable_resize *rr) {
 	}
 	if (rr->cfg.no_gamma) rr->cs = nogamma_cs(rr->cs);
 	rr->cmp = OIL_CMP(rr->cs);
-	rr->in_rowbytes = png_get_rowbytes(rpng, rinfo);
-	rr->png_interlaced = (png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7);
 
 	clamp_crop(rr);
 	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) {
@@ -355,38 +307,23 @@ static int png_start(struct resumable_resize *rr) {
 	}
 	rr->slot_rowbytes = rr->fed_width * rr->cmp;
 
-	if (init_scaler(rr) != 0) {
+	if (oil_libpng_init_ex(&rr->olp, rpng, rinfo, rr->out_width, rr->out_height,
+		rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h,
+		rr->cs) != 0) {
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		return -1;
 	}
-	rr->scale_os = &rr->os;
+	rr->scale_os = &rr->olp.os;
 
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
-	if (!rr->outbuf) goto fail_os;
-	rr->scratch = malloc(rr->in_rowbytes);
-	if (!rr->scratch) goto fail_outbuf;
+	if (!rr->outbuf) goto fail_olp;
 
-	if (rr->png_interlaced) {
-		rr->inimage = alloc_image(rr->img_height, rr->in_rowbytes);
-		if (!rr->inimage) goto fail_scratch;
-		png_read_image(rpng, rr->inimage);
-		rr->decode_row = decode_png_interlaced;
-	} else {
-		for (i = 0; i < rr->fed_y; i++) {
-			png_read_row(rpng, rr->scratch, NULL);
-		}
-		rr->decode_row = decode_png_streaming;
-	}
-
+	rr->decode_row = decode_png_row;
 	rr->format_end = png_end;
 	return 0;
 
-fail_scratch:
-	free(rr->scratch);
-fail_outbuf:
-	free(rr->outbuf);
-fail_os:
-	oil_scale_free(&rr->os);
+fail_olp:
+	oil_libpng_free(&rr->olp);
 	png_destroy_read_struct(&rpng, &rinfo, NULL);
 	return -1;
 }
@@ -458,14 +395,14 @@ static int jpeg_start(struct resumable_resize *rr)
 	if (rr->cs == OIL_CS_UNKNOWN) goto fail_jpeg;
 	if (rr->cfg.no_gamma) rr->cs = nogamma_cs(rr->cs);
 	rr->cmp = dinfo->output_components;
-	rr->in_rowbytes = dinfo->output_width * dinfo->output_components;
 
 	clamp_crop(rr);
 	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) goto fail_jpeg;
 	if (compute_fed_and_out(rr) < 0) goto fail_jpeg;
 
 	if (oil_libjpeg_init_ex(&rr->olj, dinfo, rr->out_width, rr->out_height,
-		rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h) != 0) {
+		rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h,
+		rr->cs) != 0) {
 		goto fail_jpeg;
 	}
 	/* jpeg_crop_scanline (turbo) may widen fed_w to an iMCU boundary; the

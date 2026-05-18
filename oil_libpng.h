@@ -33,6 +33,8 @@ struct oil_libpng {
 	int in_vpos;
 	int inbuf_offset;
 	int img_height;
+	int fed_width;
+	int components;
 	unsigned char *inbuf;
 	unsigned char **inimage;
 };
@@ -64,6 +66,12 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
  * @out_width, @out_height: Desired output dimensions in pixels.
  * @src_x, @src_y, @src_width, @src_height: Source rect inside the full image,
  *     in source pixels (may be fractional). Must fit within the image bounds.
+ * @cs_override: If OIL_CS_UNKNOWN, the wrapper derives the scaler's
+ *     colorspace from png_get_color_type. Otherwise the override is
+ *     passed to oil_scale_init_ex; this is how callers select the
+ *     no-gamma variants when the decoded bytes are RGB(A) but should
+ *     be scaled in the file's native gamma. The override must have the
+ *     same OIL_CMP as the derived colorspace.
  *
  * Returns 0 on success.
  * Returns -1 if an argument is bad.
@@ -71,12 +79,28 @@ int oil_libpng_init(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
  */
 int oil_libpng_init_ex(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	int out_width, int out_height,
-	double src_x, double src_y, double src_width, double src_height);
+	double src_x, double src_y, double src_width, double src_height,
+	enum oil_colorspace cs_override);
 
 void oil_libpng_free(struct oil_libpng *ol);
 
+/**
+ * Decode the next input row from the PNG into a caller-supplied buffer.
+ *
+ * @ol: Initialized wrapper.
+ * @dst: Destination buffer of at least ol->fed_width * ol->components bytes.
+ *     On success, holds one row of decoded pixels in the wrapper's
+ *     colorspace, restricted to the cropped fed rect.
+ *
+ * Callers driving the scaler themselves (e.g., to use SIMD entry points or
+ * to interpose a slot queue between decode and scale) use this in place of
+ * the bundled oil_libpng_read_scanline. For interlaced PNGs the row is
+ * served from the pre-decoded full-image buffer; for non-interlaced PNGs
+ * it triggers one png_read_row.
+ */
+void oil_libpng_decode_row(struct oil_libpng *ol, unsigned char *dst);
+
 void oil_libpng_read_scanline(struct oil_libpng *ol, unsigned char *outbuf);
-int oil_libpng_proccess_scanline_part(struct oil_libpng *ol);
 
 enum oil_colorspace png_cs_to_oil(png_byte cs);
 

@@ -65,6 +65,12 @@ int oil_libjpeg_init(struct oil_libjpeg *ol,
  *     in source pixels (may be fractional). Must satisfy
  *     0 <= src_x, src_x + src_width <= dinfo->output_width, and the
  *     equivalent for the vertical axis.
+ * @cs_override: If OIL_CS_UNKNOWN, the wrapper derives the scaler's
+ *     colorspace from dinfo->out_color_space. Otherwise the override is
+ *     passed to oil_scale_init_ex; this is how callers select the
+ *     no-gamma variants (e.g., OIL_CS_RGB_NOGAMMA) when the decoded
+ *     bytes are RGB but should be scaled in the file's native gamma.
+ *     The override must have the same OIL_CMP as the derived colorspace.
  *
  * When built against libjpeg-turbo this function invokes jpeg_crop_scanline,
  * which mutates dinfo. On a -2 (memory) failure the decoder is left in
@@ -76,7 +82,8 @@ int oil_libjpeg_init(struct oil_libjpeg *ol,
  */
 int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	struct jpeg_decompress_struct *dinfo, int out_width, int out_height,
-	double src_x, double src_y, double src_width, double src_height);
+	double src_x, double src_y, double src_width, double src_height,
+	enum oil_colorspace cs_override);
 
 void oil_libjpeg_free(struct oil_libjpeg *ol);
 

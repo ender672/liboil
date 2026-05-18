@@ -28,12 +28,14 @@ int oil_libjpeg_init(struct oil_libjpeg *ol,
 {
 	return oil_libjpeg_init_ex(ol, dinfo, out_width, out_height,
 		0.0, 0.0,
-		(double)dinfo->output_width, (double)dinfo->output_height);
+		(double)dinfo->output_width, (double)dinfo->output_height,
+		OIL_CS_UNKNOWN);
 }
 
 int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	struct jpeg_decompress_struct *dinfo, int out_width, int out_height,
-	double src_x, double src_y, double src_width, double src_height)
+	double src_x, double src_y, double src_width, double src_height,
+	enum oil_colorspace cs_override)
 {
 	int ret, fed_x, fed_y, fed_w, fed_h, buf_w;
 	enum oil_colorspace cs;
@@ -52,6 +54,12 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	cs = jpeg_cs_to_oil(dinfo->out_color_space);
 	if (cs == OIL_CS_UNKNOWN) {
 		return -1;
+	}
+	if (cs_override != OIL_CS_UNKNOWN) {
+		if (OIL_CMP(cs_override) != OIL_CMP(cs)) {
+			return -1;
+		}
+		cs = cs_override;
 	}
 
 	if (oil_required_input_rect(dinfo->output_height, dinfo->output_width,

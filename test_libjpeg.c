@@ -106,7 +106,7 @@ static unsigned char *decode_bundled(unsigned char *jpg, unsigned long jpg_size,
 
 	open_jpeg(&dinfo, &jerr, jpg, jpg_size);
 	assert(oil_libjpeg_init_ex(&ol, &dinfo, out_w, out_h,
-		src_x, src_y, src_w, src_h) == 0);
+		src_x, src_y, src_w, src_h, OIL_CS_UNKNOWN) == 0);
 
 	out = malloc((size_t)out_w * out_h * ol.components);
 	for (y = 0; y < out_h; y++) {
@@ -131,7 +131,7 @@ static unsigned char *decode_split(unsigned char *jpg, unsigned long jpg_size,
 
 	open_jpeg(&dinfo, &jerr, jpg, jpg_size);
 	assert(oil_libjpeg_init_ex(&ol, &dinfo, out_w, out_h,
-		src_x, src_y, src_w, src_h) == 0);
+		src_x, src_y, src_w, src_h, OIL_CS_UNKNOWN) == 0);
 
 	row = malloc((size_t)ol.fed_width * ol.components);
 	out = malloc((size_t)out_w * out_h * ol.components);
