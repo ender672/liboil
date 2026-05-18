@@ -21,6 +21,7 @@
 
 #include "oil_libjpeg.h"
 #include <stdlib.h>
+#include <string.h>
 
 int oil_libjpeg_init(struct oil_libjpeg *ol,
 	struct jpeg_decompress_struct *dinfo, int out_width, int out_height)
@@ -45,6 +46,8 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	ol->dinfo = dinfo;
 	ol->inbuf = NULL;
 	ol->inbuf_offset = 0;
+	ol->fed_width = 0;
+	ol->components = dinfo->output_components;
 
 	cs = jpeg_cs_to_oil(dinfo->out_color_space);
 	if (cs == OIL_CS_UNKNOWN) {
@@ -74,6 +77,7 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	buf_w = dinfo->output_width;
 	ol->inbuf_offset = fed_x * dinfo->output_components;
 #endif
+	ol->fed_width = fed_w;
 
 	ret = oil_scale_init_ex(&ol->os, fed_h, out_height, fed_w, out_width,
 		src_y - fed_y, src_height,
@@ -110,15 +114,15 @@ void oil_libjpeg_free(struct oil_libjpeg *ol)
 	oil_scale_free(&ol->os);
 }
 
-int oil_libjpeg_proccess_scanline_part(struct oil_libjpeg *ol)
+void oil_libjpeg_decode_row(struct oil_libjpeg *ol, unsigned char *dst)
 {
-	if (!oil_scale_slots(&ol->os)) {
-		return 1;
-	}
-
+#ifdef LIBJPEG_TURBO_VERSION
+	jpeg_read_scanlines(ol->dinfo, &dst, 1);
+#else
 	jpeg_read_scanlines(ol->dinfo, &ol->inbuf, 1);
-	oil_scale_in(&ol->os, ol->inbuf + ol->inbuf_offset);
-	return oil_scale_slots(&ol->os) == 0;
+	memcpy(dst, ol->inbuf + ol->inbuf_offset,
+		(size_t)ol->fed_width * ol->components);
+#endif
 }
 
 void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf)

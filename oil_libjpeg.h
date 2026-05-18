@@ -31,6 +31,8 @@ struct oil_libjpeg {
 	struct jpeg_decompress_struct *dinfo;
 	unsigned char *inbuf;
 	int inbuf_offset;
+	int fed_width;
+	int components;
 };
 
 /**
@@ -78,8 +80,21 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 
 void oil_libjpeg_free(struct oil_libjpeg *ol);
 
+/**
+ * Decode the next input row from the JPEG into a caller-supplied buffer.
+ *
+ * @ol: Initialized wrapper.
+ * @dst: Destination buffer of at least ol->fed_width * ol->components bytes.
+ *     On success, holds one row of decoded pixels in the wrapper's
+ *     colorspace, restricted to the cropped fed rect.
+ *
+ * Callers driving the scaler themselves (e.g., to use SIMD entry points or
+ * to interpose a slot queue between decode and scale) use this in place of
+ * the bundled oil_libjpeg_read_scanline.
+ */
+void oil_libjpeg_decode_row(struct oil_libjpeg *ol, unsigned char *dst);
+
 void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf);
-int oil_libjpeg_proccess_scanline_part(struct oil_libjpeg *ol);
 
 enum oil_colorspace jpeg_cs_to_oil(J_COLOR_SPACE cs);
 

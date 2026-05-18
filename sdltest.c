@@ -135,13 +135,16 @@ struct resumable_resize {
 	unsigned char *scratch;
 	unsigned char **inimage;
 
+	/* Embedded scaler used by the PNG path. The JPEG path uses olj.os
+	 * instead; scale_os points at whichever is active. */
 	struct oil_scale os;
+	struct oil_scale *scale_os;
 	int (*scale_in)(struct oil_scale *, unsigned char *);
 	int (*scale_out)(struct oil_scale *, unsigned char *);
 	void (*decode_row)(struct resumable_resize *, unsigned char *, int);
 	void (*format_end)(struct resumable_resize *);
 
-	struct jpeg_decompress_struct *dinfo;
+	struct oil_libjpeg olj;
 	png_structp rpng;
 	png_infop rinfo;
 
@@ -356,6 +359,7 @@ static int png_start(struct resumable_resize *rr) {
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
 		return -1;
 	}
+	rr->scale_os = &rr->os;
 
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
 	if (!rr->outbuf) goto fail_os;
@@ -404,32 +408,22 @@ static void jpeg_err_exit(j_common_ptr cinfo)
 
 static void decode_jpeg_row(struct resumable_resize *rr, unsigned char *slot, int row) {
 	(void)row;
-#ifdef LIBJPEG_TURBO_VERSION
-	jpeg_read_scanlines(rr->dinfo, &slot, 1);
-#else
-	jpeg_read_scanlines(rr->dinfo, &rr->scratch, 1);
-	memcpy(slot, rr->scratch + rr->fed_x * rr->cmp, rr->slot_rowbytes);
-#endif
+	oil_libjpeg_decode_row(&rr->olj, slot);
 }
 
 static void jpeg_end(struct resumable_resize *rr) {
-	free(rr->scratch);
+	struct jpeg_decompress_struct *dinfo = rr->olj.dinfo;
 	free(rr->outbuf);
-	oil_scale_free(&rr->os);
-	free(rr->dinfo->err);
-	jpeg_destroy_decompress(rr->dinfo);
-	free(rr->dinfo);
+	oil_libjpeg_free(&rr->olj);
+	free(dinfo->err);
+	jpeg_destroy_decompress(dinfo);
+	free(dinfo);
 }
 
 static int jpeg_start(struct resumable_resize *rr)
 {
 	struct jpeg_decompress_struct *dinfo;
 	struct jpeg_err *jerr;
-#ifdef LIBJPEG_TURBO_VERSION
-	JDIMENSION crop_x, crop_w;
-#else
-	int i;
-#endif
 
 	dinfo = malloc(sizeof(struct jpeg_decompress_struct));
 	if (!dinfo) {
@@ -441,7 +435,6 @@ static int jpeg_start(struct resumable_resize *rr)
 		return -1;
 	}
 
-	rr->dinfo = dinfo;
 	dinfo->err = jpeg_std_error(&jerr->mgr);
 	jerr->mgr.error_exit = jpeg_err_exit;
 	jpeg_create_decompress(dinfo);
@@ -471,37 +464,25 @@ static int jpeg_start(struct resumable_resize *rr)
 	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) goto fail_jpeg;
 	if (compute_fed_and_out(rr) < 0) goto fail_jpeg;
 
-#ifdef LIBJPEG_TURBO_VERSION
-	crop_x = rr->fed_x;
-	crop_w = rr->fed_width;
-	jpeg_crop_scanline(dinfo, &crop_x, &crop_w);
-	rr->fed_x = crop_x;
-	rr->fed_width = crop_w;
-#endif
+	if (oil_libjpeg_init_ex(&rr->olj, dinfo, rr->out_width, rr->out_height,
+		rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h) != 0) {
+		goto fail_jpeg;
+	}
+	/* jpeg_crop_scanline (turbo) may widen fed_w to an iMCU boundary; the
+	 * authoritative value is what the wrapper recorded. */
+	rr->fed_width = rr->olj.fed_width;
 	rr->slot_rowbytes = rr->fed_width * rr->cmp;
-
-	if (init_scaler(rr) != 0) goto fail_jpeg;
+	rr->scale_os = &rr->olj.os;
 
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
-	if (!rr->outbuf) goto fail_os;
-
-#ifdef LIBJPEG_TURBO_VERSION
-	if (rr->fed_y > 0) jpeg_skip_scanlines(dinfo, rr->fed_y);
-#else
-	rr->scratch = malloc(rr->in_rowbytes);
-	if (!rr->scratch) goto fail_os;
-	for (i = 0; i < rr->fed_y; i++) {
-		jpeg_read_scanlines(dinfo, &rr->scratch, 1);
-	}
-#endif
+	if (!rr->outbuf) goto fail_olj;
 
 	rr->decode_row = decode_jpeg_row;
 	rr->format_end = jpeg_end;
 	return 0;
 
-fail_os:
-	free(rr->outbuf);
-	oil_scale_free(&rr->os);
+fail_olj:
+	oil_libjpeg_free(&rr->olj);
 fail_jpeg:
 	jpeg_destroy_decompress(dinfo);
 	free(jerr);
@@ -535,7 +516,7 @@ static void translate(unsigned char *in, unsigned char *out, int width, int cmp)
 static void finish_output_row(struct resumable_resize *rr, int local_ypos)
 {
 	unsigned char *tmp;
-	rr->scale_out(&rr->os, rr->outbuf);
+	rr->scale_out(rr->scale_os, rr->outbuf);
 	tmp = rr->scaled_buf + local_ypos * rr->out_width * 4;
 	translate(rr->outbuf, tmp, rr->out_width, rr->cmp);
 
@@ -587,7 +568,7 @@ static int scaler_thread_fn(void *arg)
 	int local_ypos = 0;
 
 	while (local_ypos < rr->out_height) {
-		while (oil_scale_slots(&rr->os) > 0) {
+		while (oil_scale_slots(rr->scale_os) > 0) {
 			unsigned char *slot;
 
 			SDL_LockMutex(p->mutex);
@@ -601,7 +582,7 @@ static int scaler_thread_fn(void *arg)
 			slot = p->slots[p->tail];
 			SDL_UnlockMutex(p->mutex);
 
-			rr->scale_in(&rr->os, slot);
+			rr->scale_in(rr->scale_os, slot);
 
 			SDL_LockMutex(p->mutex);
 			p->tail = (p->tail + 1) % LINE_QUEUE_DEPTH;
@@ -636,9 +617,9 @@ static int worker_thread_fn(void *arg)
 		SDL_UnlockMutex(p->mutex);
 		if (aborted) goto done;
 
-		while (oil_scale_slots(&rr->os) > 0) {
+		while (oil_scale_slots(rr->scale_os) > 0) {
 			rr->decode_row(rr, inbuf, row++);
-			rr->scale_in(&rr->os, inbuf);
+			rr->scale_in(rr->scale_os, inbuf);
 		}
 
 		finish_output_row(rr, local_ypos);
