@@ -5,10 +5,13 @@
 #include <SDL3/SDL.h>
 #include <jpeglib.h>
 #include <png.h>
+#include <jxl/decode.h>
+#include <jxl/thread_parallel_runner.h>
 
 #include "oil_resample.h"
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
+#include "oil_libjxl.h"
 
 #define LINE_QUEUE_DEPTH 16
 #define MIN_DRAG_PIXELS 5.0f
@@ -132,7 +135,7 @@ struct resumable_resize {
 	unsigned char *scaled_buf;
 
 	/* scale_os points at the active wrapper's oil_scale (olj.os for
-	 * JPEG, olp.os for PNG). */
+	 * JPEG, olp.os for PNG, olx.os for JXL). */
 	struct oil_scale *scale_os;
 	int (*scale_in)(struct oil_scale *, unsigned char *);
 	int (*scale_out)(struct oil_scale *, unsigned char *);
@@ -141,6 +144,13 @@ struct resumable_resize {
 
 	struct oil_libjpeg olj;
 	struct oil_libpng olp;
+
+	/* JXL: the wrapper borrows the decoder + runner and reads the whole
+	 * codestream from jxl_data, so all three outlive the wrapper. */
+	struct oil_libjxl olx;
+	JxlDecoder *jxl_dec;
+	void *jxl_runner;
+	unsigned char *jxl_data;
 
 	struct rr_pipeline pipe;
 };
@@ -428,6 +438,120 @@ fail_jpeg:
 }
 
 /* ===========================================================================
+ * Resumable resize — JPEG XL decoder
+ * =========================================================================== */
+
+static void decode_jxl_row(struct resumable_resize *rr, unsigned char *slot, int row) {
+	(void)row;
+	oil_libjxl_decode_row(&rr->olx, slot);
+}
+
+static void jxl_end(struct resumable_resize *rr) {
+	free(rr->outbuf);
+	/* Joins the wrapper's producer thread before the decoder it drives is
+	 * destroyed, so this order matters. */
+	oil_libjxl_free(&rr->olx);
+	if (rr->jxl_dec) JxlDecoderDestroy(rr->jxl_dec);
+	if (rr->jxl_runner) JxlThreadParallelRunnerDestroy(rr->jxl_runner);
+	free(rr->jxl_data);
+}
+
+/* Read the whole open file into a freshly malloc'd buffer. */
+static unsigned char *slurp_file(FILE *io, size_t *size_out) {
+	long pos;
+	unsigned char *buf;
+	if (fseek(io, 0, SEEK_END) != 0) return NULL;
+	pos = ftell(io);
+	if (pos < 0) return NULL;
+	rewind(io);
+	buf = malloc((size_t)pos);
+	if (!buf) return NULL;
+	if (fread(buf, 1, (size_t)pos, io) != (size_t)pos) {
+		free(buf);
+		return NULL;
+	}
+	*size_out = (size_t)pos;
+	return buf;
+}
+
+static int jxl_start(struct resumable_resize *rr)
+{
+	size_t insize;
+	JxlBasicInfo info;
+	JxlDecoderStatus s;
+
+	rr->jxl_data = slurp_file(rr->io, &insize);
+	if (!rr->jxl_data) return -1;
+
+	/* The wrapper spawns its own producer thread regardless; --no-threaded
+	 * only collapses sdltest's own decode/scale pipeline, so cap the libjxl
+	 * worker pool at one in that mode. */
+	rr->jxl_runner = JxlThreadParallelRunnerCreate(NULL,
+		rr->cfg.threaded ? JxlThreadParallelRunnerDefaultNumWorkerThreads() : 1);
+	if (!rr->jxl_runner) goto fail_data;
+
+	rr->jxl_dec = JxlDecoderCreate(NULL);
+	if (!rr->jxl_dec) goto fail_runner;
+
+	if (JxlDecoderSetParallelRunner(rr->jxl_dec, JxlThreadParallelRunner,
+			rr->jxl_runner) != JXL_DEC_SUCCESS) goto fail_dec;
+	if (JxlDecoderSubscribeEvents(rr->jxl_dec,
+			JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS)
+		goto fail_dec;
+	/* oil wants straight alpha; this must precede the first ProcessInput and
+	 * is a no-op for images without associated (premultiplied) alpha. */
+	if (JxlDecoderSetUnpremultiplyAlpha(rr->jxl_dec, JXL_TRUE)
+			!= JXL_DEC_SUCCESS) goto fail_dec;
+	JxlDecoderSetInput(rr->jxl_dec, rr->jxl_data, insize);
+	JxlDecoderCloseInput(rr->jxl_dec);
+
+	s = JxlDecoderProcessInput(rr->jxl_dec);
+	if (s != JXL_DEC_BASIC_INFO) goto fail_dec;
+	if (JxlDecoderGetBasicInfo(rr->jxl_dec, &info) != JXL_DEC_SUCCESS)
+		goto fail_dec;
+
+	rr->img_width = info.xsize;
+	rr->img_height = info.ysize;
+	rr->cs = jxl_cs_to_oil(&info);
+	if (rr->cs == OIL_CS_UNKNOWN) goto fail_dec;
+	if (rr->cfg.no_gamma) rr->cs = nogamma_cs(rr->cs);
+	rr->cmp = OIL_CMP(rr->cs);
+
+	clamp_crop(rr);
+	if (rr->cfg.src_w < 1 || rr->cfg.src_h < 1) goto fail_dec;
+	if (compute_fed_and_out(rr) < 0) goto fail_dec;
+	rr->slot_rowbytes = rr->fed_width * rr->cmp;
+
+	if (oil_libjxl_init_ex(&rr->olx, rr->jxl_dec, &info,
+			rr->out_width, rr->out_height,
+			rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h,
+			rr->cs) != 0) {
+		goto fail_dec;
+	}
+	rr->scale_os = &rr->olx.os;
+
+	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
+	if (!rr->outbuf) goto fail_olx;
+
+	rr->decode_row = decode_jxl_row;
+	rr->format_end = jxl_end;
+	return 0;
+
+fail_olx:
+	oil_libjxl_free(&rr->olx);
+fail_dec:
+	JxlDecoderDestroy(rr->jxl_dec);
+	rr->jxl_dec = NULL;
+fail_runner:
+	JxlThreadParallelRunnerDestroy(rr->jxl_runner);
+	rr->jxl_runner = NULL;
+fail_data:
+	free(rr->jxl_data);
+	rr->jxl_data = NULL;
+	return -1;
+}
+
+/* ===========================================================================
  * Resumable resize — worker threads
  * =========================================================================== */
 
@@ -574,12 +698,25 @@ done:
  * Resumable resize — session lifecycle
  * =========================================================================== */
 
-static int looks_like_png(FILE *io)
+enum img_format { FMT_JPEG, FMT_PNG, FMT_JXL };
+
+/* Sniff the leading bytes (then rewind) to pick a decoder. JXL appears either
+ * as a raw codestream (FF 0A) or wrapped in an ISOBMFF "JXL " box; anything
+ * unrecognized falls through to JPEG, matching the prior default. */
+static enum img_format detect_format(FILE *io)
 {
-	int peek;
-	peek = getc(io);
-	ungetc(peek, io);
-	return peek == PNG_FIRST_MAGIC_BYTE;
+	static const unsigned char jxl_box[12] = {
+		0x00, 0x00, 0x00, 0x0C, 'J', 'X', 'L', ' ',
+		0x0D, 0x0A, 0x87, 0x0A
+	};
+	unsigned char buf[12];
+	size_t n = fread(buf, 1, sizeof(buf), io);
+	fseek(io, 0, SEEK_SET);
+
+	if (n >= 1 && buf[0] == PNG_FIRST_MAGIC_BYTE) return FMT_PNG;
+	if (n >= 2 && buf[0] == 0xFF && buf[1] == 0x0A) return FMT_JXL;
+	if (n >= 12 && memcmp(buf, jxl_box, 12) == 0) return FMT_JXL;
+	return FMT_JPEG;
 }
 
 static int resumable_resize_start(struct resumable_resize *rr, char *path,
@@ -587,8 +724,7 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
                                   const struct rr_config *cfg)
 {
 	struct rr_pipeline *p;
-	int i;
-	int is_png;
+	int i, ret;
 
 	memset(rr, 0, sizeof(*rr));
 	rr->cfg = *cfg;
@@ -602,9 +738,13 @@ static int resumable_resize_start(struct resumable_resize *rr, char *path,
 		fprintf(stderr, "Error: unable to open %s\n", path);
 		return -1;
 	}
-	is_png = looks_like_png(rr->io);
 
-	if (is_png ? png_start(rr) : jpeg_start(rr)) {
+	switch (detect_format(rr->io)) {
+	case FMT_PNG:  ret = png_start(rr);  break;
+	case FMT_JXL:  ret = jxl_start(rr);  break;
+	default:       ret = jpeg_start(rr); break;
+	}
+	if (ret) {
 		goto fail_io;
 	}
 
