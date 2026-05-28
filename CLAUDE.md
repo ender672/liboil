@@ -30,3 +30,5 @@ Three layers, all C with no external build system beyond make:
 - **JPEG wrapper** (`oil_libjpeg.h/c`): Integrates with `libjpeg`'s `jpeg_decompress_struct` to feed scanlines into the core resampler.
 
 - **PNG wrapper** (`oil_libpng.h/c`): Integrates with `libpng`. Handles both interlaced (Adam7, requires full image buffer) and non-interlaced PNGs.
+
+- **JPEG XL wrapper** (`oil_libjxl.h/c`): Integrates with `libjxl`. libjxl has no incremental pull API (one `JxlDecoderProcessInput` decodes the whole frame, dispatching partial scanlines to worker threads out of order), so the wrapper runs the decode on its own producer thread that routes partials into a lock-free per-row tile buffer; the calling thread pulls finalized scanlines top-to-bottom. The caller owns the `JxlDecoder` and parallel runner and must drive it to `JXL_DEC_BASIC_INFO` before init.
