@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef __GLIBC__
+#include <malloc.h>   /* malloc_trim */
+#endif
 #include <SDL3/SDL.h>
 #include <jpeglib.h>
 #include <png.h>
@@ -826,6 +829,17 @@ static void resumable_resize_end(struct resumable_resize *rr)
 
 	rr->format_end(rr);
 	fclose(rr->io);
+
+#ifdef __GLIBC__
+	/* A single resize allocates ~the whole decoded frame (libjxl's output
+	 * canvas plus the wrapper's scanline backlog -- hundreds of MB for a
+	 * large JXL), then frees it here. glibc retains those chunks in the
+	 * per-thread arenas of the libjxl worker/producer threads rather than
+	 * returning them to the OS, so RSS ratchets upward across successive
+	 * resizes. Hand the freed pages back now; this is cheap unless there is
+	 * actually a lot to release, which is exactly when we want it. */
+	malloc_trim(0);
+#endif
 }
 
 /* ===========================================================================
