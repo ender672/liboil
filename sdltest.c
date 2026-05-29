@@ -144,6 +144,9 @@ struct resumable_resize {
 	int (*scale_out)(struct oil_scale *, unsigned char *);
 	void (*decode_row)(struct resumable_resize *, unsigned char *, int);
 	void (*format_end)(struct resumable_resize *);
+	/* Optional: abandon an in-progress decode so resumable_resize_end's joins
+	 * return promptly. NULL for formats needing no mid-decode cancel (JPEG/PNG). */
+	void (*format_cancel)(struct resumable_resize *);
 
 	struct oil_libjpeg olj;
 	struct oil_libpng olp;
@@ -449,13 +452,17 @@ static void decode_jxl_row(struct resumable_resize *rr, unsigned char *slot, int
 	oil_libjxl_decode_row(&rr->olx, slot);
 }
 
+static void jxl_cancel(struct resumable_resize *rr) {
+	oil_libjxl_cancel(&rr->olx);
+}
+
 static void jxl_end(struct resumable_resize *rr) {
 	free(rr->outbuf);
 	/* Joins the wrapper's producer thread before the decoder it drives is
 	 * destroyed, so this order matters. */
 	oil_libjxl_free(&rr->olx);
 	if (rr->jxl_dec) JxlDecoderDestroy(rr->jxl_dec);
-	if (rr->jxl_runner) JxlThreadParallelRunnerDestroy(rr->jxl_runner);
+	if (rr->jxl_runner) oil_libjxl_runner_destroy(rr->jxl_runner);
 	free(rr->jxl_data);
 }
 
@@ -486,17 +493,17 @@ static int jxl_start(struct resumable_resize *rr)
 	rr->jxl_data = slurp_file(rr->io, &insize);
 	if (!rr->jxl_data) return -1;
 
-	/* The wrapper spawns its own producer thread regardless; --no-threaded
-	 * only collapses sdltest's own decode/scale pipeline, so cap the libjxl
-	 * worker pool at one in that mode. */
-	rr->jxl_runner = JxlThreadParallelRunnerCreate(NULL,
-		rr->cfg.threaded ? JxlThreadParallelRunnerDefaultNumWorkerThreads() : 1);
+	/* Cancellable runner (lets a superseded resize abandon its decode --
+	 * oil_libjxl_cancel). The wrapper always spawns its own producer thread;
+	 * --no-threaded only collapses sdltest's pipeline, so use one worker then. */
+	rr->jxl_runner = oil_libjxl_runner_create(
+		rr->cfg.threaded ? 0 : 1);
 	if (!rr->jxl_runner) goto fail_data;
 
 	rr->jxl_dec = JxlDecoderCreate(NULL);
 	if (!rr->jxl_dec) goto fail_runner;
 
-	if (JxlDecoderSetParallelRunner(rr->jxl_dec, JxlThreadParallelRunner,
+	if (JxlDecoderSetParallelRunner(rr->jxl_dec, oil_libjxl_parallel_runner,
 			rr->jxl_runner) != JXL_DEC_SUCCESS) goto fail_dec;
 	if (JxlDecoderSubscribeEvents(rr->jxl_dec,
 			JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS)
@@ -532,12 +539,14 @@ static int jxl_start(struct resumable_resize *rr)
 		goto fail_dec;
 	}
 	rr->scale_os = &rr->olx.os;
+	rr->olx.runner = rr->jxl_runner;  /* enable prompt cancellation */
 
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
 	if (!rr->outbuf) goto fail_olx;
 
 	rr->decode_row = decode_jxl_row;
 	rr->format_end = jxl_end;
+	rr->format_cancel = jxl_cancel;
 	return 0;
 
 fail_olx:
@@ -546,7 +555,7 @@ fail_dec:
 	JxlDecoderDestroy(rr->jxl_dec);
 	rr->jxl_dec = NULL;
 fail_runner:
-	JxlThreadParallelRunnerDestroy(rr->jxl_runner);
+	oil_libjxl_runner_destroy(rr->jxl_runner);
 	rr->jxl_runner = NULL;
 fail_data:
 	free(rr->jxl_data);
@@ -812,6 +821,12 @@ static void resumable_resize_end(struct resumable_resize *rr)
 	SDL_BroadcastCondition(p->cv);
 	SDL_UnlockMutex(p->mutex);
 
+	/* Abandon the decode (JXL): a thread blocked in oil_libjxl_decode_row won't
+	 * see p->aborted until its row arrives, so cancel here for the joins below
+	 * to return promptly. NULL hook for other formats / uninitialized wrapper. */
+	if (rr->format_cancel)
+		rr->format_cancel(rr);
+
 	if (rr->cfg.threaded) {
 		SDL_WaitThread(p->decoder_thread, NULL);
 		SDL_WaitThread(p->scaler_thread, NULL);
@@ -831,13 +846,10 @@ static void resumable_resize_end(struct resumable_resize *rr)
 	fclose(rr->io);
 
 #ifdef __GLIBC__
-	/* A single resize allocates ~the whole decoded frame (libjxl's output
-	 * canvas plus the wrapper's scanline backlog -- hundreds of MB for a
-	 * large JXL), then frees it here. glibc retains those chunks in the
-	 * per-thread arenas of the libjxl worker/producer threads rather than
-	 * returning them to the OS, so RSS ratchets upward across successive
-	 * resizes. Hand the freed pages back now; this is cheap unless there is
-	 * actually a lot to release, which is exactly when we want it. */
+	/* A large resize allocates ~the whole decoded frame then frees it here, but
+	 * glibc keeps those chunks in the libjxl worker/producer threads' arenas
+	 * instead of returning them to the OS, so RSS ratchets up across resizes.
+	 * Hand the pages back; cheap unless there's a lot to release -- when we want it. */
 	malloc_trim(0);
 #endif
 }

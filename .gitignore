@@ -3,6 +3,11 @@ test
 test_libjpeg
 test_libpng
 test_libjxl
+test_jxl_cancel
+test_jxl_regress
+jxlmembench
+jxlstarvebench
+jxlperfbench
 imgscale
 oilview
 benchmark

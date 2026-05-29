@@ -17,10 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <jxl/decode.h>
-#include <jxl/encode.h>
 #include <jxl/thread_parallel_runner.h>
 #include "oil_resample.h"
 #include "oil_libjxl.h"
+#include "jxl_testutil.h"
 
 /* IN_W is wider than the tile buffer's 256px tile_w so the full-image and
  * wide-crop decodes span multiple tiles, exercising the multi-tile coalescing
@@ -28,100 +28,6 @@
  * per-tile loop in tile_buf_partial). */
 #define IN_W 600
 #define IN_H 192
-
-static void encode_gradient_jxl(unsigned char **out, size_t *out_size)
-{
-	JxlEncoder *enc;
-	JxlEncoderFrameSettings *fs;
-	JxlBasicInfo info;
-	JxlColorEncoding color;
-	JxlPixelFormat fmt = {3, JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
-	unsigned char *pixels;
-	size_t cap, used;
-	int x, y;
-
-	pixels = malloc((size_t)IN_W * IN_H * 3);
-	assert(pixels);
-	for (y = 0; y < IN_H; y++) {
-		for (x = 0; x < IN_W; x++) {
-			unsigned char *p = pixels + ((size_t)y * IN_W + x) * 3;
-			p[0] = (unsigned char)x;
-			p[1] = (unsigned char)y;
-			p[2] = (unsigned char)((x + y) >> 1);
-		}
-	}
-
-	enc = JxlEncoderCreate(NULL);
-	assert(enc);
-
-	JxlEncoderInitBasicInfo(&info);
-	info.xsize = IN_W;
-	info.ysize = IN_H;
-	info.bits_per_sample = 8;
-	info.exponent_bits_per_sample = 0;
-	info.num_color_channels = 3;
-	info.alpha_bits = 0;
-	info.uses_original_profile = JXL_TRUE;
-	assert(JxlEncoderSetBasicInfo(enc, &info) == JXL_ENC_SUCCESS);
-
-	JxlColorEncodingSetToSRGB(&color, JXL_FALSE);
-	assert(JxlEncoderSetColorEncoding(enc, &color) == JXL_ENC_SUCCESS);
-
-	fs = JxlEncoderFrameSettingsCreate(enc, NULL);
-	assert(fs);
-	assert(JxlEncoderSetFrameLossless(fs, JXL_TRUE) == JXL_ENC_SUCCESS);
-
-	assert(JxlEncoderAddImageFrame(fs, &fmt, pixels,
-		(size_t)IN_W * IN_H * 3) == JXL_ENC_SUCCESS);
-	JxlEncoderCloseInput(enc);
-
-	cap = 1 << 20;
-	*out = malloc(cap);
-	assert(*out);
-	used = 0;
-	for (;;) {
-		uint8_t *next = *out + used;
-		size_t avail = cap - used;
-		JxlEncoderStatus s = JxlEncoderProcessOutput(enc, &next, &avail);
-		used = cap - avail;
-		if (s == JXL_ENC_SUCCESS) break;
-		assert(s == JXL_ENC_NEED_MORE_OUTPUT);
-		cap *= 2;
-		*out = realloc(*out, cap);
-		assert(*out);
-	}
-	*out_size = used;
-
-	JxlEncoderDestroy(enc);
-	free(pixels);
-}
-
-/* Create a decoder, advance to JXL_DEC_BASIC_INFO, and fill *info. The runner
- * is returned via *runner_out for the caller to destroy. */
-static JxlDecoder *open_jxl(unsigned char *data, size_t size,
-	void **runner_out, JxlBasicInfo *info)
-{
-	JxlDecoder *dec;
-	void *runner;
-
-	runner = JxlThreadParallelRunnerCreate(NULL,
-		JxlThreadParallelRunnerDefaultNumWorkerThreads());
-	assert(runner);
-	dec = JxlDecoderCreate(NULL);
-	assert(dec);
-	assert(JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner)
-		== JXL_DEC_SUCCESS);
-	assert(JxlDecoderSubscribeEvents(dec,
-		JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) == JXL_DEC_SUCCESS);
-	JxlDecoderSetInput(dec, data, size);
-	JxlDecoderCloseInput(dec);
-
-	assert(JxlDecoderProcessInput(dec) == JXL_DEC_BASIC_INFO);
-	assert(JxlDecoderGetBasicInfo(dec, info) == JXL_DEC_SUCCESS);
-
-	*runner_out = runner;
-	return dec;
-}
 
 static unsigned char *decode_bundled(unsigned char *data, size_t size,
 	int out_w, int out_h,
@@ -253,7 +159,7 @@ int main(void)
 	unsigned char *jxl;
 	size_t jxl_size;
 
-	encode_gradient_jxl(&jxl, &jxl_size);
+	encode_gradient_jxl(IN_W, IN_H, &jxl, &jxl_size);
 	printf("encoded test JXL: %zu bytes (%dx%d gradient)\n",
 		jxl_size, IN_W, IN_H);
 

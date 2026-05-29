@@ -23,8 +23,10 @@
 #define OIL_LIBJXL_H
 
 #include <pthread.h>
+#include <stddef.h>
 #include <jxl/decode.h>
 #include <jxl/codestream_header.h>
+#include <jxl/parallel_runner.h>
 #include "oil_resample.h"
 
 /* Defined privately in oil_libjxl.c. */
@@ -33,10 +35,8 @@ struct oil_jxl_tile_buf;
 struct oil_libjxl {
 	struct oil_scale os;
 
-	/* Decoder borrowed from the caller (see oil_libjxl_init_ex). The
-	 * wrapper drives JxlDecoderProcessInput on its own producer thread;
-	 * the caller still owns the decoder and parallel runner and must not
-	 * touch the decoder until oil_libjxl_free returns. */
+	/* Borrowed from the caller; the wrapper's producer thread drives it, so the
+	 * caller must not touch @dec until oil_libjxl_free returns. */
 	JxlDecoder *dec;
 	JxlPixelFormat fmt;
 
@@ -45,6 +45,11 @@ struct oil_libjxl {
 	struct oil_jxl_tile_buf *tb;
 	pthread_t producer;
 	int producer_started;
+
+	/* Optional oil_libjxl_runner_create handle, set by the caller after init to
+	 * enable prompt cancellation; NULL = non-cancellable runner, so cancel stops
+	 * only the consumer side and free waits out the decode. */
+	void *runner;
 
 	unsigned char *inbuf;  /* fed_width*components fallback row on error */
 	int in_vpos;           /* next tile-buffer row to consume */
@@ -79,47 +84,27 @@ int oil_libjxl_init(struct oil_libjxl *ol, JxlDecoder *dec,
 /**
  * Initialize an oil_libjxl struct with a sub-pixel source rect.
  *
- * libjxl has no incremental pull API: a single JxlDecoderProcessInput call
- * decodes the whole frame, dispatching partial scanlines to worker threads in
- * arbitrary order. The wrapper therefore runs the decode on its own producer
- * thread that routes those partials into a lock-free per-row tile buffer; the
- * calling thread pulls finalized scanlines top-to-bottom. The wrapper computes
- * the required fed input rect (with halo for the Catmull-Rom kernel) via
- * oil_required_input_rect; the tile buffer is scoped to that rect, so pixels
- * outside it (rows above/below, columns left/right) are neither buffered nor
- * copied even though libjxl still decodes the full frame.
+ * libjxl has no incremental pull API (one JxlDecoderProcessInput decodes the
+ * whole frame, dispatching partials to workers out of order), so the wrapper
+ * drives the decode on its own producer thread feeding a per-row tile buffer
+ * scoped to the fed rect; the caller pulls finalized rows top-to-bottom.
  *
- * The caller must, before calling this function, have:
- *   - created @dec and a JxlThreadParallelRunner and bound them with
- *     JxlDecoderSetParallelRunner,
- *   - subscribed at least JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE,
- *   - supplied the entire codestream via JxlDecoderSetInput +
- *     JxlDecoderCloseInput,
- *   - driven JxlDecoderProcessInput until it returned JXL_DEC_BASIC_INFO and
- *     filled @info via JxlDecoderGetBasicInfo.
- * oil premultiplies alpha internally and therefore expects straight
- * (non-premultiplied) alpha input. For images whose alpha is stored as
- * associated/premultiplied (info->alpha_premultiplied), the caller must call
- * JxlDecoderSetUnpremultiplyAlpha(dec, JXL_TRUE) during the setup above,
- * before the first JxlDecoderProcessInput -- libjxl requires that option to be
- * set before decoding begins, which is already past by the time this function
- * runs. The call is a documented no-op for images without associated alpha.
- * The wrapper takes over the decoder from that point; the caller must not call
- * JxlDecoderProcessInput (or otherwise touch @dec) again until after
- * oil_libjxl_free. Ownership of @dec and the runner stays with the caller,
- * which destroys them after oil_libjxl_free.
+ * Before calling, the caller must have created @dec, bound a parallel runner,
+ * subscribed >= JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE, supplied the whole
+ * codestream (SetInput + CloseInput), and driven ProcessInput to
+ * JXL_DEC_BASIC_INFO with @info filled. oil expects straight alpha, so for
+ * associated/premultiplied alpha the caller must also have set
+ * JxlDecoderSetUnpremultiplyAlpha(dec, JXL_TRUE) (must precede the first
+ * ProcessInput; a no-op otherwise). The wrapper then owns @dec until
+ * oil_libjxl_free -- the caller must not touch it meanwhile -- but still
+ * destroys @dec and the runner afterwards.
  *
- * @src_x, @src_y, @src_width, @src_height: Source rect inside the full image,
- *     in source pixels (may be fractional). Must fit within the image bounds.
- * @cs_override: If OIL_CS_UNKNOWN, the wrapper derives the scaler's colorspace
- *     from @info. Otherwise the override is passed to oil_scale_init_ex; this
- *     is how callers select the no-gamma variants. The override must have the
- *     same OIL_CMP as the derived colorspace.
+ * @src_*: source rect in (possibly fractional) source pixels, within bounds.
+ * @cs_override: OIL_CS_UNKNOWN derives the colorspace from @info; otherwise it
+ *     is passed to oil_scale_init_ex (how callers pick no-gamma variants) and
+ *     must share the derived OIL_CMP.
  *
- * Returns 0 on success.
- * Returns -1 if an argument is bad.
- * Returns -2 if unable to allocate memory.
- * Returns -3 if a decoder/thread setup call failed.
+ * Returns 0, or -1 (bad arg) / -2 (alloc) / -3 (decoder/thread setup).
  */
 int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	const JxlBasicInfo *info, int out_width, int out_height,
@@ -127,27 +112,71 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	enum oil_colorspace cs_override);
 
 /**
- * Join the producer thread and free heap allocations associated with the
- * wrapper. Does not destroy the caller-owned decoder or parallel runner.
+ * Join the producer thread and free the wrapper's allocations (not the
+ * caller-owned decoder or runner). If ol->runner is set, cancels the decode
+ * first so free returns promptly instead of waiting out the frame.
  */
 void oil_libjxl_free(struct oil_libjxl *ol);
 
 /**
- * Decode the next input row into a caller-supplied buffer.
+ * Cancellable parallel runner for libjxl. libjxl offers no way to interrupt the
+ * single ProcessInput that decodes a frame; this thread pool checks a cancel
+ * flag before each work item so an interactive caller can abandon a superseded
+ * decode mid-frame and release libjxl's frame state.
  *
- * @ol: Initialized wrapper.
- * @dst: Destination buffer of at least ol->fed_width * ol->components bytes.
- *     On success, holds one row of decoded pixels in the wrapper's colorspace,
- *     restricted to the cropped fed rect.
- *
- * Callers driving the scaler themselves (e.g., to use SIMD entry points or to
- * interpose a slot queue between decode and scale) use this in place of the
- * bundled oil_libjxl_read_scanline. If the producer thread reported a decode
- * failure, ol->error is set and the row is zero-filled.
+ * Usage: create one, bind it before the pre-init BASIC_INFO decode, then point
+ * ol->runner at it after oil_libjxl_init_ex:
+ *     void *r = oil_libjxl_runner_create(0);            // 0 = default count
+ *     JxlDecoderSetParallelRunner(dec, oil_libjxl_parallel_runner, r);
+ *     ... drive to BASIC_INFO, oil_libjxl_init_ex(...) ...
+ *     ol.runner = r;
+ * Cancel from any thread via oil_libjxl_cancel(&ol). A cancelled runner
+ * (including by oil_libjxl_free) needs oil_libjxl_runner_reset before reuse;
+ * destroy only when no decode is in flight.
+ */
+void *oil_libjxl_runner_create(size_t num_threads);
+void  oil_libjxl_runner_destroy(void *runner);
+void  oil_libjxl_runner_reset(void *runner);
+JxlParallelRetCode oil_libjxl_parallel_runner(void *runner, void *jxl,
+	JxlParallelRunInit init, JxlParallelRunFunction func,
+	uint32_t start_range, uint32_t end_range);
+
+/**
+ * Abandon the in-progress decode so the producer can be joined quickly: rows
+ * requested afterward read the zeroed fallback with ol->error set. With
+ * ol->runner NULL it cancels only the consumer side. Idempotent.
+ */
+void oil_libjxl_cancel(struct oil_libjxl *ol);
+
+/**
+ * Decode the next fed row into @dst (>= ol->fed_width * ol->components bytes),
+ * for callers driving the scaler themselves instead of oil_libjxl_read_scanline
+ * (e.g. SIMD entry points, or a slot queue between decode and scale). On decode
+ * failure ol->error is set and the row is zero-filled.
  */
 void oil_libjxl_decode_row(struct oil_libjxl *ol, unsigned char *dst);
 
 void oil_libjxl_read_scanline(struct oil_libjxl *ol, unsigned char *outbuf);
+
+/**
+ * High-water mark of finalized-but-unconsumed rows the wrapper buffered: its
+ * peak heap footprint beyond libjxl's, in rows (x fed_width*components = bytes).
+ */
+size_t oil_libjxl_peak_buffered_rows(const struct oil_libjxl *ol);
+
+/**
+ * Starvation / window self-tuning instrumentation:
+ *   consumer_waits      - times the resize thread blocked on an unready row
+ *                         (many are legitimate decode lag).
+ *   induced_starvations - the subset where a producer was paused by
+ *                         back-pressure; should settle at zero, else thrashing.
+ *   window_grows        - window enlargements.
+ *   window              - current (settled) window size.
+ */
+size_t oil_libjxl_consumer_waits(const struct oil_libjxl *ol);
+size_t oil_libjxl_induced_starvations(const struct oil_libjxl *ol);
+size_t oil_libjxl_window_grows(const struct oil_libjxl *ol);
+size_t oil_libjxl_window(const struct oil_libjxl *ol);
 
 enum oil_colorspace jxl_cs_to_oil(const JxlBasicInfo *info);
 
