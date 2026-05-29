@@ -86,8 +86,9 @@ int oil_libjxl_init(struct oil_libjxl *ol, JxlDecoder *dec,
  * thread that routes those partials into a lock-free per-row tile buffer; the
  * calling thread pulls finalized scanlines top-to-bottom. The wrapper computes
  * the required fed input rect (with halo for the Catmull-Rom kernel) via
- * oil_required_input_rect; rows outside the rect are decoded but skipped, and
- * the fed_x..fed_x+fed_w column slice is taken from each consumed row.
+ * oil_required_input_rect; the tile buffer is scoped to that rect, so pixels
+ * outside it (rows above/below, columns left/right) are neither buffered nor
+ * copied even though libjxl still decodes the full frame.
  *
  * The caller must, before calling this function, have:
  *   - created @dec and a JxlThreadParallelRunner and bound them with

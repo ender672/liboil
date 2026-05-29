@@ -34,12 +34,19 @@
  * write completes a row's last tile coalesces that row's tiles into one
  * contiguous scanline and signals waiters; the consumer walks rows
  * top-to-bottom, consumes each scanline, and releases it. Bookkeeping memory
- * scales with the in-flight row set, not image height. */
+ * scales with the in-flight row set, not image height.
+ *
+ * The buffer is scoped to the cropped fed rect: it tracks only the
+ * [x0, x0+w) x [y0, y0+h) source region the scaler will read. Incoming
+ * segments are translated into crop-local coordinates and any pixels outside
+ * the rect are skipped, so rows and columns the caller never consumes are
+ * neither buffered nor copied. */
 
 typedef _Atomic(uint8_t *) atomic_ptr;
 
 struct oil_jxl_tile_buf {
-	size_t w, h, bpp;
+	size_t x0, y0;       /* crop origin in full-image coords */
+	size_t w, h, bpp;    /* crop dimensions */
 	size_t row_bytes;
 	size_t tile_w;
 	size_t tile_bytes;
@@ -98,11 +105,29 @@ static void tile_buf_partial(struct oil_jxl_tile_buf *s,
                              const void *pixels)
 {
 	const uint8_t *src = pixels;
-	size_t tile_lo = x / s->tile_w;
-	size_t tile_hi = (x + n - 1) / s->tile_w;
-	size_t k;
+	size_t seg_lo, seg_hi, crop_hi, tile_lo, tile_hi, k;
 	int row_just_completed = 0;
-	void *rt = get_rowtrack(s, y);
+	void *rt;
+
+	/* Drop rows above or below the cropped rect. */
+	if (y < s->y0 || y >= s->y0 + s->h)
+		return;
+
+	/* Clip the segment's columns to the cropped rect, then shift into
+	 * crop-local coordinates so tile indexing matches the buffer layout. */
+	crop_hi = s->x0 + s->w;
+	seg_lo  = x > s->x0 ? x : s->x0;
+	seg_hi  = (x + n) < crop_hi ? (x + n) : crop_hi;
+	if (seg_hi <= seg_lo)
+		return;
+	src += (seg_lo - x) * s->bpp;
+	x = seg_lo - s->x0;
+	n = seg_hi - seg_lo;
+	y -= s->y0;
+
+	tile_lo = x / s->tile_w;
+	tile_hi = (x + n - 1) / s->tile_w;
+	rt = get_rowtrack(s, y);
 	atomic_ptr       *buf  = rt_buf(s, rt);
 	_Atomic uint16_t *fill = rt_fill(s, rt);
 
@@ -207,7 +232,8 @@ static void tile_buf_abort(struct oil_jxl_tile_buf *s)
 	pthread_mutex_unlock(&s->wait_lock);
 }
 
-static struct oil_jxl_tile_buf *tile_buf_create(size_t w, size_t h,
+static struct oil_jxl_tile_buf *tile_buf_create(size_t x0, size_t y0,
+                                                size_t w, size_t h,
                                                 size_t bpp, size_t tile_w)
 {
 	struct oil_jxl_tile_buf *s;
@@ -215,6 +241,7 @@ static struct oil_jxl_tile_buf *tile_buf_create(size_t w, size_t h,
 	s = calloc(1, sizeof(*s));
 	if (!s) return NULL;
 
+	s->x0 = x0; s->y0 = y0;
 	s->w = w; s->h = h; s->bpp = bpp;
 	s->row_bytes     = w * bpp;
 	s->tile_w        = tile_w;
@@ -372,7 +399,9 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	ol->fed_width = fed_w;
 	ol->fed_height = fed_h;
 	ol->components = cmp;
-	ol->inbuf_offset = fed_x * cmp;
+	/* The tile buffer now coalesces crop-local rows starting at column 0,
+	 * so consumed rows need no further column offset. */
+	ol->inbuf_offset = 0;
 
 	ret = oil_scale_init_ex(&ol->os, fed_h, out_height, fed_w, out_width,
 		src_y - fed_y, src_height,
@@ -389,14 +418,14 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 		return -2;
 	}
 
-	/* The image-out callback delivers full-width rows; the consumer slices
-	 * the fed_x..fed_x+fed_w columns out of each one. */
+	/* The image-out callback delivers full-width rows; the tile buffer
+	 * clips each segment to the fed rect and stores only those columns. */
 	ol->fmt.num_channels = cmp;
 	ol->fmt.data_type    = JXL_TYPE_UINT8;
 	ol->fmt.endianness   = JXL_NATIVE_ENDIAN;
 	ol->fmt.align        = 0;
 
-	ol->tb = tile_buf_create(info->xsize, info->ysize, cmp, 256);
+	ol->tb = tile_buf_create(fed_x, fed_y, fed_w, fed_h, cmp, 256);
 	if (!ol->tb) {
 		free(ol->inbuf);
 		oil_scale_free(&ol->os);
@@ -429,10 +458,11 @@ void oil_libjxl_free(struct oil_libjxl *ol)
 	oil_scale_free(&ol->os);
 }
 
-/* Release the row last checked out (if any), skip any rows above the fed rect
- * on first use, then return the next fed scanline at its fed_x column offset.
- * Returns a stable, zeroed fallback row and sets ol->error if the producer
- * aborted before the requested row completed. */
+/* Release the row last checked out (if any), then return the next fed
+ * scanline. The tile buffer is crop-local, so in_vpos counts fed rows from 0
+ * and each coalesced row already starts at the fed_x column. Returns a stable,
+ * zeroed fallback row and sets ol->error if the producer aborted before the
+ * requested row completed. */
 static unsigned char *jxl_next_row(struct oil_libjxl *ol)
 {
 	uint8_t *row;
@@ -441,14 +471,6 @@ static unsigned char *jxl_next_row(struct oil_libjxl *ol)
 		tile_buf_release_row(ol->tb, ol->in_vpos);
 		ol->in_vpos++;
 		ol->have_row = 0;
-	}
-	while (ol->in_vpos < ol->fed_y) {
-		if (!tile_buf_wait_for_row(ol->tb, ol->in_vpos)) {
-			ol->error = 1;
-			return ol->inbuf;
-		}
-		tile_buf_release_row(ol->tb, ol->in_vpos);
-		ol->in_vpos++;
 	}
 
 	row = tile_buf_wait_for_row(ol->tb, ol->in_vpos);

@@ -204,6 +204,41 @@ static void check_case(unsigned char *data, size_t size,
 	free(b);
 }
 
+/* Decode at integer-aligned 1:1 scale (out dims == src rect), then compare an
+ * interior sub-rectangle of a cropped decode against the same region of a
+ * full-image decode. Interior pixels (>=2 px from the crop edge) have all
+ * Catmull-Rom taps inside both fed rects, so they must be byte-identical. */
+static void check_crop_alignment(unsigned char *data, size_t size)
+{
+	const int cx = 64, cy = 48, cw = 128, ch = 96;
+	const int margin = 2;
+	unsigned char *full, *crop;
+	int x, y;
+
+	full = decode_bundled(data, size, IN_W, IN_H,
+		0.0, 0.0, (double)IN_W, (double)IN_H);
+	crop = decode_bundled(data, size, cw, ch,
+		(double)cx, (double)cy, (double)cw, (double)ch);
+
+	for (y = margin; y < ch - margin; y++) {
+		for (x = margin; x < cw - margin; x++) {
+			unsigned char *c = crop + ((size_t)y * cw + x) * 3;
+			unsigned char *f = full +
+				((size_t)(y + cy) * IN_W + (x + cx)) * 3;
+			if (memcmp(c, f, 3) != 0) {
+				fprintf(stderr, "  crop alignment: mismatch at "
+					"crop (%d,%d): crop=%u,%u,%u full=%u,%u,%u\n",
+					x, y, c[0], c[1], c[2], f[0], f[1], f[2]);
+				assert(0);
+			}
+		}
+	}
+	printf("  crop alignment: interior %dx%d matches full decode\n",
+		cw - 2 * margin, ch - 2 * margin);
+	free(full);
+	free(crop);
+}
+
 int main(void)
 {
 	unsigned char *jxl;
@@ -232,6 +267,14 @@ int main(void)
 	/* Upscale a small region. */
 	check_case(jxl, jxl_size, "upscale crop",     200, 150,
 		50.0, 40.0, 32.0, 24.0);
+
+	/* Independent crop-alignment check: at integer-aligned 1:1 scaling the
+	 * Catmull-Rom kernel is an identity, so an interior crop must reproduce
+	 * exactly the same pixels as the matching region of a full-image decode.
+	 * Both paths share the gamma roundtrip, so any rounding cancels. This
+	 * catches a crop region that is shifted, unlike check_case (which only
+	 * compares the two decode paths, both of which use the same code). */
+	check_crop_alignment(jxl, jxl_size);
 
 	free(jxl);
 	printf("All tests pass.\n");
