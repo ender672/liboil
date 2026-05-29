@@ -22,7 +22,11 @@
 #include "oil_resample.h"
 #include "oil_libjxl.h"
 
-#define IN_W 256
+/* IN_W is wider than the tile buffer's 256px tile_w so the full-image and
+ * wide-crop decodes span multiple tiles, exercising the multi-tile coalescing
+ * and crop-local clipping paths (a single-tile image would never iterate the
+ * per-tile loop in tile_buf_partial). */
+#define IN_W 600
 #define IN_H 192
 
 static void encode_gradient_jxl(unsigned char **out, size_t *out_size)
@@ -207,10 +211,15 @@ static void check_case(unsigned char *data, size_t size,
 /* Decode at integer-aligned 1:1 scale (out dims == src rect), then compare an
  * interior sub-rectangle of a cropped decode against the same region of a
  * full-image decode. Interior pixels (>=2 px from the crop edge) have all
- * Catmull-Rom taps inside both fed rects, so they must be byte-identical. */
+ * Catmull-Rom taps inside both fed rects, so they must be byte-identical.
+ *
+ * The crop is wider than the 256px tile_w and starts at a non-tile-aligned
+ * column, so the fed rect spans a crop-local tile boundary: this exercises
+ * the multi-tile clip-and-shift path, where a mistaken tile index or column
+ * offset would corrupt interior pixels that this check would then catch. */
 static void check_crop_alignment(unsigned char *data, size_t size)
 {
-	const int cx = 64, cy = 48, cw = 128, ch = 96;
+	const int cx = 96, cy = 48, cw = 384, ch = 96;
 	const int margin = 2;
 	unsigned char *full, *crop;
 	int x, y;

@@ -54,7 +54,6 @@ struct oil_libjxl {
 	int fed_y;
 	int fed_width;
 	int fed_height;
-	int inbuf_offset;      /* fed_x * components, in bytes */
 	int img_width;
 	int img_height;
 	int components;

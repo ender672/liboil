@@ -2,6 +2,7 @@
 test
 test_libjpeg
 test_libpng
+test_libjxl
 imgscale
 oilview
 benchmark
@@ -9,6 +10,7 @@ coeffbench
 sdltest
 *.jpg
 *.png
+*.jxl
 
 local.mk
 DO_NOT_COMMIT*

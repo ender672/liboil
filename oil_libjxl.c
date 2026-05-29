@@ -370,7 +370,6 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	ol->in_vpos = 0;
 	ol->have_row = 0;
 	ol->fed_x = ol->fed_y = ol->fed_width = ol->fed_height = 0;
-	ol->inbuf_offset = 0;
 	ol->img_width = info->xsize;
 	ol->img_height = info->ysize;
 	ol->components = 0;
@@ -399,9 +398,6 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	ol->fed_width = fed_w;
 	ol->fed_height = fed_h;
 	ol->components = cmp;
-	/* The tile buffer now coalesces crop-local rows starting at column 0,
-	 * so consumed rows need no further column offset. */
-	ol->inbuf_offset = 0;
 
 	ret = oil_scale_init_ex(&ol->os, fed_h, out_height, fed_w, out_width,
 		src_y - fed_y, src_height,
@@ -479,7 +475,7 @@ static unsigned char *jxl_next_row(struct oil_libjxl *ol)
 		return ol->inbuf;
 	}
 	ol->have_row = 1;
-	return row + ol->inbuf_offset;
+	return row;
 }
 
 void oil_libjxl_decode_row(struct oil_libjxl *ol, unsigned char *dst)
