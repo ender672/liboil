@@ -41,8 +41,8 @@ jxlperfbench: bench/jxlperfbench.c $(OIL_OBJS) oil_libjxl.o tests/jxl_testutil.o
 	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjxl.o tests/jxl_testutil.o bench/jxlperfbench.c -o $@ $(LDFLAGS) -ljxl -ljxl_threads -lpthread -lm
 jxlstarvebench: bench/jxlstarvebench.c $(OIL_OBJS) oil_libjxl.o tests/jxl_testutil.o
 	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjxl.o tests/jxl_testutil.o bench/jxlstarvebench.c -o $@ $(LDFLAGS) -ljxl -ljxl_threads -lpthread -lm
-imgscale: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o imgscale.c
-	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjpeg.o oil_libpng.o imgscale.c -o $@ $(LDFLAGS) -ljpeg -lpng -lm
+imgscale: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oil_libjxl.o imgscale.c
+	$(CC) $(CFLAGS) $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oil_libjxl.o imgscale.c -o $@ $(LDFLAGS) -ljpeg -lpng -ljxl -ljxl_threads -lpthread -lm
 benchmark: bench/benchmark.c $(OIL_OBJS)
 	$(CC) $(CFLAGS) $(OIL_OBJS) bench/benchmark.c -o $@ $(LDFLAGS) -lpng -lm
 coeffbench: bench/coeffbench.c $(OIL_OBJS)

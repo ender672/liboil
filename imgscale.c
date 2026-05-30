@@ -1,13 +1,17 @@
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
+#include "oil_libjxl.h"
 #include "oil_resample.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <jpeglib.h>
 #include <png.h>
+#include <jxl/encode.h>
+#include <jxl/thread_parallel_runner.h>
 
-enum file_format { FMT_PNG, FMT_JPEG };
+enum file_format { FMT_PNG, FMT_JPEG, FMT_JXL };
 
 struct backend_entry {
 	const char *flag;
@@ -77,6 +81,7 @@ static enum file_format detect_out_format(const char *path, enum file_format fal
 	ext = strrchr(path, '.');
 	if (!ext) return fallback;
 	if (strcasecmp(ext, ".png") == 0) return FMT_PNG;
+	if (strcasecmp(ext, ".jxl") == 0) return FMT_JXL;
 	if (strcasecmp(ext, ".jpg") == 0 ||
 	    strcasecmp(ext, ".jpeg") == 0 ||
 	    strcasecmp(ext, ".jpe") == 0) return FMT_JPEG;
@@ -126,6 +131,151 @@ static void jpeg_writer_open(struct jpeg_compress_struct *cinfo,
 	}
 }
 
+/* libjxl's encoder, like its decoder, has no scanline-streaming API: a frame is
+ * handed over whole. So the writer accumulates scaled rows into a full-image
+ * buffer and encodes once, at finish. (PNG/JPEG output is genuinely streamed;
+ * JXL is buffered.) */
+struct jxl_writer {
+	unsigned char *buf;   /* width*height*cmp, filled row by row */
+	size_t stride;        /* width*cmp */
+	int width, height, row;
+	int ncolor, alpha_bits;
+};
+
+static int oil_cs_jxl_channels(enum oil_colorspace cs, int *ncolor,
+	int *alpha_bits)
+{
+	switch (cs) {
+	case OIL_CS_G:            *ncolor = 1; *alpha_bits = 0; return 0;
+	case OIL_CS_GA:           *ncolor = 1; *alpha_bits = 8; return 0;
+	case OIL_CS_RGB:
+	case OIL_CS_RGB_NOGAMMA:  *ncolor = 3; *alpha_bits = 0; return 0;
+	case OIL_CS_RGBA:
+	case OIL_CS_RGBA_NOGAMMA: *ncolor = 3; *alpha_bits = 8; return 0;
+	default:                  return -1;   /* e.g. CMYK, RGBX */
+	}
+}
+
+/* Returns 0, or -1 if the colorspace can't be written as JXL / allocation
+ * failed (the caller reports it). */
+static int jxl_writer_open(struct jxl_writer *w, int width, int height,
+	enum oil_colorspace cs)
+{
+	if (oil_cs_jxl_channels(cs, &w->ncolor, &w->alpha_bits) != 0)
+		return -1;
+	w->stride = (size_t)width * OIL_CMP(cs);
+	w->width = width;
+	w->height = height;
+	w->row = 0;
+	w->buf = malloc(w->stride * (size_t)height);
+	return w->buf ? 0 : -1;
+}
+
+static void jxl_writer_row(struct jxl_writer *w, const unsigned char *row)
+{
+	memcpy(w->buf + (size_t)w->row * w->stride, row, w->stride);
+	w->row++;
+}
+
+static void jxl_writer_free(struct jxl_writer *w)
+{
+	free(w->buf);
+	w->buf = NULL;
+}
+
+/* Encode the accumulated buffer and write it to @output. Returns 0 on success.
+ * Lossy at distance 1.0 ("visually lossless"), the JXL analog of the JPEG
+ * writer's quality 94; XYB is left enabled (uses_original_profile = FALSE). */
+static int jxl_writer_finish(struct jxl_writer *w, FILE *output)
+{
+	JxlEncoder *enc = NULL;
+	void *runner = NULL;
+	JxlEncoderFrameSettings *fs;
+	JxlBasicInfo info;
+	JxlColorEncoding color;
+	JxlPixelFormat fmt;
+	unsigned char *out = NULL, *next;
+	size_t cap, used;
+	int ret = -1;
+
+	runner = JxlThreadParallelRunnerCreate(NULL,
+		JxlThreadParallelRunnerDefaultNumWorkerThreads());
+	enc = JxlEncoderCreate(NULL);
+	if (!runner || !enc)
+		goto done;
+	if (JxlEncoderSetParallelRunner(enc, JxlThreadParallelRunner, runner)
+			!= JXL_ENC_SUCCESS)
+		goto done;
+
+	JxlEncoderInitBasicInfo(&info);
+	info.xsize = w->width;
+	info.ysize = w->height;
+	info.bits_per_sample = 8;
+	info.exponent_bits_per_sample = 0;
+	info.num_color_channels = w->ncolor;
+	info.alpha_bits = w->alpha_bits;
+	info.alpha_exponent_bits = 0;
+	/* A plain alpha channel needs only num_extra_channels=1; the encoder reads
+	 * it from the interleaved buffer (no SetExtraChannelInfo required). */
+	info.num_extra_channels = w->alpha_bits ? 1 : 0;
+	info.uses_original_profile = JXL_FALSE;
+	if (JxlEncoderSetBasicInfo(enc, &info) != JXL_ENC_SUCCESS)
+		goto done;
+
+	JxlColorEncodingSetToSRGB(&color, w->ncolor == 1);
+	if (JxlEncoderSetColorEncoding(enc, &color) != JXL_ENC_SUCCESS)
+		goto done;
+
+	fmt.num_channels = w->ncolor + (w->alpha_bits ? 1 : 0);
+	fmt.data_type    = JXL_TYPE_UINT8;
+	fmt.endianness   = JXL_NATIVE_ENDIAN;
+	fmt.align        = 0;
+
+	fs = JxlEncoderFrameSettingsCreate(enc, NULL);
+	if (!fs)
+		goto done;
+	if (JxlEncoderSetFrameDistance(fs, 1.0) != JXL_ENC_SUCCESS)
+		goto done;
+
+	if (JxlEncoderAddImageFrame(fs, &fmt, w->buf,
+			w->stride * (size_t)w->height) != JXL_ENC_SUCCESS)
+		goto done;
+	JxlEncoderCloseInput(enc);
+
+	cap = 1 << 16;
+	out = malloc(cap);
+	if (!out)
+		goto done;
+	used = 0;
+	for (;;) {
+		JxlEncoderStatus s;
+		size_t avail;
+		next = out + used;
+		avail = cap - used;
+		s = JxlEncoderProcessOutput(enc, &next, &avail);
+		used = cap - avail;
+		if (s == JXL_ENC_SUCCESS)
+			break;
+		if (s != JXL_ENC_NEED_MORE_OUTPUT)
+			goto done;
+		{
+			unsigned char *nb = realloc(out, cap * 2);
+			if (!nb)
+				goto done;
+			out = nb;
+			cap *= 2;
+		}
+	}
+
+	if (fwrite(out, 1, used, output) == used)
+		ret = 0;
+done:
+	free(out);
+	if (enc) JxlEncoderDestroy(enc);
+	if (runner) JxlThreadParallelRunnerDestroy(runner);
+	return ret;
+}
+
 static void process_png_input(FILE *input, FILE *output, int width, int height,
 	const struct backend_entry *be, int no_gamma, enum file_format out_fmt)
 {
@@ -136,6 +286,7 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	struct jpeg_error_mgr jerr;
 	int jpeg_started = 0;
 	struct oil_libpng ol;
+	struct jxl_writer jw = {0};
 	unsigned char *outbuf = NULL;
 	int out_ctype;
 
@@ -158,6 +309,8 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 			oil_libpng_free(&ol);
 		if (out_fmt == FMT_PNG)
 			png_destroy_write_struct(&wpng, &winfo);
+		else if (out_fmt == FMT_JXL)
+			jxl_writer_free(&jw);
 		else if (jpeg_started)
 			jpeg_destroy_compress(&cinfo);
 		png_destroy_read_struct(&rpng, &rinfo, NULL);
@@ -197,6 +350,11 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 			exit(1);
 		}
 		png_writer_open(&wpng, &winfo, output, width, height, out_ctype);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_open(&jw, width, height, ol.os.cs) != 0) {
+			fprintf(stderr, "Cannot encode as JXL.\n");
+			exit(1);
+		}
 	} else {
 		jpeg_writer_open(&cinfo, &jerr, output, width, height, ol.os.cs, NULL);
 		jpeg_started = 1;
@@ -220,6 +378,8 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 		be->scale_out(&ol.os, outbuf);
 		if (out_fmt == FMT_PNG) {
 			png_write_row(wpng, outbuf);
+		} else if (out_fmt == FMT_JXL) {
+			jxl_writer_row(&jw, outbuf);
 		} else {
 			jpeg_write_scanlines(&cinfo, (JSAMPARRAY)&outbuf, 1);
 		}
@@ -228,6 +388,12 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	if (out_fmt == FMT_PNG) {
 		png_write_end(wpng, winfo);
 		png_destroy_write_struct(&wpng, &winfo);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_finish(&jw, output) != 0) {
+			fprintf(stderr, "JXL encoding failed.\n");
+			exit(1);
+		}
+		jxl_writer_free(&jw);
 	} else {
 		jpeg_finish_compress(&cinfo);
 		jpeg_destroy_compress(&cinfo);
@@ -251,6 +417,7 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	int i, ret, out_ctype;
 	long j;
 	struct oil_libjpeg ol;
+	struct jxl_writer jw = {0};
 
 	dinfo.err = jpeg_std_error(&jerr);
 	jpeg_create_decompress(&dinfo);
@@ -266,8 +433,8 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	jpeg_save_markers(&dinfo, JPEG_APP0+15, 0xFFFF);
 	jpeg_read_header(&dinfo, TRUE);
 
-	/* PNG has no native CMYK; ask libjpeg to convert to RGB on decode. */
-	if (out_fmt == FMT_PNG && dinfo.jpeg_color_space == JCS_CMYK) {
+	/* Neither PNG nor JXL output carries CMYK here; convert to RGB on decode. */
+	if (out_fmt != FMT_JPEG && dinfo.jpeg_color_space == JCS_CMYK) {
 		dinfo.out_color_space = JCS_RGB;
 	}
 
@@ -300,6 +467,11 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 			exit(1);
 		}
 		png_writer_open(&wpng, &winfo, output, width_out, height_out, out_ctype);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_open(&jw, width_out, height_out, ol.os.cs) != 0) {
+			fprintf(stderr, "Cannot encode as JXL.\n");
+			exit(1);
+		}
 	} else {
 		jpeg_writer_open(&cinfo, &jerr, output, width_out, height_out,
 			ol.os.cs, dinfo.marker_list);
@@ -313,6 +485,8 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 		be->scale_out(&ol.os, outbuf);
 		if (out_fmt == FMT_PNG) {
 			png_write_row(wpng, outbuf);
+		} else if (out_fmt == FMT_JXL) {
+			jxl_writer_row(&jw, outbuf);
 		} else {
 			jpeg_write_scanlines(&cinfo, (JSAMPARRAY)&outbuf, 1);
 		}
@@ -321,6 +495,12 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	if (out_fmt == FMT_PNG) {
 		png_write_end(wpng, winfo);
 		png_destroy_write_struct(&wpng, &winfo);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_finish(&jw, output) != 0) {
+			fprintf(stderr, "JXL encoding failed.\n");
+			exit(1);
+		}
+		jxl_writer_free(&jw);
 	} else {
 		jpeg_finish_compress(&cinfo);
 		jpeg_destroy_compress(&cinfo);
@@ -332,12 +512,176 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	oil_libjpeg_free(&ol);
 }
 
-static int looks_like_png(FILE *io)
+/* Read an entire stream (regular file or pipe) into a malloc'd buffer. libjxl
+ * has no incremental input API, so the wrapper needs the whole codestream. */
+static unsigned char *slurp_stream(FILE *io, size_t *size_out)
 {
-	int peek;
-	peek = getc(io);
-	ungetc(peek, io);
-	return peek == 137;
+	size_t cap = 1 << 16, len = 0;
+	unsigned char *buf = malloc(cap);
+	if (!buf) return NULL;
+	for (;;) {
+		size_t n;
+		if (len == cap) {
+			unsigned char *nb = realloc(buf, cap * 2);
+			if (!nb) { free(buf); return NULL; }
+			buf = nb;
+			cap *= 2;
+		}
+		n = fread(buf + len, 1, cap - len, io);
+		len += n;
+		if (n == 0) break;
+	}
+	if (ferror(io)) { free(buf); return NULL; }
+	*size_out = len;
+	return buf;
+}
+
+static void process_jxl_input(FILE *input, FILE *output, int width_out,
+	int height_out, const struct backend_entry *be, int no_gamma,
+	enum file_format out_fmt)
+{
+	unsigned char *data, *inbuf, *outbuf;
+	size_t insize;
+	void *runner;
+	JxlDecoder *dec;
+	JxlBasicInfo info;
+	struct oil_libjxl ol;
+	struct jpeg_compress_struct cinfo;
+	struct jpeg_error_mgr jerr;
+	struct jxl_writer jw = {0};
+	png_structp wpng = NULL;
+	png_infop winfo = NULL;
+	int i, out_ctype;
+
+	data = slurp_stream(input, &insize);
+	if (!data) {
+		fprintf(stderr, "Unable to read input.\n");
+		exit(1);
+	}
+
+	runner = JxlThreadParallelRunnerCreate(NULL,
+		JxlThreadParallelRunnerDefaultNumWorkerThreads());
+	dec = JxlDecoderCreate(NULL);
+	if (!runner || !dec) {
+		fprintf(stderr, "Unable to create JXL decoder.\n");
+		exit(1);
+	}
+
+	/* oil wants straight alpha; SetUnpremultiplyAlpha must precede the first
+	 * ProcessInput and is a no-op for images without associated alpha. */
+	if (JxlDecoderSetParallelRunner(dec, JxlThreadParallelRunner, runner)
+			!= JXL_DEC_SUCCESS ||
+	    JxlDecoderSubscribeEvents(dec,
+			JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS ||
+	    JxlDecoderSetUnpremultiplyAlpha(dec, JXL_TRUE) != JXL_DEC_SUCCESS) {
+		fprintf(stderr, "JXL decoder setup failed.\n");
+		exit(1);
+	}
+	JxlDecoderSetInput(dec, data, insize);
+	JxlDecoderCloseInput(dec);
+
+	if (JxlDecoderProcessInput(dec) != JXL_DEC_BASIC_INFO ||
+	    JxlDecoderGetBasicInfo(dec, &info) != JXL_DEC_SUCCESS) {
+		fprintf(stderr, "JXL Decoding Error.\n");
+		exit(1);
+	}
+
+	oil_fix_ratio(info.xsize, info.ysize, &width_out, &height_out);
+
+	if (oil_libjxl_init(&ol, dec, &info, width_out, height_out) != 0) {
+		fprintf(stderr, "Unable to initialize scaler.\n");
+		exit(1);
+	}
+	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
+
+	/* JPEG cannot carry alpha, and the wrapper has no flatten step. Match the
+	 * no-gamma variant too: --no-gamma has already rewritten the colorspace
+	 * (RGBA -> RGBA_NOGAMMA) by this point. */
+	if (out_fmt == FMT_JPEG &&
+	    (ol.os.cs == OIL_CS_GA || ol.os.cs == OIL_CS_RGBA ||
+	     ol.os.cs == OIL_CS_RGBA_NOGAMMA)) {
+		fprintf(stderr, "Cannot encode alpha as JPEG.\n");
+		exit(1);
+	}
+
+	inbuf = malloc((size_t)ol.fed_width * ol.components);
+	outbuf = malloc((size_t)width_out * OIL_CMP(ol.os.cs));
+	if (!inbuf || !outbuf) {
+		fprintf(stderr, "Unable to allocate buffers.\n");
+		exit(1);
+	}
+
+	if (out_fmt == FMT_PNG) {
+		out_ctype = oil_cs_to_png_ctype(ol.os.cs);
+		if (out_ctype < 0) {
+			fprintf(stderr, "Cannot encode colorspace as PNG.\n");
+			exit(1);
+		}
+		png_writer_open(&wpng, &winfo, output, width_out, height_out, out_ctype);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_open(&jw, width_out, height_out, ol.os.cs) != 0) {
+			fprintf(stderr, "Cannot encode as JXL.\n");
+			exit(1);
+		}
+	} else {
+		jpeg_writer_open(&cinfo, &jerr, output, width_out, height_out,
+			ol.os.cs, NULL);
+	}
+
+	for (i = 0; i < height_out; i++) {
+		while (oil_scale_slots(&ol.os) > 0) {
+			oil_libjxl_decode_row(&ol, inbuf);
+			be->scale_in(&ol.os, inbuf);
+		}
+		be->scale_out(&ol.os, outbuf);
+		if (out_fmt == FMT_PNG) {
+			png_write_row(wpng, outbuf);
+		} else if (out_fmt == FMT_JXL) {
+			jxl_writer_row(&jw, outbuf);
+		} else {
+			jpeg_write_scanlines(&cinfo, (JSAMPARRAY)&outbuf, 1);
+		}
+	}
+
+	if (out_fmt == FMT_PNG) {
+		png_write_end(wpng, winfo);
+		png_destroy_write_struct(&wpng, &winfo);
+	} else if (out_fmt == FMT_JXL) {
+		if (jxl_writer_finish(&jw, output) != 0) {
+			fprintf(stderr, "JXL encoding failed.\n");
+			exit(1);
+		}
+		jxl_writer_free(&jw);
+	} else {
+		jpeg_finish_compress(&cinfo);
+		jpeg_destroy_compress(&cinfo);
+	}
+
+	oil_libjxl_free(&ol);
+	JxlDecoderDestroy(dec);
+	JxlThreadParallelRunnerDestroy(runner);
+	free(data);
+	free(inbuf);
+	free(outbuf);
+}
+
+/* Sniff the input format from its leading bytes without consuming them: PNG
+ * starts 0x89, a JXL container 0x00, a raw JXL codestream 0xFF 0x0A, and JPEG
+ * 0xFF 0xD8. Anything else falls back to JPEG. */
+static enum file_format detect_input_format(FILE *io)
+{
+	int b0, b1;
+	b0 = getc(io);
+	if (b0 == 0x89) { ungetc(b0, io); return FMT_PNG; }
+	if (b0 == 0x00) { ungetc(b0, io); return FMT_JXL; }
+	if (b0 == 0xFF) {
+		b1 = getc(io);
+		if (b1 != EOF) ungetc(b1, io);
+		ungetc(b0, io);
+		return b1 == 0x0A ? FMT_JXL : FMT_JPEG;
+	}
+	if (b0 != EOF) ungetc(b0, io);
+	return FMT_JPEG;
 }
 
 int main(int argc, char *argv[])
@@ -405,11 +749,13 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	input_fmt = looks_like_png(io_in) ? FMT_PNG : FMT_JPEG;
+	input_fmt = detect_input_format(io_in);
 	output_fmt = detect_out_format(pos[3], input_fmt);
 
 	if (input_fmt == FMT_PNG) {
 		process_png_input(io_in, io_out, width, height, be, no_gamma, output_fmt);
+	} else if (input_fmt == FMT_JXL) {
+		process_jxl_input(io_in, io_out, width, height, be, no_gamma, output_fmt);
 	} else {
 		process_jpeg_input(io_in, io_out, width, height, be, no_gamma, output_fmt);
 	}
