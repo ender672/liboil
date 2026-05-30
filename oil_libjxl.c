@@ -101,6 +101,7 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 
 	ol->dec = dec;
 	ol->tb = NULL;
+	ol->waiter = NULL;
 	ol->runner = NULL;
 	ol->producer_started = 0;
 	ol->inbuf = NULL;
@@ -156,8 +157,20 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	ol->fmt.endianness   = JXL_NATIVE_ENDIAN;
 	ol->fmt.align        = 0;
 
-	ol->tb = oil_jxl_rowbuf_create(fed_x, fed_y, fed_w, fed_h, cmp, 256);
+	/* Efficient blocking primitive for the rowbuf; the rowbuf borrows it, so
+	 * it must outlive the rowbuf (freed in oil_libjxl_free, after the rowbuf). */
+	ol->waiter = oil_jxl_condvar_waiter_create();
+	if (!ol->waiter) {
+		free(ol->inbuf);
+		oil_scale_free(&ol->os);
+		return -2;
+	}
+
+	ol->tb = oil_jxl_rowbuf_create(fed_x, fed_y, fed_w, fed_h, cmp, 256,
+		ol->waiter);
 	if (!ol->tb) {
+		oil_jxl_condvar_waiter_destroy(ol->waiter);
+		ol->waiter = NULL;
 		free(ol->inbuf);
 		oil_scale_free(&ol->os);
 		return -2;
@@ -166,6 +179,8 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
 	if (pthread_create(&ol->producer, NULL, jxl_producer, ol) != 0) {
 		oil_jxl_rowbuf_destroy(ol->tb);
 		ol->tb = NULL;
+		oil_jxl_condvar_waiter_destroy(ol->waiter);
+		ol->waiter = NULL;
 		free(ol->inbuf);
 		oil_scale_free(&ol->os);
 		return -3;
@@ -219,6 +234,10 @@ void oil_libjxl_free(struct oil_libjxl *ol)
 	}
 	if (ol->tb) {
 		oil_jxl_rowbuf_destroy(ol->tb);
+	}
+	if (ol->waiter) {
+		/* After the rowbuf, which borrowed it. */
+		oil_jxl_condvar_waiter_destroy(ol->waiter);
 	}
 	if (ol->inbuf) {
 		free(ol->inbuf);

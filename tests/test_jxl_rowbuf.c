@@ -4,13 +4,16 @@
  * seeded-random partial-segment delivery orders that a real decode could never
  * be coerced into producing, and asserts the finalized rows are byte-exact.
  *
- * This is the behavioral oracle that must survive the later atomics+waiter
- * rewrite of the reorder buffer unchanged.
+ * This is the behavioral oracle that must survive the atomics+waiter rewrite of
+ * the reorder buffer unchanged.
  *
  * Single-threaded by construction: OIL_JXL_WINDOW is pinned (see main) so the
  * back-pressure window equals the height and a producer never parks waiting for
- * a consumer that isn't running. Concurrency/back-pressure stress lives in a
- * separate multi-threaded test (added with the atomics+waiter rewrite).
+ * a consumer that isn't running. A trivial no-op waiter is supplied -- valid
+ * because only one thread ever touches the buffer -- and its wait() asserts, so
+ * any unexpected block fails loudly instead of hanging. Concurrency and
+ * back-pressure under a real (condvar) waiter are exercised by
+ * test_jxl_rowbuf_mt.
  */
 
 #include <assert.h>
@@ -18,6 +21,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include "oil_jxl_rowbuf.h"
+#include "oil_jxl_waiter.h"
+
+/* No-op waiter: legal only single-threaded. lock/unlock/wake do nothing;
+ * wait must never be reached (rows are always ready when waited). */
+static void noop_lock(void *o)   { (void)o; }
+static void noop_unlock(void *o) { (void)o; }
+static void noop_wait(void *o, int ch)
+{
+	(void)o; (void)ch;
+	assert(0 && "single-threaded rowbuf test must never block");
+}
+static void noop_wake(void *o, int ch, int all) { (void)o; (void)ch; (void)all; }
+static const struct oil_jxl_waiter noop_waiter = {
+	noop_lock, noop_unlock, noop_wait, noop_wake, NULL
+};
+
+static struct oil_jxl_rowbuf *rb_new(size_t x0, size_t y0, size_t w, size_t h,
+	size_t bpp, size_t tile_w)
+{
+	return oil_jxl_rowbuf_create(x0, y0, w, h, bpp, tile_w, &noop_waiter);
+}
 
 /* Deterministic per-pixel content keyed on full-image (gx,gy) and channel. */
 static unsigned char px(size_t gx, size_t gy, size_t c)
@@ -66,7 +90,7 @@ static void drain_and_check(struct oil_jxl_rowbuf *rb, size_t x0, size_t y0,
 static void test_full_rows_inorder(void)
 {
 	size_t w = 600, h = 40, bpp = 3, y;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(0, 0, w, h, bpp, 256);
+	struct oil_jxl_rowbuf *rb = rb_new(0, 0, w, h, bpp, 256);
 	assert(rb);
 	for (y = 0; y < h; y++)
 		feed(rb, 0, y, w, bpp);
@@ -78,7 +102,7 @@ static void test_full_rows_inorder(void)
 static void test_reverse_rows(void)
 {
 	size_t w = 137, h = 50, bpp = 4, y;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(0, 0, w, h, bpp, 16);
+	struct oil_jxl_rowbuf *rb = rb_new(0, 0, w, h, bpp, 16);
 	assert(rb);
 	for (y = h; y-- > 0; )           /* deliver rows bottom-to-top */
 		feed(rb, 0, y, w, bpp);
@@ -92,7 +116,7 @@ static void test_reverse_rows(void)
 static void test_out_of_order_tiles(void)
 {
 	size_t w = 100, h = 8, bpp = 2, tile_w = 8, y;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(0, 0, w, h, bpp, tile_w);
+	struct oil_jxl_rowbuf *rb = rb_new(0, 0, w, h, bpp, tile_w);
 	assert(rb);
 	for (y = 0; y < h; y++) {
 		/* A partition of [0,100) into tile-straddling chunks, delivered in a
@@ -117,7 +141,7 @@ static void test_out_of_order_tiles(void)
 static void test_crop_clipping(void)
 {
 	size_t x0 = 5, y0 = 3, w = 20, h = 10, bpp = 3, tile_w = 4;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(x0, y0, w, h, bpp, tile_w);
+	struct oil_jxl_rowbuf *rb = rb_new(x0, y0, w, h, bpp, tile_w);
 	size_t gy;
 	assert(rb);
 	/* Out-of-crop rows above and below: must be ignored, not buffered. */
@@ -134,7 +158,7 @@ static void test_crop_clipping(void)
 static void test_try_row(void)
 {
 	size_t w = 4, bpp = 1;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(0, 0, w, 2, bpp, 4);
+	struct oil_jxl_rowbuf *rb = rb_new(0, 0, w, 2, bpp, 4);
 	unsigned char *row;
 	assert(rb);
 	assert(oil_jxl_rowbuf_try_row(rb, 0) == NULL);   /* nothing written yet */
@@ -156,7 +180,7 @@ static void test_try_row(void)
 static void test_abort(void)
 {
 	size_t w = 8, bpp = 3;
-	struct oil_jxl_rowbuf *rb = oil_jxl_rowbuf_create(0, 0, w, 4, bpp, 4);
+	struct oil_jxl_rowbuf *rb = rb_new(0, 0, w, 4, bpp, 4);
 	assert(rb);
 	feed(rb, 0, 0, 4, bpp);          /* fills tile 0 only; row 0 incomplete */
 	assert(oil_jxl_rowbuf_try_row(rb, 0) == NULL);
@@ -211,7 +235,7 @@ static void test_random_oracle(void)
 			segs[j] = t;
 		}
 
-		rb = oil_jxl_rowbuf_create(0, 0, w, h, bpp, tile_w);
+		rb = rb_new(0, 0, w, h, bpp, tile_w);
 		assert(rb);
 		for (i = 0; i < cnt; i++)
 			feed(rb, segs[i].x, segs[i].y, segs[i].n, bpp);
@@ -225,7 +249,7 @@ static void test_random_oracle(void)
 int main(void)
 {
 	/* Pin the back-pressure window to the full height so single-threaded
-	 * write-all-then-read never parks a producer (would self-deadlock). */
+	 * write-all-then-read never parks a producer (would assert in noop_wait). */
 	setenv("OIL_JXL_WINDOW", "0", 1);
 
 	printf("oil_jxl_rowbuf:\n");

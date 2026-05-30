@@ -6,6 +6,7 @@ test_libjxl
 test_jxl_cancel
 test_jxl_regress
 test_jxl_rowbuf
+test_jxl_rowbuf_mt
 test_jxl_runner
 jxlmembench
 jxlstarvebench
@@ -29,5 +30,6 @@ test.dSYM
 test_libjpeg.dSYM
 test_libpng.dSYM
 test_jxl_rowbuf.dSYM
+test_jxl_rowbuf_mt.dSYM
 test_jxl_runner.dSYM
 .DS_Store

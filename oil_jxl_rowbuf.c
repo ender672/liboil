@@ -24,7 +24,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 
 /* ---------- lock-free per-row tile buffer ----------
  *
@@ -36,7 +35,13 @@
  * scales with the in-flight row set, not image height.
  *
  * Scoped to the cropped fed rect [x0,x0+w) x [y0,y0+h): segments are clipped
- * and shifted to crop-local coords, so pixels outside it are never buffered. */
+ * and shifted to crop-local coords, so pixels outside it are never buffered.
+ *
+ * Reassembly is lock-free (atomics). The two blocking points -- consumer
+ * waiting for a row, producer waiting on back-pressure -- go through the
+ * caller-supplied oil_jxl_waiter: its lock guards the coordination state below
+ * (consumer_waiting/consumer_blocked/window), its ROW channel parks the
+ * consumer, its WINDOW channel parks back-pressured producers. */
 
 /* Back-pressure cap: at most `window` finalized-but-unconsumed rows may sit
  * ahead of the consumer, bounding heap use to ~window*row_bytes regardless of
@@ -67,8 +72,10 @@ struct oil_jxl_rowbuf {
 
 	_Atomic int aborted;             /* producer hit a decode error */
 
-	pthread_mutex_t wait_lock;
-	pthread_cond_t  cv_row_complete;
+	/* Blocking primitive (borrowed). Its lock guards consumer_waiting,
+	 * consumer_blocked, and window; its ROW/WINDOW channels park the consumer
+	 * and back-pressured producers respectively. */
+	const struct oil_jxl_waiter *waiter;
 
 	/* Instrumentation. live_rows: finalized-but-unconsumed rows on the heap;
 	 * peak_rows: its high-water mark (the footprint the window caps). */
@@ -99,12 +106,28 @@ struct oil_jxl_rowbuf {
 	size_t window;
 	size_t window_max;
 	int    adaptive;
-	_Atomic int parked;         /* producers currently paused on cv_window */
+	_Atomic int parked;         /* producers currently paused on WINDOW */
 	_Atomic size_t consume_pos; /* crop-local row the consumer needs next */
-	int consumer_waiting;       /* consumer is parked in wait_for_row */
+	int consumer_waiting;       /* consumer is parked in wait_row */
 	int consumer_blocked;       /* cap lifted: consumer starved by a pause */
-	pthread_cond_t cv_window;
 };
+
+static void rb_lock(struct oil_jxl_rowbuf *s)
+{
+	s->waiter->lock(s->waiter->opaque);
+}
+static void rb_unlock(struct oil_jxl_rowbuf *s)
+{
+	s->waiter->unlock(s->waiter->opaque);
+}
+static void rb_wait(struct oil_jxl_rowbuf *s, int channel)
+{
+	s->waiter->wait(s->waiter->opaque, channel);
+}
+static void rb_wake(struct oil_jxl_rowbuf *s, int channel, int all)
+{
+	s->waiter->wake(s->waiter->opaque, channel, all);
+}
 
 /* One calloc per row, packed: [ atomic_ptr buf[tpr] ][ _Atomic uint16_t
  * fill[tpr] ] -- tile pointers then per-tile fill counts. */
@@ -219,7 +242,7 @@ void oil_jxl_rowbuf_write_segment(struct oil_jxl_rowbuf *s,
 		/* Hold this row while it sits >window rows ahead of the consumer
 		 * (unless consumer_blocked). Tiles stay allocated; coalescing and
 		 * publication wait until the window admits it. */
-		pthread_mutex_lock(&s->wait_lock);
+		rb_lock(s);
 		while (!atomic_load_explicit(&s->aborted, memory_order_acquire)
 		    && !s->consumer_blocked
 		    && y >= atomic_load_explicit(&s->consume_pos,
@@ -229,12 +252,12 @@ void oil_jxl_rowbuf_write_segment(struct oil_jxl_rowbuf *s,
 			/* Nudge a waiting consumer to re-evaluate and lift the cap --
 			 * closes the race where it blocked with nothing yet parked. */
 			if (s->consumer_waiting)
-				pthread_cond_signal(&s->cv_row_complete);
-			pthread_cond_wait(&s->cv_window, &s->wait_lock);
+				rb_wake(s, OIL_JXL_WAIT_ROW, 0);
+			rb_wait(s, OIL_JXL_WAIT_WINDOW);
 			atomic_fetch_sub_explicit(&s->parked, 1,
 			                           memory_order_relaxed);
 		}
-		pthread_mutex_unlock(&s->wait_lock);
+		rb_unlock(s);
 
 		/* Aborted: consumer is gone. Skip publishing (rowbuf_destroy frees
 		 * the tiles) so a caller that frees without draining unwinds promptly
@@ -256,7 +279,7 @@ void oil_jxl_rowbuf_write_segment(struct oil_jxl_rowbuf *s,
 		                       memory_order_relaxed);
 		free(rt);
 
-		pthread_mutex_lock(&s->wait_lock);
+		rb_lock(s);
 		/* Account before publishing: the consumer sees the row via the row_buf
 		 * release store below, so incrementing first stops it from decrementing
 		 * live_rows before we increment (which would underflow and corrupt
@@ -273,8 +296,8 @@ void oil_jxl_rowbuf_write_segment(struct oil_jxl_rowbuf *s,
 		}
 		atomic_store_explicit(&s->row_buf[y], row,
 		                       memory_order_release);
-		pthread_cond_broadcast(&s->cv_row_complete);
-		pthread_mutex_unlock(&s->wait_lock);
+		rb_wake(s, OIL_JXL_WAIT_ROW, 1);
+		rb_unlock(s);
 	}
 }
 
@@ -291,7 +314,7 @@ unsigned char *oil_jxl_rowbuf_wait_row(struct oil_jxl_rowbuf *s, size_t y)
 	                                     memory_order_acquire);
 	int blocked = 0;
 	if (buf) return buf;
-	pthread_mutex_lock(&s->wait_lock);
+	rb_lock(s);
 	while (!(buf = atomic_load_explicit(&s->row_buf[y],
 	                                     memory_order_acquire))) {
 		if (atomic_load_explicit(&s->aborted, memory_order_acquire))
@@ -314,13 +337,13 @@ unsigned char *oil_jxl_rowbuf_wait_row(struct oil_jxl_rowbuf *s, size_t y)
 				        memory_order_relaxed);
 			}
 			s->consumer_blocked = 1;
-			pthread_cond_broadcast(&s->cv_window);
+			rb_wake(s, OIL_JXL_WAIT_WINDOW, 1);
 		}
-		pthread_cond_wait(&s->cv_row_complete, &s->wait_lock);
+		rb_wait(s, OIL_JXL_WAIT_ROW);
 	}
 	s->consumer_waiting = 0;
 	s->consumer_blocked = 0;
-	pthread_mutex_unlock(&s->wait_lock);
+	rb_unlock(s);
 	if (blocked)
 		atomic_fetch_add_explicit(&s->consumer_waits, 1,
 		                           memory_order_relaxed);
@@ -337,35 +360,37 @@ void oil_jxl_rowbuf_release_row(struct oil_jxl_rowbuf *s, size_t y)
 		                           memory_order_relaxed);
 	free(buf);
 
-	/* Window slid up one slot; wake one parked worker (not a broadcast -- that
+	/* Window slid up one slot; wake one parked worker (not all -- that
 	 * thundering herd dominates narrow-image cost). A wrong-worker wakeup just
 	 * re-parks; consumer_blocked is the progress backstop. Lock only if parked. */
 	atomic_store_explicit(&s->consume_pos, y + 1, memory_order_release);
 	if (atomic_load_explicit(&s->parked, memory_order_relaxed) > 0) {
-		pthread_mutex_lock(&s->wait_lock);
-		pthread_cond_signal(&s->cv_window);
-		pthread_mutex_unlock(&s->wait_lock);
+		rb_lock(s);
+		rb_wake(s, OIL_JXL_WAIT_WINDOW, 0);
+		rb_unlock(s);
 	}
 }
 
 /* Wake all waiters so they observe the abort instead of deadlocking. */
 void oil_jxl_rowbuf_abort(struct oil_jxl_rowbuf *s)
 {
-	pthread_mutex_lock(&s->wait_lock);
+	rb_lock(s);
 	atomic_store_explicit(&s->aborted, 1, memory_order_release);
-	pthread_cond_broadcast(&s->cv_row_complete);
-	pthread_cond_broadcast(&s->cv_window);
-	pthread_mutex_unlock(&s->wait_lock);
+	rb_wake(s, OIL_JXL_WAIT_ROW, 1);
+	rb_wake(s, OIL_JXL_WAIT_WINDOW, 1);
+	rb_unlock(s);
 }
 
 struct oil_jxl_rowbuf *oil_jxl_rowbuf_create(size_t x0, size_t y0,
                                              size_t w, size_t h,
-                                             size_t bpp, size_t tile_w)
+                                             size_t bpp, size_t tile_w,
+                                             const struct oil_jxl_waiter *waiter)
 {
 	struct oil_jxl_rowbuf *s;
 	const char *env;
 	size_t row_bytes, max_rows;
 	if (tile_w == 0 || tile_w > 65535) return NULL;
+	if (!waiter) return NULL;
 	s = calloc(1, sizeof(*s));
 	if (!s) return NULL;
 
@@ -377,6 +402,7 @@ struct oil_jxl_rowbuf *oil_jxl_rowbuf_create(size_t x0, size_t y0,
 	s->tiles_per_row = (w + tile_w - 1) / tile_w;
 	s->track_bytes   = s->tiles_per_row
 	                 * (sizeof(atomic_ptr) + sizeof(_Atomic uint16_t));
+	s->waiter        = waiter;
 
 	s->track      = calloc(h, sizeof(*s->track));
 	s->tiles_done = calloc(h, sizeof(*s->tiles_done));
@@ -423,9 +449,6 @@ struct oil_jxl_rowbuf *oil_jxl_rowbuf_create(size_t x0, size_t y0,
 	s->consumer_waiting = 0;
 	s->consumer_blocked = 0;
 
-	pthread_mutex_init(&s->wait_lock, NULL);
-	pthread_cond_init(&s->cv_row_complete, NULL);
-	pthread_cond_init(&s->cv_window, NULL);
 	return s;
 }
 
@@ -448,9 +471,6 @@ void oil_jxl_rowbuf_destroy(struct oil_jxl_rowbuf *s)
 	free((void *)s->track);
 	free((void *)s->tiles_done);
 	free((void *)s->row_buf);
-	pthread_cond_destroy(&s->cv_row_complete);
-	pthread_cond_destroy(&s->cv_window);
-	pthread_mutex_destroy(&s->wait_lock);
 	free(s);
 }
 

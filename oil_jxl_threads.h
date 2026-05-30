@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <jxl/parallel_runner.h>
+#include "oil_jxl_waiter.h"
 
 /**
  * Optional pthreads helpers for driving libjxl. This is the only part of the
@@ -60,5 +61,14 @@ JxlParallelRetCode oil_libjxl_parallel_runner(void *runner, void *jxl,
  * oil_libjxl_runner_reset. NULL is a no-op.
  */
 void oil_libjxl_runner_cancel(void *runner);
+
+/**
+ * An efficient oil_jxl_waiter backed by a pthreads mutex + two condition
+ * variables, for use with oil_jxl_rowbuf_create. Returns NULL on allocation
+ * failure. The returned waiter is owned by the caller and must outlive the
+ * rowbuf using it; free it with oil_jxl_condvar_waiter_destroy.
+ */
+struct oil_jxl_waiter *oil_jxl_condvar_waiter_create(void);
+void oil_jxl_condvar_waiter_destroy(struct oil_jxl_waiter *waiter);
 
 #endif

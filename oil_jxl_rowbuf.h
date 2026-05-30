@@ -23,6 +23,7 @@
 #define OIL_JXL_ROWBUF_H
 
 #include <stddef.h>
+#include "oil_jxl_waiter.h"
 
 /**
  * Lock-free-ish reorder buffer for out-of-order partial scanlines.
@@ -34,6 +35,11 @@
  * decoder-agnostic: it knows only pixel segments in full-image coordinates plus
  * the bytes-per-pixel.
  *
+ * All reassembly is done with C11 atomics; the two genuine blocking points (the
+ * consumer waiting for a row, a back-pressured producer waiting for window room)
+ * are delegated to a caller-supplied oil_jxl_waiter, so this core makes no
+ * platform threading calls of its own.
+ *
  * The window self-tunes by default; the OIL_JXL_WINDOW env var pins it (N rows,
  * N=0 = unbounded), disabling self-tuning.
  */
@@ -42,10 +48,18 @@ struct oil_jxl_rowbuf;
 /**
  * Create a rowbuf scoped to the crop rect [x0,x0+w) x [y0,y0+h) in full-image
  * coordinates, carrying @bpp bytes per pixel and using @tile_w-wide tile slots.
- * Returns NULL on bad arguments (tile_w 0 or > 65535) or allocation failure.
+ *
+ * @waiter supplies the blocking primitive (see oil_jxl_waiter.h) and is
+ * borrowed -- the caller owns it and must keep it alive until after
+ * oil_jxl_rowbuf_destroy. oil_jxl_threads provides a pthreads condvar waiter;
+ * a single-threaded caller may pass a trivial no-op waiter.
+ *
+ * Returns NULL on bad arguments (tile_w 0 or > 65535, or @waiter NULL) or
+ * allocation failure.
  */
 struct oil_jxl_rowbuf *oil_jxl_rowbuf_create(size_t x0, size_t y0,
-	size_t w, size_t h, size_t bpp, size_t tile_w);
+	size_t w, size_t h, size_t bpp, size_t tile_w,
+	const struct oil_jxl_waiter *waiter);
 
 void oil_jxl_rowbuf_destroy(struct oil_jxl_rowbuf *rb);
 

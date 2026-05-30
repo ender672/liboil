@@ -211,3 +211,67 @@ void oil_libjxl_runner_cancel(void *opaque)
 	if (r)
 		atomic_store_explicit(&r->cancel, 1, memory_order_release);
 }
+
+/* ---------- condvar-backed oil_jxl_waiter ----------
+ *
+ * One mutex + two condition variables (ROW, WINDOW) implementing the
+ * oil_jxl_waiter contract for oil_jxl_rowbuf. The struct oil_jxl_waiter is the
+ * first member so its opaque can point back at the container. */
+
+struct oil_jxl_cv_waiter {
+	struct oil_jxl_waiter w;
+	pthread_mutex_t mutex;
+	pthread_cond_t  cv[OIL_JXL_WAIT_CHANNELS];
+};
+
+static void cvw_lock(void *o)
+{
+	pthread_mutex_lock(&((struct oil_jxl_cv_waiter *)o)->mutex);
+}
+static void cvw_unlock(void *o)
+{
+	pthread_mutex_unlock(&((struct oil_jxl_cv_waiter *)o)->mutex);
+}
+static void cvw_wait(void *o, int channel)
+{
+	struct oil_jxl_cv_waiter *c = o;
+	pthread_cond_wait(&c->cv[channel], &c->mutex);
+}
+static void cvw_wake(void *o, int channel, int all)
+{
+	struct oil_jxl_cv_waiter *c = o;
+	if (all)
+		pthread_cond_broadcast(&c->cv[channel]);
+	else
+		pthread_cond_signal(&c->cv[channel]);
+}
+
+struct oil_jxl_waiter *oil_jxl_condvar_waiter_create(void)
+{
+	struct oil_jxl_cv_waiter *c = calloc(1, sizeof(*c));
+	int i;
+	if (!c)
+		return NULL;
+	pthread_mutex_init(&c->mutex, NULL);
+	for (i = 0; i < OIL_JXL_WAIT_CHANNELS; i++)
+		pthread_cond_init(&c->cv[i], NULL);
+	c->w.lock   = cvw_lock;
+	c->w.unlock = cvw_unlock;
+	c->w.wait   = cvw_wait;
+	c->w.wake   = cvw_wake;
+	c->w.opaque = c;
+	return &c->w;
+}
+
+void oil_jxl_condvar_waiter_destroy(struct oil_jxl_waiter *waiter)
+{
+	struct oil_jxl_cv_waiter *c;
+	int i;
+	if (!waiter)
+		return;
+	c = waiter->opaque;
+	pthread_mutex_destroy(&c->mutex);
+	for (i = 0; i < OIL_JXL_WAIT_CHANNELS; i++)
+		pthread_cond_destroy(&c->cv[i]);
+	free(c);
+}

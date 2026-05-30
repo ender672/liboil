@@ -42,6 +42,8 @@ struct oil_libjxl {
 	/* Lock-free per-row buffer the decoder's worker threads coalesce
 	 * scanlines into; the wrapper consumes finalized rows top-to-bottom. */
 	struct oil_jxl_rowbuf *tb;
+	/* Blocking primitive the rowbuf borrows; outlives it (freed after tb). */
+	struct oil_jxl_waiter *waiter;
 	pthread_t producer;
 	int producer_started;
 
