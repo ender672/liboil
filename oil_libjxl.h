@@ -29,6 +29,7 @@
 #include <jxl/parallel_runner.h>
 #include "oil_resample.h"
 #include "oil_jxl_rowbuf.h"
+#include "oil_jxl_threads.h"
 
 struct oil_libjxl {
 	struct oil_scale os;
@@ -116,28 +117,10 @@ int oil_libjxl_init_ex(struct oil_libjxl *ol, JxlDecoder *dec,
  */
 void oil_libjxl_free(struct oil_libjxl *ol);
 
-/**
- * Cancellable parallel runner for libjxl. libjxl offers no way to interrupt the
- * single ProcessInput that decodes a frame; this thread pool checks a cancel
- * flag before each work item so an interactive caller can abandon a superseded
- * decode mid-frame and release libjxl's frame state.
- *
- * Usage: create one, bind it before the pre-init BASIC_INFO decode, then point
- * ol->runner at it after oil_libjxl_init_ex:
- *     void *r = oil_libjxl_runner_create(0);            // 0 = default count
- *     JxlDecoderSetParallelRunner(dec, oil_libjxl_parallel_runner, r);
- *     ... drive to BASIC_INFO, oil_libjxl_init_ex(...) ...
- *     ol.runner = r;
- * Cancel from any thread via oil_libjxl_cancel(&ol). A cancelled runner
- * (including by oil_libjxl_free) needs oil_libjxl_runner_reset before reuse;
- * destroy only when no decode is in flight.
- */
-void *oil_libjxl_runner_create(size_t num_threads);
-void  oil_libjxl_runner_destroy(void *runner);
-void  oil_libjxl_runner_reset(void *runner);
-JxlParallelRetCode oil_libjxl_parallel_runner(void *runner, void *jxl,
-	JxlParallelRunInit init, JxlParallelRunFunction func,
-	uint32_t start_range, uint32_t end_range);
+/* The cancellable parallel runner (oil_libjxl_runner_create / _destroy /
+ * _reset / _cancel and oil_libjxl_parallel_runner) lives in oil_jxl_threads.h,
+ * included above. It is optional: a caller may instead bind the stock
+ * JxlThreadParallelRunner or their own JxlParallelRunner. */
 
 /**
  * Abandon the in-progress decode so the producer can be joined quickly: rows
