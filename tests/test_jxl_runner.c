@@ -1,6 +1,6 @@
 /*
  * Direct unit test for the cancellable parallel runner (oil_jxl_threads), with
- * no libjxl decode in the loop. Drives oil_libjxl_parallel_runner with a
+ * no libjxl decode in the loop. Drives oil_jxl_parallel_runner with a
  * synthetic init/func and asserts:
  *   - every index in [start,end) runs exactly once across the worker pool;
  *   - dispatch works immediately after create (the gen-0 startup path, where a
@@ -66,33 +66,33 @@ int main(void)
 
 	printf("oil_jxl_threads runner:\n");
 
-	r = oil_libjxl_runner_create(NTHREADS);
+	r = oil_jxl_runner_create(NTHREADS);
 	assert(r);
 
 	/* Dispatch immediately after create: gen-0 startup path. */
 	reset_counts();
-	rc = oil_libjxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
+	rc = oil_jxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
 	assert(rc == 0);
 	assert_each_once();
 	printf("  dispatch after create: every index ran once\n");
 
 	/* Subsequent generation still covers the full range. */
 	reset_counts();
-	rc = oil_libjxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
+	rc = oil_jxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
 	assert(rc == 0);
 	assert_each_once();
 	printf("  re-dispatch: every index ran once\n");
 
 	/* Cancelled: the next dispatch returns an error. */
-	oil_libjxl_runner_cancel(r);
-	rc = oil_libjxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
+	oil_jxl_runner_cancel(r);
+	rc = oil_jxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
 	assert(rc != 0);
 	printf("  cancel: dispatch returns error\n");
 
 	/* Reset restores normal dispatch. */
-	oil_libjxl_runner_reset(r);
+	oil_jxl_runner_reset(r);
 	reset_counts();
-	rc = oil_libjxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
+	rc = oil_jxl_parallel_runner(r, NULL, test_init, test_func, 0, N);
 	assert(rc == 0);
 	assert_each_once();
 	printf("  reset: dispatch works again\n");
@@ -103,7 +103,7 @@ int main(void)
 	printf("  max worker id observed: %d (of %d)\n",
 		atomic_load_explicit(&max_tid, memory_order_relaxed), NTHREADS);
 
-	oil_libjxl_runner_destroy(r);
+	oil_jxl_runner_destroy(r);
 	printf("all runner tests pass\n");
 	return 0;
 }

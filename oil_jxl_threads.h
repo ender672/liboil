@@ -38,29 +38,28 @@
  * flag before each work item so an interactive caller can abandon a superseded
  * decode mid-frame and release libjxl's frame state.
  *
- * Usage: create one, bind it before the pre-init BASIC_INFO decode, then point
- * ol->runner at it after oil_libjxl_init_ex:
- *     void *r = oil_libjxl_runner_create(0);            // 0 = default count
- *     JxlDecoderSetParallelRunner(dec, oil_libjxl_parallel_runner, r);
- *     ... drive to BASIC_INFO, oil_libjxl_init_ex(...) ...
- *     ol.runner = r;
- * Cancel from any thread via oil_libjxl_cancel(&ol). A cancelled runner
- * (including by oil_libjxl_free) needs oil_libjxl_runner_reset before reuse;
- * destroy only when no decode is in flight.
+ * Usage: create one and bind it to the decoder before the BASIC_INFO decode:
+ *     void *r = oil_jxl_runner_create(0);            // 0 = default count
+ *     JxlDecoderSetParallelRunner(dec, oil_jxl_parallel_runner, r);
+ *     ... drive to BASIC_INFO, then oil_jxl_run_decode(dec, &fmt, rb) ...
+ * Cancel from any thread via oil_jxl_runner_cancel(r), pairing it with
+ * oil_jxl_rowbuf_abort to also release a back-pressure-parked worker. A
+ * cancelled runner needs oil_jxl_runner_reset before reuse; destroy only when
+ * no decode is in flight.
  */
-void *oil_libjxl_runner_create(size_t num_threads);
-void  oil_libjxl_runner_destroy(void *runner);
-void  oil_libjxl_runner_reset(void *runner);
-JxlParallelRetCode oil_libjxl_parallel_runner(void *runner, void *jxl,
+void *oil_jxl_runner_create(size_t num_threads);
+void  oil_jxl_runner_destroy(void *runner);
+void  oil_jxl_runner_reset(void *runner);
+JxlParallelRetCode oil_jxl_parallel_runner(void *runner, void *jxl,
 	JxlParallelRunInit init, JxlParallelRunFunction func,
 	uint32_t start_range, uint32_t end_range);
 
 /**
  * Request cancellation of @runner: in-flight and subsequent runner calls return
  * an error so JxlDecoderProcessInput unwinds. Safe from any thread; cleared by
- * oil_libjxl_runner_reset. NULL is a no-op.
+ * oil_jxl_runner_reset. NULL is a no-op.
  */
-void oil_libjxl_runner_cancel(void *runner);
+void oil_jxl_runner_cancel(void *runner);
 
 /**
  * An efficient oil_jxl_waiter backed by a pthreads mutex + two condition

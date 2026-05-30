@@ -96,7 +96,7 @@ void oil_jxl_rowbuf_release_row(struct oil_jxl_rowbuf *rb, size_t y);
  */
 void oil_jxl_rowbuf_abort(struct oil_jxl_rowbuf *rb);
 
-/* Instrumentation (see oil_libjxl.h for the precise semantics). */
+/* Instrumentation (see the struct field comments in oil_jxl_rowbuf.c). */
 size_t oil_jxl_rowbuf_peak_rows(const struct oil_jxl_rowbuf *rb);
 size_t oil_jxl_rowbuf_consumer_waits(const struct oil_jxl_rowbuf *rb);
 size_t oil_jxl_rowbuf_induced_starvations(const struct oil_jxl_rowbuf *rb);

@@ -10,11 +10,12 @@
 #include <png.h>
 #include <jxl/decode.h>
 #include <jxl/thread_parallel_runner.h>
+#include <pthread.h>
 
 #include "oil_resample.h"
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
-#include "oil_libjxl.h"
+#include "oil_jxl.h"
 
 #define LINE_QUEUE_DEPTH 16
 #define MIN_DRAG_PIXELS 5.0f
@@ -137,8 +138,8 @@ struct resumable_resize {
 	unsigned char *outbuf;
 	unsigned char *scaled_buf;
 
-	/* scale_os points at the active wrapper's oil_scale (olj.os for
-	 * JPEG, olp.os for PNG, olx.os for JXL). */
+	/* scale_os points at the active backend's oil_scale (olj.os for
+	 * JPEG, olp.os for PNG, jxl_os for JXL). */
 	struct oil_scale *scale_os;
 	int (*scale_in)(struct oil_scale *, unsigned char *);
 	int (*scale_out)(struct oil_scale *, unsigned char *);
@@ -151,9 +152,17 @@ struct resumable_resize {
 	struct oil_libjpeg olj;
 	struct oil_libpng olp;
 
-	/* JXL: the wrapper borrows the decoder + runner and reads the whole
-	 * codestream from jxl_data, so all three outlive the wrapper. */
-	struct oil_libjxl olx;
+	/* JXL: composed from the helpers (libjxl is a parts kit). A driver thread
+	 * runs oil_jxl_run_decode into jxl_rb; decode_jxl_row pulls finalized rows.
+	 * The decoder, runner and jxl_data outlive the decode. */
+	struct oil_scale jxl_os;
+	struct oil_jxl_rowbuf *jxl_rb;
+	struct oil_jxl_waiter *jxl_waiter;
+	JxlPixelFormat jxl_fmt;
+	pthread_t jxl_driver;
+	int jxl_driver_started;
+	size_t jxl_vpos;
+	unsigned char *jxl_zero;
 	JxlDecoder *jxl_dec;
 	void *jxl_runner;
 	unsigned char *jxl_data;
@@ -447,22 +456,40 @@ fail_jpeg:
  * Resumable resize — JPEG XL decoder
  * =========================================================================== */
 
+static void *jxl_drive_thread(void *arg) {
+	struct resumable_resize *rr = arg;
+	oil_jxl_run_decode(rr->jxl_dec, &rr->jxl_fmt, rr->jxl_rb);
+	return NULL;
+}
+
 static void decode_jxl_row(struct resumable_resize *rr, unsigned char *slot, int row) {
-	(void)row;
-	oil_libjxl_decode_row(&rr->olx, slot);
+	unsigned char *r;
+	(void)row;   /* rows are pulled top-to-bottom; jxl_vpos tracks position */
+	r = oil_jxl_rowbuf_wait_row(rr->jxl_rb, rr->jxl_vpos);
+	memcpy(slot, r ? r : rr->jxl_zero, (size_t)rr->fed_width * rr->cmp);
+	if (r)
+		oil_jxl_rowbuf_release_row(rr->jxl_rb, rr->jxl_vpos);
+	rr->jxl_vpos++;
 }
 
 static void jxl_cancel(struct resumable_resize *rr) {
-	oil_libjxl_cancel(&rr->olx);
+	if (rr->jxl_rb) oil_jxl_rowbuf_abort(rr->jxl_rb);
+	if (rr->jxl_runner) oil_jxl_runner_cancel(rr->jxl_runner);
 }
 
 static void jxl_end(struct resumable_resize *rr) {
+	/* Abandon + join the decode thread before destroying the decoder it
+	 * drives, so this order matters. */
+	if (rr->jxl_rb) oil_jxl_rowbuf_abort(rr->jxl_rb);
+	if (rr->jxl_runner) oil_jxl_runner_cancel(rr->jxl_runner);
+	if (rr->jxl_driver_started) pthread_join(rr->jxl_driver, NULL);
 	free(rr->outbuf);
-	/* Joins the wrapper's producer thread before the decoder it drives is
-	 * destroyed, so this order matters. */
-	oil_libjxl_free(&rr->olx);
+	if (rr->jxl_rb) oil_jxl_rowbuf_destroy(rr->jxl_rb);
+	if (rr->jxl_waiter) oil_jxl_condvar_waiter_destroy(rr->jxl_waiter);
+	oil_scale_free(&rr->jxl_os);
+	free(rr->jxl_zero);
 	if (rr->jxl_dec) JxlDecoderDestroy(rr->jxl_dec);
-	if (rr->jxl_runner) oil_libjxl_runner_destroy(rr->jxl_runner);
+	if (rr->jxl_runner) oil_jxl_runner_destroy(rr->jxl_runner);
 	free(rr->jxl_data);
 }
 
@@ -494,16 +521,16 @@ static int jxl_start(struct resumable_resize *rr)
 	if (!rr->jxl_data) return -1;
 
 	/* Cancellable runner (lets a superseded resize abandon its decode --
-	 * oil_libjxl_cancel). The wrapper always spawns its own producer thread;
+	 * jxl_cancel). The decode runs on its own driver thread regardless;
 	 * --no-threaded only collapses sdltest's pipeline, so use one worker then. */
-	rr->jxl_runner = oil_libjxl_runner_create(
+	rr->jxl_runner = oil_jxl_runner_create(
 		rr->cfg.threaded ? 0 : 1);
 	if (!rr->jxl_runner) goto fail_data;
 
 	rr->jxl_dec = JxlDecoderCreate(NULL);
 	if (!rr->jxl_dec) goto fail_runner;
 
-	if (JxlDecoderSetParallelRunner(rr->jxl_dec, oil_libjxl_parallel_runner,
+	if (JxlDecoderSetParallelRunner(rr->jxl_dec, oil_jxl_parallel_runner,
 			rr->jxl_runner) != JXL_DEC_SUCCESS) goto fail_dec;
 	if (JxlDecoderSubscribeEvents(rr->jxl_dec,
 			JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS)
@@ -532,30 +559,58 @@ static int jxl_start(struct resumable_resize *rr)
 	if (compute_fed_and_out(rr) < 0) goto fail_dec;
 	rr->slot_rowbytes = rr->fed_width * rr->cmp;
 
-	if (oil_libjxl_init_ex(&rr->olx, rr->jxl_dec, &info,
-			rr->out_width, rr->out_height,
-			rr->cfg.src_x, rr->cfg.src_y, rr->cfg.src_w, rr->cfg.src_h,
-			rr->cs) != 0) {
+	/* Compose the helpers (no wrapper): scaler + reorder buffer fed by a
+	 * decode thread we own; the cancellable runner lets a superseded resize
+	 * abandon its decode (jxl_cancel). */
+	if (oil_scale_init_ex(&rr->jxl_os, rr->fed_height, rr->out_height,
+			rr->fed_width, rr->out_width,
+			rr->cfg.src_y - rr->fed_y, rr->cfg.src_h,
+			rr->cfg.src_x - rr->fed_x, rr->cfg.src_w, rr->cs) != 0) {
 		goto fail_dec;
 	}
-	rr->scale_os = &rr->olx.os;
-	rr->olx.runner = rr->jxl_runner;  /* enable prompt cancellation */
+	rr->scale_os = &rr->jxl_os;
+	rr->jxl_driver_started = 0;
 
+	rr->jxl_waiter = oil_jxl_condvar_waiter_create();
+	rr->jxl_rb = rr->jxl_waiter
+		? oil_jxl_rowbuf_create(rr->fed_x, rr->fed_y, rr->fed_width,
+			rr->fed_height, rr->cmp, 256, rr->jxl_waiter)
+		: NULL;
+	rr->jxl_zero = calloc((size_t)rr->fed_width * rr->cmp, 1);
 	rr->outbuf = malloc((size_t)rr->out_width * rr->cmp);
-	if (!rr->outbuf) goto fail_olx;
+	if (!rr->jxl_waiter || !rr->jxl_rb || !rr->jxl_zero || !rr->outbuf)
+		goto fail_scale;
+
+	rr->jxl_fmt.num_channels = rr->cmp;
+	rr->jxl_fmt.data_type    = JXL_TYPE_UINT8;
+	rr->jxl_fmt.endianness   = JXL_NATIVE_ENDIAN;
+	rr->jxl_fmt.align        = 0;
+	rr->jxl_vpos = 0;
+	if (pthread_create(&rr->jxl_driver, NULL, jxl_drive_thread, rr) != 0)
+		goto fail_scale;
+	rr->jxl_driver_started = 1;
 
 	rr->decode_row = decode_jxl_row;
 	rr->format_end = jxl_end;
 	rr->format_cancel = jxl_cancel;
 	return 0;
 
-fail_olx:
-	oil_libjxl_free(&rr->olx);
+fail_scale:
+	free(rr->outbuf);
+	rr->outbuf = NULL;
+	free(rr->jxl_zero);
+	rr->jxl_zero = NULL;
+	if (rr->jxl_rb) { oil_jxl_rowbuf_destroy(rr->jxl_rb); rr->jxl_rb = NULL; }
+	if (rr->jxl_waiter) {
+		oil_jxl_condvar_waiter_destroy(rr->jxl_waiter);
+		rr->jxl_waiter = NULL;
+	}
+	oil_scale_free(&rr->jxl_os);
 fail_dec:
 	JxlDecoderDestroy(rr->jxl_dec);
 	rr->jxl_dec = NULL;
 fail_runner:
-	oil_libjxl_runner_destroy(rr->jxl_runner);
+	oil_jxl_runner_destroy(rr->jxl_runner);
 	rr->jxl_runner = NULL;
 fail_data:
 	free(rr->jxl_data);
@@ -821,9 +876,9 @@ static void resumable_resize_end(struct resumable_resize *rr)
 	SDL_BroadcastCondition(p->cv);
 	SDL_UnlockMutex(p->mutex);
 
-	/* Abandon the decode (JXL): a thread blocked in oil_libjxl_decode_row won't
-	 * see p->aborted until its row arrives, so cancel here for the joins below
-	 * to return promptly. NULL hook for other formats / uninitialized wrapper. */
+	/* Abandon the decode (JXL): a thread blocked in decode_jxl_row's
+	 * oil_jxl_rowbuf_wait_row won't see p->aborted until its row arrives, so
+	 * cancel here for the joins below to return promptly. NULL hook otherwise. */
 	if (rr->format_cancel)
 		rr->format_cancel(rr);
 

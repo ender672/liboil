@@ -31,4 +31,10 @@ All C, no external build system beyond make:
 
 - **PNG wrapper** (`oil_libpng.h/c`): Integrates with `libpng`. Handles both interlaced (Adam7, requires full image buffer) and non-interlaced PNGs.
 
-- **JPEG XL wrapper** (`oil_libjxl.h/c`): `libjxl` has no incremental pull API (one `JxlDecoderProcessInput` decodes the whole frame, dispatching partials to workers out of order), so the wrapper decodes on its own producer thread feeding a lock-free per-row tile buffer; the calling thread pulls finalized scanlines top-to-bottom. The caller owns the `JxlDecoder` and parallel runner and drives it to `JXL_DEC_BASIC_INFO` before init.
+- **JPEG XL helpers** (`oil_libjxl.h/c`, `oil_jxl_rowbuf.h/c`, `oil_jxl_threads.h/c`, `oil_jxl_waiter.h`): unlike libjpeg/libpng, `libjxl` is *not* wrapped. Its decoder has no incremental pull API (one `JxlDecoderProcessInput` decodes the whole frame, dispatching partials to workers out of order), so a single wrapper shape can't fit every caller. Instead liboil exposes a kit of composable helpers:
+  - `oil_jxl_rowbuf` — out-of-order → in-order reorder buffer (the decode's image-out sink). Its core is portable C11 atomics with **no** platform threading calls; the two blocking points delegate to a caller-supplied `oil_jxl_waiter`.
+  - `oil_jxl_run_decode(dec, fmt, rb)` — drives `JxlDecoderProcessInput` to completion into a rowbuf; the caller runs it on a thread it owns.
+  - `oil_jxl_threads` — the *optional* pthreads pieces: the cancellable `oil_jxl_runner` (interrupts a decode mid-frame) and the `oil_jxl_condvar_waiter` (the rowbuf's blocking primitive). This is the only jxl unit that uses pthreads.
+  - `oil_jxl_resample(...)` — a one-call convenience composed from all of the above; spawns one decode thread and pulls/scales on the calling thread. `imgscale.c` shows the manual (streaming) composition instead.
+
+  In every case the caller owns the `JxlDecoder`: bind a parallel runner (stock `JxlThreadParallelRunner`, `oil_jxl_runner`, or its own), subscribe events, supply the codestream, and drive to `JXL_DEC_BASIC_INFO` before using the helpers.

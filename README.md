@@ -115,15 +115,16 @@ for(i=0; i<out_height; i++) {
 }
 ```
 
-When decoding JPEG, PNG, or JPEG XL, `oil_libjpeg_init_ex`,
-`oil_libpng_init_ex`, and `oil_libjxl_init_ex` take the same `src_*` rect and
-handle the decode-side cropping for you (the JPEG wrapper uses libjpeg-turbo's
-skip and crop fast paths when available).
+When decoding JPEG or PNG, `oil_libjpeg_init_ex` and `oil_libpng_init_ex` take
+the same `src_*` rect and handle the decode-side cropping for you (the JPEG
+wrapper uses libjpeg-turbo's skip and crop fast paths when available).
 
-libjxl has no incremental pull API, so the JPEG XL wrapper decodes on its own
-producer thread and serves finalized scanlines top-to-bottom. Unlike the JPEG
-and PNG wrappers, the caller sets up the `JxlDecoder` (parallel runner, drive to
-basic info) before init; see `oil_libjxl.h`.
+libjxl has no incremental pull API, so it is not wrapped: liboil instead exposes
+a kit of composable helpers (`oil_libjxl.h`). The one-call `oil_jxl_resample`
+covers the common case; callers needing to own the threading, parallel runner,
+or to stream output compose the pieces themselves (`oil_jxl_rowbuf` +
+`oil_jxl_run_decode`, see `imgscale.c`). In all cases the caller sets up the
+`JxlDecoder` (parallel runner, drive to basic info) first; see `oil_libjxl.h`.
 
 Reference Documentation
 -----------------------

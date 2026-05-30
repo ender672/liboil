@@ -31,12 +31,13 @@
  * A fixed-size thread pool implementing JxlParallelRunner that, unlike
  * JxlThreadParallelRunner, checks a cancel flag before each work item so a
  * decode can be abandoned mid-frame: the in-flight runner call returns an error
- * and JxlDecoderProcessInput unwinds instead of finishing the frame. This lets
- * oil_libjxl_cancel/_free drop libjxl's large frame state promptly.
+ * and JxlDecoderProcessInput unwinds instead of finishing the frame, so a
+ * superseded decode can drop libjxl's large frame state promptly.
  *
- * Cancel reaches workers spinning in run_job via the flag, and workers parked
- * on back-pressure via oil_jxl_rowbuf_abort (oil_libjxl_cancel does both). libjxl
- * calls the runner once per parallel section, so one job runs at a time. */
+ * Cancel reaches workers spinning in run_job via the flag; a worker parked on
+ * back-pressure is released by oil_jxl_rowbuf_abort (cancel both to abandon a
+ * decode mid-frame). libjxl calls the runner once per parallel section, so one
+ * job runs at a time. */
 
 struct oil_jxl_worker_arg { struct oil_jxl_runner *r; size_t id; };
 
@@ -107,7 +108,7 @@ static void *oil_jxl_worker(void *arg)
 	return NULL;
 }
 
-JxlParallelRetCode oil_libjxl_parallel_runner(void *opaque, void *jxl,
+JxlParallelRetCode oil_jxl_parallel_runner(void *opaque, void *jxl,
 	JxlParallelRunInit init, JxlParallelRunFunction func,
 	uint32_t start_range, uint32_t end_range)
 {
@@ -137,7 +138,7 @@ JxlParallelRetCode oil_libjxl_parallel_runner(void *opaque, void *jxl,
 	return atomic_load_explicit(&r->cancel, memory_order_acquire) ? -1 : 0;
 }
 
-void *oil_libjxl_runner_create(size_t num_threads)
+void *oil_jxl_runner_create(size_t num_threads)
 {
 	struct oil_jxl_runner *r;
 	size_t i;
@@ -172,13 +173,13 @@ void *oil_libjxl_runner_create(size_t num_threads)
 		r->n_started++;
 	}
 	if (r->n_started != num_threads) {
-		oil_libjxl_runner_destroy(r);
+		oil_jxl_runner_destroy(r);
 		return NULL;
 	}
 	return r;
 }
 
-void oil_libjxl_runner_destroy(void *opaque)
+void oil_jxl_runner_destroy(void *opaque)
 {
 	struct oil_jxl_runner *r = opaque;
 	size_t i;
@@ -198,14 +199,14 @@ void oil_libjxl_runner_destroy(void *opaque)
 	free(r);
 }
 
-void oil_libjxl_runner_reset(void *opaque)
+void oil_jxl_runner_reset(void *opaque)
 {
 	struct oil_jxl_runner *r = opaque;
 	if (r)
 		atomic_store_explicit(&r->cancel, 0, memory_order_release);
 }
 
-void oil_libjxl_runner_cancel(void *opaque)
+void oil_jxl_runner_cancel(void *opaque)
 {
 	struct oil_jxl_runner *r = opaque;
 	if (r)

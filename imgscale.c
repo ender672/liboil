@@ -1,6 +1,6 @@
 #include "oil_libjpeg.h"
 #include "oil_libpng.h"
-#include "oil_libjxl.h"
+#include "oil_jxl.h"
 #include "oil_resample.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +10,7 @@
 #include <png.h>
 #include <jxl/encode.h>
 #include <jxl/thread_parallel_runner.h>
+#include <pthread.h>
 
 enum file_format { FMT_PNG, FMT_JPEG, FMT_JXL };
 
@@ -536,16 +537,35 @@ static unsigned char *slurp_stream(FILE *io, size_t *size_out)
 	return buf;
 }
 
+/* Path-B reference consumer: libjxl is a parts kit, not a wrapper, so imgscale
+ * composes the helpers itself -- a reorder buffer fed by a decode thread it
+ * owns, pulled and scaled (streaming to the encoder) on the main thread. */
+struct jxl_drive { JxlDecoder *dec; const JxlPixelFormat *fmt;
+	struct oil_jxl_rowbuf *rb; };
+static void *jxl_drive_thread(void *arg)
+{
+	struct jxl_drive *d = arg;
+	oil_jxl_run_decode(d->dec, d->fmt, d->rb);
+	return NULL;
+}
+
 static void process_jxl_input(FILE *input, FILE *output, int width_out,
 	int height_out, const struct backend_entry *be, int no_gamma,
 	enum file_format out_fmt)
 {
-	unsigned char *data, *inbuf, *outbuf;
-	size_t insize;
+	unsigned char *data, *zero, *outbuf;
+	size_t insize, vpos = 0;
 	void *runner;
 	JxlDecoder *dec;
 	JxlBasicInfo info;
-	struct oil_libjxl ol;
+	struct oil_scale os;
+	struct oil_jxl_rowbuf *rb;
+	struct oil_jxl_waiter *waiter;
+	struct jxl_drive drv;
+	pthread_t driver;
+	JxlPixelFormat fmt;
+	enum oil_colorspace cs;
+	int cmp, fed_x, fed_y, fed_w, fed_h;
 	struct jpeg_compress_struct cinfo;
 	struct jpeg_error_mgr jerr;
 	struct jxl_writer jw = {0};
@@ -588,52 +608,81 @@ static void process_jxl_input(FILE *input, FILE *output, int width_out,
 
 	oil_fix_ratio(info.xsize, info.ysize, &width_out, &height_out);
 
-	if (oil_libjxl_init(&ol, dec, &info, width_out, height_out) != 0) {
-		fprintf(stderr, "Unable to initialize scaler.\n");
+	cs = jxl_cs_to_oil(&info);
+	if (cs == OIL_CS_UNKNOWN) {
+		fprintf(stderr, "Unsupported JXL colorspace.\n");
 		exit(1);
 	}
-	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
+	if (no_gamma) cs = nogamma_cs(cs);
+	cmp = OIL_CMP(cs);
 
-	/* JPEG cannot carry alpha, and the wrapper has no flatten step. Match the
-	 * no-gamma variant too: --no-gamma has already rewritten the colorspace
-	 * (RGBA -> RGBA_NOGAMMA) by this point. */
+	/* JPEG cannot carry alpha, and there is no flatten step. The no-gamma
+	 * variant (RGBA -> RGBA_NOGAMMA) is already folded into cs above. */
 	if (out_fmt == FMT_JPEG &&
-	    (ol.os.cs == OIL_CS_GA || ol.os.cs == OIL_CS_RGBA ||
-	     ol.os.cs == OIL_CS_RGBA_NOGAMMA)) {
+	    (cs == OIL_CS_GA || cs == OIL_CS_RGBA || cs == OIL_CS_RGBA_NOGAMMA)) {
 		fprintf(stderr, "Cannot encode alpha as JPEG.\n");
 		exit(1);
 	}
 
-	inbuf = malloc((size_t)ol.fed_width * ol.components);
-	outbuf = malloc((size_t)width_out * OIL_CMP(ol.os.cs));
-	if (!inbuf || !outbuf) {
+	/* Full-image source rect; oil_required_input_rect clamps the halo to the
+	 * image bounds, so the fed rect is the whole image. */
+	if (oil_required_input_rect(info.ysize, info.xsize,
+		0.0, (double)info.ysize, 0.0, (double)info.xsize,
+		height_out, width_out, &fed_y, &fed_h, &fed_x, &fed_w) < 0 ||
+	    oil_scale_init_ex(&os, fed_h, height_out, fed_w, width_out,
+		0.0 - fed_y, (double)info.ysize, 0.0 - fed_x, (double)info.xsize,
+		cs) != 0) {
+		fprintf(stderr, "Unable to initialize scaler.\n");
+		exit(1);
+	}
+
+	zero = calloc((size_t)fed_w * cmp, 1);   /* fed on decode failure */
+	outbuf = malloc((size_t)width_out * cmp);
+	waiter = oil_jxl_condvar_waiter_create();
+	rb = waiter ? oil_jxl_rowbuf_create(fed_x, fed_y, fed_w, fed_h, cmp, 256,
+		waiter) : NULL;
+	if (!zero || !outbuf || !waiter || !rb) {
 		fprintf(stderr, "Unable to allocate buffers.\n");
 		exit(1);
 	}
 
 	if (out_fmt == FMT_PNG) {
-		out_ctype = oil_cs_to_png_ctype(ol.os.cs);
+		out_ctype = oil_cs_to_png_ctype(cs);
 		if (out_ctype < 0) {
 			fprintf(stderr, "Cannot encode colorspace as PNG.\n");
 			exit(1);
 		}
 		png_writer_open(&wpng, &winfo, output, width_out, height_out, out_ctype);
 	} else if (out_fmt == FMT_JXL) {
-		if (jxl_writer_open(&jw, width_out, height_out, ol.os.cs) != 0) {
+		if (jxl_writer_open(&jw, width_out, height_out, cs) != 0) {
 			fprintf(stderr, "Cannot encode as JXL.\n");
 			exit(1);
 		}
 	} else {
 		jpeg_writer_open(&cinfo, &jerr, output, width_out, height_out,
-			ol.os.cs, NULL);
+			cs, NULL);
+	}
+
+	/* Spawn the decode driver; pull + scale its rows as they arrive. */
+	fmt.num_channels = cmp;
+	fmt.data_type    = JXL_TYPE_UINT8;
+	fmt.endianness   = JXL_NATIVE_ENDIAN;
+	fmt.align        = 0;
+	drv.dec = dec; drv.fmt = &fmt; drv.rb = rb;
+	if (pthread_create(&driver, NULL, jxl_drive_thread, &drv) != 0) {
+		fprintf(stderr, "Unable to start JXL decode thread.\n");
+		exit(1);
 	}
 
 	for (i = 0; i < height_out; i++) {
-		while (oil_scale_slots(&ol.os) > 0) {
-			oil_libjxl_decode_row(&ol, inbuf);
-			be->scale_in(&ol.os, inbuf);
+		while (oil_scale_slots(&os) > 0) {
+			unsigned char *row = oil_jxl_rowbuf_wait_row(rb, vpos);
+			be->scale_in(&os, row ? row : zero);
+			if (row)
+				oil_jxl_rowbuf_release_row(rb, vpos);
+			vpos++;
 		}
-		be->scale_out(&ol.os, outbuf);
+		be->scale_out(&os, outbuf);
 		if (out_fmt == FMT_PNG) {
 			png_write_row(wpng, outbuf);
 		} else if (out_fmt == FMT_JXL) {
@@ -657,11 +706,17 @@ static void process_jxl_input(FILE *input, FILE *output, int width_out,
 		jpeg_destroy_compress(&cinfo);
 	}
 
-	oil_libjxl_free(&ol);
+	/* Release any back-pressure-parked producer so the decode thread can join
+	 * even if the scaler consumed fewer fed rows than were buffered. */
+	oil_jxl_rowbuf_abort(rb);
+	pthread_join(driver, NULL);
+	oil_jxl_rowbuf_destroy(rb);
+	oil_jxl_condvar_waiter_destroy(waiter);
+	oil_scale_free(&os);
 	JxlDecoderDestroy(dec);
 	JxlThreadParallelRunnerDestroy(runner);
 	free(data);
-	free(inbuf);
+	free(zero);
 	free(outbuf);
 }
 
