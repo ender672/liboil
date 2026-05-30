@@ -2,14 +2,16 @@
  * Demonstrates the split decode/feed API on oil_libjxl.
  *
  * Encodes a deterministic RGB gradient to an in-memory (lossless) JPEG XL
- * codestream, then decodes the same image two ways:
+ * codestream, then decodes the same image three ways:
  *
  *   1. The bundled all-in-one path, oil_libjxl_read_scanline.
  *   2. The split path: oil_libjxl_decode_row into a caller-owned buffer,
  *      then oil_scale_in / oil_scale_out driven by the caller.
+ *   3. The one-call convenience oil_jxl_resample.
  *
- * Asserts the two outputs are byte-identical. This is the property any caller
- * that wants to interpose a slot queue between decode and scale relies on.
+ * Asserts all three outputs are byte-identical. The split path is what a caller
+ * that wants to interpose a slot queue between decode and scale relies on;
+ * matching oil_jxl_resample confirms the easy button agrees with the wrapper.
  */
 
 #include <assert.h>
@@ -90,28 +92,58 @@ static unsigned char *decode_split(unsigned char *data, size_t size,
 	return out;
 }
 
-static void check_case(unsigned char *data, size_t size,
-	const char *label, int out_w, int out_h,
+static unsigned char *decode_resample(unsigned char *data, size_t size,
+	int out_w, int out_h,
 	double src_x, double src_y, double src_w, double src_h)
 {
-	unsigned char *a, *b;
-	size_t n = (size_t)out_w * out_h * 3;
-	a = decode_bundled(data, size, out_w, out_h, src_x, src_y, src_w, src_h);
-	b = decode_split(data, size, out_w, out_h, src_x, src_y, src_w, src_h);
+	JxlDecoder *dec;
+	void *runner;
+	JxlBasicInfo info;
+	unsigned char *out;
+
+	dec = open_jxl(data, size, &runner, &info);
+	out = malloc((size_t)out_w * out_h * 3);
+	assert(oil_jxl_resample(dec, &info, out_w, out_h,
+		src_x, src_y, src_w, src_h, OIL_CS_UNKNOWN,
+		out, (size_t)out_w * 3) == 0);
+
+	JxlDecoderDestroy(dec);
+	JxlThreadParallelRunnerDestroy(runner);
+	return out;
+}
+
+static void expect_eq(const char *label, const char *which,
+	const unsigned char *a, const unsigned char *b, size_t n)
+{
 	if (memcmp(a, b, n) != 0) {
 		size_t i;
 		for (i = 0; i < n; i++) {
 			if (a[i] != b[i]) {
-				fprintf(stderr, "  %s: mismatch at byte %zu: bundled=%u split=%u\n",
-					label, i, a[i], b[i]);
+				fprintf(stderr, "  %s: %s mismatch at byte %zu: "
+					"bundled=%u %s=%u\n",
+					label, which, i, a[i], which, b[i]);
 				break;
 			}
 		}
 		assert(0);
 	}
+}
+
+static void check_case(unsigned char *data, size_t size,
+	const char *label, int out_w, int out_h,
+	double src_x, double src_y, double src_w, double src_h)
+{
+	unsigned char *a, *b, *c;
+	size_t n = (size_t)out_w * out_h * 3;
+	a = decode_bundled(data, size, out_w, out_h, src_x, src_y, src_w, src_h);
+	b = decode_split(data, size, out_w, out_h, src_x, src_y, src_w, src_h);
+	c = decode_resample(data, size, out_w, out_h, src_x, src_y, src_w, src_h);
+	expect_eq(label, "split", a, b, n);
+	expect_eq(label, "resample", a, c, n);
 	printf("  %s: %dx%d ok\n", label, out_w, out_h);
 	free(a);
 	free(b);
+	free(c);
 }
 
 /* Decode at integer-aligned 1:1 scale (out dims == src rect), then compare an

@@ -159,6 +159,32 @@ void oil_libjxl_decode_row(struct oil_libjxl *ol, unsigned char *dst);
 void oil_libjxl_read_scanline(struct oil_libjxl *ol, unsigned char *outbuf);
 
 /**
+ * One-call convenience: decode @dec (driven to JXL_DEC_BASIC_INFO with @info
+ * filled, JXL_DEC_FULL_IMAGE subscribed, input supplied) and resize the
+ * (possibly sub-pixel) source rect to @out_width x @out_height, writing the
+ * result into @out -- rows at @out_stride bytes, each out_width*components.
+ *
+ * The batteries-included entry point, composed entirely from the public helpers
+ * (oil_jxl_rowbuf, oil_jxl_run_decode, oil_jxl_condvar_waiter, oil_scale): it
+ * creates the reorder buffer + condvar waiter, spawns one thread to drive the
+ * decode, and pulls/scales rows on the calling thread. It is the only entry
+ * here that spawns a thread for you; a caller wanting to own the threading, the
+ * parallel runner, or the memory manager composes those helpers directly.
+ *
+ * @cs_override: OIL_CS_UNKNOWN derives the colorspace from @info; otherwise it
+ *     must share the derived OIL_CMP (this selects the no-gamma variants).
+ *
+ * Returns 0 on a complete decode+resize; -1 bad argument or partial decode
+ * (output past the failure point is zero-filled); -2 allocation failure; -3
+ * thread-spawn failure.
+ */
+int oil_jxl_resample(JxlDecoder *dec, const JxlBasicInfo *info,
+	int out_width, int out_height,
+	double src_x, double src_y, double src_width, double src_height,
+	enum oil_colorspace cs_override,
+	unsigned char *out, size_t out_stride);
+
+/**
  * High-water mark of finalized-but-unconsumed rows the wrapper buffered: its
  * peak heap footprint beyond libjxl's, in rows (x fed_width*components = bytes).
  */
