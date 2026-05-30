@@ -41,29 +41,37 @@ static void jxl_run_cb(void *run_opaque, size_t tid,
 	oil_jxl_rowbuf_write_segment(run_opaque, x, y, n, pixels);
 }
 
-/* ---------- producer thread ---------- */
+/* ---------- decode driver ---------- */
 
-static void *jxl_producer(void *arg)
+int oil_jxl_run_decode(JxlDecoder *dec, const JxlPixelFormat *fmt,
+	struct oil_jxl_rowbuf *rb)
 {
-	struct oil_libjxl *ol = arg;
-
 	for (;;) {
-		JxlDecoderStatus s = JxlDecoderProcessInput(ol->dec);
+		JxlDecoderStatus s = JxlDecoderProcessInput(dec);
 		if (s == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
-			if (JxlDecoderSetMultithreadedImageOutCallback(ol->dec,
-			        &ol->fmt, jxl_init_cb, jxl_run_cb,
-			        jxl_destroy_cb, ol->tb) != JXL_DEC_SUCCESS)
+			if (JxlDecoderSetMultithreadedImageOutCallback(dec,
+			        fmt, jxl_init_cb, jxl_run_cb,
+			        jxl_destroy_cb, rb) != JXL_DEC_SUCCESS)
 				break;
 			continue;
 		}
 		if (s == JXL_DEC_FULL_IMAGE) continue;
-		if (s == JXL_DEC_SUCCESS) return NULL;
+		if (s == JXL_DEC_SUCCESS) return 0;
 		/* JXL_DEC_ERROR, JXL_DEC_NEED_MORE_INPUT (truncated), or any
 		 * unexpected status: decode cannot complete. */
 		break;
 	}
 
-	oil_jxl_rowbuf_abort(ol->tb);
+	oil_jxl_rowbuf_abort(rb);
+	return -1;
+}
+
+/* ---------- producer thread ---------- */
+
+static void *jxl_producer(void *arg)
+{
+	struct oil_libjxl *ol = arg;
+	oil_jxl_run_decode(ol->dec, &ol->fmt, ol->tb);
 	return NULL;
 }
 

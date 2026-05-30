@@ -125,6 +125,23 @@ void oil_libjxl_free(struct oil_libjxl *ol);
  * JxlThreadParallelRunner or their own JxlParallelRunner. */
 
 /**
+ * Run a libjxl decode to completion on the calling thread, feeding finalized
+ * scanlines into @rb. Wires the multithreaded image-out callback itself, so the
+ * caller only needs to have driven @dec to JXL_DEC_BASIC_INFO and subscribed
+ * JXL_DEC_FULL_IMAGE (as for oil_libjxl_init_ex); @fmt is the pixel format the
+ * rowbuf was sized for.
+ *
+ * Because JxlDecoderProcessInput decodes the whole frame in one blocking call,
+ * a streaming caller runs this on a thread it owns while another thread pulls
+ * rows via oil_jxl_rowbuf_wait_row -- exactly what oil_libjxl's internal
+ * producer thread does. On a decode error or truncation it aborts @rb (so a
+ * blocked consumer is released) and returns nonzero; returns 0 on a complete
+ * decode.
+ */
+int oil_jxl_run_decode(JxlDecoder *dec, const JxlPixelFormat *fmt,
+	struct oil_jxl_rowbuf *rb);
+
+/**
  * Abandon the in-progress decode so the producer can be joined quickly: rows
  * requested afterward read the zeroed fallback with ol->error set. With
  * ol->runner NULL it cancels only the consumer side. Idempotent.
