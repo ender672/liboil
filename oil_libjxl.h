@@ -28,9 +28,7 @@
 #include <jxl/codestream_header.h>
 #include <jxl/parallel_runner.h>
 #include "oil_resample.h"
-
-/* Defined privately in oil_libjxl.c. */
-struct oil_jxl_tile_buf;
+#include "oil_jxl_rowbuf.h"
 
 struct oil_libjxl {
 	struct oil_scale os;
@@ -42,7 +40,7 @@ struct oil_libjxl {
 
 	/* Lock-free per-row buffer the decoder's worker threads coalesce
 	 * scanlines into; the wrapper consumes finalized rows top-to-bottom. */
-	struct oil_jxl_tile_buf *tb;
+	struct oil_jxl_rowbuf *tb;
 	pthread_t producer;
 	int producer_started;
 

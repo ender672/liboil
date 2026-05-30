@@ -25,7 +25,7 @@
 /* IN_W is wider than the tile buffer's 256px tile_w so the full-image and
  * wide-crop decodes span multiple tiles, exercising the multi-tile coalescing
  * and crop-local clipping paths (a single-tile image would never iterate the
- * per-tile loop in tile_buf_partial). */
+ * per-tile loop in oil_jxl_rowbuf_write_segment). */
 #define IN_W 600
 #define IN_H 192
 

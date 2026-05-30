@@ -5,6 +5,7 @@ test_libpng
 test_libjxl
 test_jxl_cancel
 test_jxl_regress
+test_jxl_rowbuf
 jxlmembench
 jxlstarvebench
 jxlperfbench
@@ -26,4 +27,5 @@ DO_NOT_COMMIT*
 test.dSYM
 test_libjpeg.dSYM
 test_libpng.dSYM
+test_jxl_rowbuf.dSYM
 .DS_Store
