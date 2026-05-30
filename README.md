@@ -8,7 +8,7 @@ Performance over time, broken down by colorspace and SIMD backend, is tracked at
 Purpose
 -------
 
-liboil aims to provide excellent general-purpose image thumbnailing and is optimized for low memory and CPU use.
+liboil aims to provide excellent general-purpose image thumbnailing.
 
 liboil is not very configurable -- it currently only has one interpolator (catmull-rom). It is not suited for scenarios where you want to customize your settings by hand for each image.
 
@@ -25,11 +25,17 @@ Features
 imgscale
 --------
 
-The liboil repository includes a command-line tool for resizing JPEG and PNG images.
+The liboil repository includes a command-line tool for resizing JPEG, PNG, and
+JPEG XL images. The output format is chosen from the destination file
+extension, so you can also transcode between formats while resizing.
 
 For example, to resize in.jpg to fit in a 400x800 box while preserving the aspect ratio: 
 
     ./imgscale 400 800 in.jpg out.jpg
+
+To resize and transcode a JPEG XL source to a PNG thumbnail:
+
+    ./imgscale 400 800 in.jxl out.png
 
 Example usage as a C library
 ----------------------------
@@ -109,9 +115,15 @@ for(i=0; i<out_height; i++) {
 }
 ```
 
-When decoding JPEG or PNG, `oil_libjpeg_init_ex` and `oil_libpng_init_ex`
-take the same `src_*` rect and handle the decode-side cropping for you (the
-JPEG wrapper uses libjpeg-turbo's skip and crop fast paths when available).
+When decoding JPEG, PNG, or JPEG XL, `oil_libjpeg_init_ex`,
+`oil_libpng_init_ex`, and `oil_libjxl_init_ex` take the same `src_*` rect and
+handle the decode-side cropping for you (the JPEG wrapper uses libjpeg-turbo's
+skip and crop fast paths when available).
+
+libjxl has no incremental pull API, so the JPEG XL wrapper decodes on its own
+producer thread and serves finalized scanlines top-to-bottom. Unlike the JPEG
+and PNG wrappers, the caller sets up the `JxlDecoder` (parallel runner, drive to
+basic info) before init; see `oil_libjxl.h`.
 
 Reference Documentation
 -----------------------
@@ -127,11 +139,11 @@ Related Projects
 Building
 --------
 
-Dependencies: libjpeg, libpng, libm.
+Dependencies: libjpeg, libpng, libjxl (libjxl_threads), libm.
 
 On macOS with Homebrew:
 
-    brew install jpeg libpng
+    brew install jpeg libpng jpeg-xl
 
 The Makefile auto-detects the architecture and builds the appropriate SIMD backend (SSE2/AVX2 on x86_64, NEON on ARM64).
 
