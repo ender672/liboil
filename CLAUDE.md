@@ -38,3 +38,8 @@ All C, no external build system beyond make:
   - `oil_jxl_resample(...)` — a one-call convenience composed from all of the above; spawns one decode thread and pulls/scales on the calling thread. `imgscale.c` shows the manual (streaming) composition instead.
 
   In every case the caller owns the `JxlDecoder`: bind a parallel runner (stock `JxlThreadParallelRunner`, `oil_jxl_runner`, or its own), subscribe events, supply the codestream, and drive to `JXL_DEC_BASIC_INFO` before using the helpers.
+
+## Conventions
+
+- Keep commit messages CONCISE: a short subject line, and a body only covering the "why" that isn't obvious. Skip the body for small or self-evident changes.
+- The image-format integrations (`oil_libjpeg`, `oil_libpng`, `oil_jxl`) should primarily be a *kit*, not a wrapper: expose composable pieces — setup, a per-row decode primitive into a caller-owned buffer, and the `oil_scale` for the caller to drive (so SIMD/pipelined/streaming callers compose their own loop). An all-in-one convenience path (e.g. `oil_libjpeg_read_scanline`) is fine layered on top, but the kit primitives are the primary interface; consumers should reach for them rather than the wrapper's internals.
