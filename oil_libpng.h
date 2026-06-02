@@ -27,16 +27,30 @@
 #include "oil_resample.h"
 
 struct oil_libpng {
+	/* Public. The configured scaler: feed it with oil_scale_in (or a SIMD
+	 * entry point) and read scaled rows with oil_scale_out. */
 	struct oil_scale os;
+
+	/* Private -- internal decode state; do not read or write from outside
+	 * the wrapper. @rpng/@rinfo are the borrowed libpng read structs;
+	 * @inbuf is the wrapper's own scratch row buffer (non-interlaced);
+	 * @inimage holds the fully decoded image (interlaced Adam7, which
+	 * forbids row-skipping); @in_vpos is the next source row to serve;
+	 * @inbuf_offset is the byte offset of the fed rect within a decoded
+	 * row; @img_height sizes @inimage for freeing. */
 	png_structp rpng;
 	png_infop rinfo;
 	int in_vpos;
 	int inbuf_offset;
 	int img_height;
-	int fed_width;
-	int components;
 	unsigned char *inbuf;
 	unsigned char **inimage;
+
+	/* Public. Size of one decoded input row, for callers that drive the
+	 * decode themselves: oil_libpng_decode_row writes fed_width *
+	 * components bytes into the caller-supplied buffer. */
+	int fed_width;
+	int components;
 };
 
 /**

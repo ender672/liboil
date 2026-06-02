@@ -280,7 +280,7 @@ done:
 static void process_png_input(FILE *input, FILE *output, int width, int height,
 	const struct backend_entry *be, int no_gamma, enum file_format out_fmt)
 {
-	int i, in_width, in_height, ret, ol_inited = 0, interlaced;
+	int i, in_width, in_height, ret, ol_inited = 0;
 	png_structp rpng, wpng = NULL;
 	png_infop rinfo, winfo = NULL;
 	struct jpeg_compress_struct cinfo;
@@ -288,7 +288,7 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	int jpeg_started = 0;
 	struct oil_libpng ol;
 	struct jxl_writer jw = {0};
-	unsigned char *outbuf = NULL;
+	unsigned char *outbuf = NULL, *inrow = NULL;
 	int out_ctype;
 
 	rpng = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -306,6 +306,7 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 
 	if (setjmp(png_jmpbuf(rpng))) {
 		free(outbuf);
+		free(inrow);
 		if (ol_inited)
 			oil_libpng_free(&ol);
 		if (out_fmt == FMT_PNG)
@@ -342,7 +343,6 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	}
 	ol_inited = 1;
 	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
-	interlaced = png_get_interlace_type(rpng, rinfo) == PNG_INTERLACE_ADAM7;
 
 	if (out_fmt == FMT_PNG) {
 		out_ctype = oil_cs_to_png_ctype(ol.os.cs);
@@ -362,19 +362,16 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	}
 
 	outbuf = malloc(width * OIL_CMP(ol.os.cs));
-	if (!outbuf) {
+	inrow = malloc((size_t)ol.fed_width * ol.components);
+	if (!outbuf || !inrow) {
 		fprintf(stderr, "Unable to allocate buffers.\n");
 		exit(1);
 	}
 
 	for(i=0; i<height; i++) {
 		while (oil_scale_slots(&ol.os) > 0) {
-			if (interlaced) {
-				be->scale_in(&ol.os, ol.inimage[ol.in_vpos++]);
-			} else {
-				png_read_row(rpng, ol.inbuf, NULL);
-				be->scale_in(&ol.os, ol.inbuf);
-			}
+			oil_libpng_decode_row(&ol, inrow);
+			be->scale_in(&ol.os, inrow);
 		}
 		be->scale_out(&ol.os, outbuf);
 		if (out_fmt == FMT_PNG) {
@@ -402,6 +399,7 @@ static void process_png_input(FILE *input, FILE *output, int width, int height,
 	png_destroy_read_struct(&rpng, &rinfo, NULL);
 
 	free(outbuf);
+	free(inrow);
 	oil_libpng_free(&ol);
 }
 
