@@ -32,33 +32,22 @@
 /*
  * libjxl helpers for liboil.
  *
- * Unlike the libjpeg and libpng wrappers, libjxl is not wrapped: its decoder
- * has no incremental pull API (one JxlDecoderProcessInput decodes the whole
- * frame, dispatching partial scanlines to worker threads out of order), so a
- * single wrapper shape cannot serve every caller. Instead liboil exposes a kit
- * of composable helpers the caller assembles into its own decode:
+ * A kit of composable helpers for decoding and resizing a libjxl codestream.
+ * One JxlDecoderProcessInput decodes the whole frame, dispatching partial
+ * scanlines to workers out of order, so the helpers assemble around that: the
+ * reorder buffer oil_jxl_rowbuf (oil_jxl_rowbuf.h), the optional pthreads
+ * pieces oil_jxl_runner / oil_jxl_condvar_waiter (oil_jxl_threads.h), the
+ * resampler oil_scale (oil_resample.h), and the three declared below.
+ * oil_jxl_resample bundles them into a one-call convenience; a caller needing
+ * to own the threading, runner, or allocator composes them directly (imgscale.c
+ * shows the streaming case).
  *
- *   oil_jxl_rowbuf      (oil_jxl_rowbuf.h) - out-of-order -> in-order reorder
- *                       buffer; the decode's image-out sink.
- *   oil_jxl_run_decode  - drives JxlDecoderProcessInput to completion into a
- *                       rowbuf; run on a thread the caller owns.
- *   oil_jxl_runner / oil_jxl_condvar_waiter (oil_jxl_threads.h) - optional
- *                       pthreads pieces (cancellable runner; the rowbuf's
- *                       blocking primitive).
- *   oil_scale           (oil_resample.h) - the resampler.
- *   jxl_cs_to_oil       - map a JxlBasicInfo to an oil colorspace.
- *
- * oil_jxl_resample bundles all of the above into a one-call convenience for the
- * common case; a caller needing to own threading, the runner, the allocator, or
- * to interpose between decode and scale composes the helpers directly (see
- * imgscale.c for a streaming example).
- *
- * In all cases the caller owns @dec: create it, bind a parallel runner (the
- * stock JxlThreadParallelRunner, oil_jxl_runner, or its own), subscribe
- * JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE, supply the whole codestream
- * (SetInput + CloseInput), and drive ProcessInput to JXL_DEC_BASIC_INFO. oil
- * expects straight alpha, so for associated/premultiplied alpha also set
- * JxlDecoderSetUnpremultiplyAlpha(dec, JXL_TRUE) before the first ProcessInput.
+ * Every entry point assumes the caller owns @dec: create it, bind a runner
+ * (stock JxlThreadParallelRunner, oil_jxl_runner, or its own), subscribe
+ * JXL_DEC_BASIC_INFO | JXL_DEC_FULL_IMAGE, supply the codestream (SetInput +
+ * CloseInput), and drive ProcessInput to JXL_DEC_BASIC_INFO. oil expects
+ * straight alpha, so for premultiplied alpha also set
+ * JxlDecoderSetUnpremultiplyAlpha(dec, JXL_TRUE) first.
  */
 
 /**
