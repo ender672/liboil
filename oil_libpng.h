@@ -56,7 +56,7 @@ struct oil_libpng {
 /**
  * Initialize an oil_libpng struct.
  * @ol: Pointer to the struct to be initialized.
- * @dinfo: Pointer to a libjpeg decompress struct, with header already read.
+ * @rpng, @rinfo: Active libpng read structs, with header already read.
  * @out_height: Desired height, in pixels, of the output image.
  * @out_width: Desired width, in pixels, of the output image.
  *
@@ -96,6 +96,8 @@ int oil_libpng_init_ex(struct oil_libpng *ol, png_structp rpng, png_infop rinfo,
 	double src_x, double src_y, double src_width, double src_height,
 	enum oil_colorspace cs_override);
 
+/* Release the scaler and decode buffers. Does not touch the caller's
+ * libpng read structs. */
 void oil_libpng_free(struct oil_libpng *ol);
 
 /**
@@ -114,8 +116,12 @@ void oil_libpng_free(struct oil_libpng *ol);
  */
 void oil_libpng_decode_row(struct oil_libpng *ol, unsigned char *dst);
 
+/* Bundled all-in-one path: decode enough input rows to scale and emit one
+ * output row into @outbuf. Drives the scaler internally (scalar entry points).
+ */
 void oil_libpng_read_scanline(struct oil_libpng *ol, unsigned char *outbuf);
 
+/* Map a libpng color type to its oil colorspace, or OIL_CS_UNKNOWN. */
 enum oil_colorspace png_cs_to_oil(png_byte cs);
 
 #endif
