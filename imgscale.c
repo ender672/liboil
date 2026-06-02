@@ -414,7 +414,7 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	struct jpeg_error_mgr jerr;
 	png_structp wpng = NULL;
 	png_infop winfo = NULL;
-	unsigned char *outbuf;
+	unsigned char *outbuf, *inrow;
 	int i, ret, out_ctype;
 	long j;
 	struct oil_libjpeg ol;
@@ -454,8 +454,11 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	if (no_gamma) ol.os.cs = nogamma_cs(ol.os.cs);
 
 	outbuf = malloc(width_out * OIL_CMP(ol.os.cs));
-	if (!outbuf) {
+	inrow = malloc((size_t)ol.fed_width * ol.components);
+	if (!outbuf || !inrow) {
 		fprintf(stderr, "Unable to allocate buffers.");
+		free(outbuf);
+		free(inrow);
 		oil_libjpeg_free(&ol);
 		jpeg_destroy_decompress(&dinfo);
 		exit(1);
@@ -480,8 +483,8 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 
 	for(i=height_out; i>0; i--) {
 		while (oil_scale_slots(&ol.os) > 0) {
-			jpeg_read_scanlines(&dinfo, &ol.inbuf, 1);
-			be->scale_in(&ol.os, ol.inbuf);
+			oil_libjpeg_decode_row(&ol, inrow);
+			be->scale_in(&ol.os, inrow);
 		}
 		be->scale_out(&ol.os, outbuf);
 		if (out_fmt == FMT_PNG) {
@@ -510,6 +513,7 @@ static void process_jpeg_input(FILE *input, FILE *output, int width_out,
 	jpeg_finish_decompress(&dinfo);
 	jpeg_destroy_decompress(&dinfo);
 	free(outbuf);
+	free(inrow);
 	oil_libjpeg_free(&ol);
 }
 

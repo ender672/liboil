@@ -27,10 +27,22 @@
 #include "oil_resample.h"
 
 struct oil_libjpeg {
+	/* Public. The configured scaler: feed it with oil_scale_in (or a SIMD
+	 * entry point) and read scaled rows with oil_scale_out. */
 	struct oil_scale os;
+
+	/* Private -- internal decode state; do not read or write from outside
+	 * the wrapper. @dinfo is the borrowed decoder; @inbuf is the wrapper's
+	 * own scratch row buffer (used by oil_libjpeg_read_scanline and the
+	 * non-turbo oil_libjpeg_decode_row fallback); @inbuf_offset is the byte
+	 * offset of the fed rect within it (non-turbo only). */
 	struct jpeg_decompress_struct *dinfo;
 	unsigned char *inbuf;
 	int inbuf_offset;
+
+	/* Public. Size of one decoded input row, for callers that drive the
+	 * decode themselves: oil_libjpeg_decode_row writes fed_width *
+	 * components bytes into the caller-supplied buffer. */
 	int fed_width;
 	int components;
 };
