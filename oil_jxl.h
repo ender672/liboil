@@ -63,9 +63,10 @@ enum oil_colorspace jxl_cs_to_oil(const JxlBasicInfo *info);
  *
  * Because JxlDecoderProcessInput decodes the whole frame in one blocking call,
  * a streaming caller runs this on a thread it owns while another thread pulls
- * rows via oil_jxl_rowbuf_wait_row. On a decode error or truncation it aborts
- * @rb (so a blocked consumer is released) and returns nonzero; returns 0 on a
- * complete decode.
+ * rows via oil_jxl_rowbuf_wait_row. On a decode error, truncation, or a decode
+ * that completes without an image-out pass (no rows published -- e.g. the
+ * caller did not subscribe JXL_DEC_FULL_IMAGE) it aborts @rb (so a blocked
+ * consumer is released) and returns nonzero; returns 0 on a complete decode.
  */
 int oil_jxl_run_decode(JxlDecoder *dec, const JxlPixelFormat *fmt,
 	struct oil_jxl_rowbuf *rb);

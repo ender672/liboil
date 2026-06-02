@@ -45,6 +45,8 @@ static void jxl_run_cb(void *run_opaque, size_t tid,
 int oil_jxl_run_decode(JxlDecoder *dec, const JxlPixelFormat *fmt,
 	struct oil_jxl_rowbuf *rb)
 {
+	int image_out_set = 0;
+
 	for (;;) {
 		JxlDecoderStatus s = JxlDecoderProcessInput(dec);
 		if (s == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
@@ -52,12 +54,20 @@ int oil_jxl_run_decode(JxlDecoder *dec, const JxlPixelFormat *fmt,
 			        fmt, jxl_init_cb, jxl_run_cb,
 			        jxl_destroy_cb, rb) != JXL_DEC_SUCCESS)
 				break;
+			image_out_set = 1;
 			continue;
 		}
 		if (s == JXL_DEC_FULL_IMAGE) continue;
-		if (s == JXL_DEC_SUCCESS) return 0;
-		/* JXL_DEC_ERROR, JXL_DEC_NEED_MORE_INPUT (truncated), or any
-		 * unexpected status: decode cannot complete. */
+		/* SUCCESS counts only if the image-out pass actually ran. A
+		 * decode that reaches SUCCESS without ever emitting
+		 * NEED_IMAGE_OUT_BUFFER (e.g. the caller subscribed only
+		 * JXL_DEC_BASIC_INFO) published no rows, so returning 0 here
+		 * would strand a consumer blocked in oil_jxl_rowbuf_wait_row --
+		 * fall through to abort it instead. */
+		if (s == JXL_DEC_SUCCESS && image_out_set) return 0;
+		/* JXL_DEC_ERROR, JXL_DEC_NEED_MORE_INPUT (truncated), SUCCESS
+		 * with no image-out, or any unexpected status: decode cannot
+		 * deliver the rows the consumer expects. */
 		break;
 	}
 
@@ -183,6 +193,9 @@ int oil_jxl_resample(JxlDecoder *dec, const JxlBasicInfo *info,
 		oil_scale_out(&os, out + (size_t)y * out_stride);
 	}
 
+	/* Release any back-pressure-parked producer so the decode thread can join
+	 * even if the scaler consumed fewer fed rows than were buffered. */
+	oil_jxl_rowbuf_abort(rb);
 	pthread_join(driver, NULL);
 	oil_jxl_rowbuf_destroy(rb);
 	oil_jxl_condvar_waiter_destroy(waiter);

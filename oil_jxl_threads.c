@@ -253,6 +253,10 @@ struct oil_jxl_waiter *oil_jxl_condvar_waiter_create(void)
 	int i;
 	if (!c)
 		return NULL;
+	/* pthread_mutex_init / pthread_cond_init with default (NULL) attributes
+	 * do not allocate and cannot fail on the platforms liboil targets, so
+	 * their return codes are not checked; allocation is the only failure
+	 * mode this constructor reports (NULL above). */
 	pthread_mutex_init(&c->mutex, NULL);
 	for (i = 0; i < OIL_JXL_WAIT_CHANNELS; i++)
 		pthread_cond_init(&c->cv[i], NULL);

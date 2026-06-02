@@ -1,14 +1,20 @@
 /*
- * Regression tests for two concurrency fixes, each looped to make the race
- * likely rather than relying on one lucky interleaving:
+ * Regression tests for three decode-path fixes. A and B are races, each looped
+ * to make the bad interleaving likely rather than relying on one lucky run; C
+ * is deterministic.
  *
  *  A. peak_rows accounting. live_rows used to be incremented after the row was
  *     published, so a fast consumer could decrement first and underflow it,
  *     latching a huge peak.
  *  B. runner worker startup. A worker not yet running when the first job was
  *     dispatched used to miss it and park forever, deadlocking the dispatcher.
+ *  C. no image-out pass. run_decode used to return success when a decode
+ *     reached JXL_DEC_SUCCESS without ever emitting NEED_IMAGE_OUT_BUFFER
+ *     (e.g. the caller subscribed only JXL_DEC_BASIC_INFO), publishing no rows
+ *     and leaving a consumer blocked in wait_row forever; it must abort the
+ *     rowbuf and return nonzero instead.
  *
- * Both drive the decode through the Path-B helpers (rowbuf + run_decode), the
+ * All drive the decode through the Path-B helpers (rowbuf + run_decode), the
  * same composition oil_jxl_resample and imgscale use.
  */
 
@@ -153,6 +159,35 @@ static void test_runner_startup(unsigned char *jxl, size_t jxl_size,
 		iters);
 }
 
+/* Test C: a decode that completes without an image-out pass (only
+ * JXL_DEC_BASIC_INFO subscribed, so NEED_IMAGE_OUT_BUFFER never fires and no
+ * rows are published) must abort the rowbuf and return nonzero. Before the fix
+ * run_decode returned 0 without aborting; the wait_row below then hung, caught
+ * by the watchdog. */
+static void test_no_image_out(unsigned char *jxl, size_t jxl_size)
+{
+	JxlDecoder *dec = JxlDecoderCreate(NULL);
+	struct oil_jxl_waiter *waiter = oil_jxl_condvar_waiter_create();
+	struct oil_jxl_rowbuf *rb;
+	JxlPixelFormat fmt = {0};   /* unused: no image-out callback is wired */
+
+	assert(dec && waiter);
+	assert(JxlDecoderSubscribeEvents(dec, JXL_DEC_BASIC_INFO) == JXL_DEC_SUCCESS);
+	JxlDecoderSetInput(dec, jxl, jxl_size);
+	JxlDecoderCloseInput(dec);
+	assert(JxlDecoderProcessInput(dec) == JXL_DEC_BASIC_INFO);
+
+	rb = oil_jxl_rowbuf_create(0, 0, 1, 1, 1, 256, waiter);   /* tiny; no rows written */
+	assert(rb);
+	assert(oil_jxl_run_decode(dec, &fmt, rb) != 0);   /* aborts, reports failure */
+	assert(oil_jxl_rowbuf_wait_row(rb, 0) == NULL);   /* consumer released, not hung */
+
+	oil_jxl_rowbuf_destroy(rb);
+	oil_jxl_condvar_waiter_destroy(waiter);
+	JxlDecoderDestroy(dec);
+	printf("  C: no-image-out decode aborted the rowbuf, not hung: ok\n");
+}
+
 int main(void)
 {
 	const int in_w = 200, in_h = 4096;   /* single-tile width, many rows */
@@ -168,6 +203,7 @@ int main(void)
 
 	test_peak_accounting(jxl, jxl_size, in_w, in_h, 150);
 	test_runner_startup(jxl, jxl_size, in_w, in_h, 80);
+	test_no_image_out(jxl, jxl_size);
 
 	free(jxl);
 	printf("All regression tests pass.\n");

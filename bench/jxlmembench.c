@@ -110,6 +110,9 @@ int main(int argc, char **argv)
 	printf("  target:             < %.0f%% of fed height (%zu rows)\n",
 		TARGET_FRACTION * 100.0, (size_t)(TARGET_FRACTION * fed_h));
 
+	/* Release any back-pressure-parked producer so the decode thread can join
+	 * even if the consumer read fewer fed rows than were buffered. */
+	oil_jxl_rowbuf_abort(rb);
 	pthread_join(driver, NULL);
 	oil_jxl_rowbuf_destroy(rb);
 	oil_jxl_condvar_waiter_destroy(waiter);
