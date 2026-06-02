@@ -97,6 +97,7 @@ int oil_libjpeg_init_ex(struct oil_libjpeg *ol,
 	double src_x, double src_y, double src_width, double src_height,
 	enum oil_colorspace cs_override);
 
+/* Release the scaler and scratch buffer. Does not touch the caller's dinfo. */
 void oil_libjpeg_free(struct oil_libjpeg *ol);
 
 /**
@@ -113,10 +114,15 @@ void oil_libjpeg_free(struct oil_libjpeg *ol);
  */
 void oil_libjpeg_decode_row(struct oil_libjpeg *ol, unsigned char *dst);
 
+/* Bundled all-in-one path: decode enough input rows to scale and emit one
+ * output row into @outbuf. Drives the scaler internally (scalar entry points).
+ */
 void oil_libjpeg_read_scanline(struct oil_libjpeg *ol, unsigned char *outbuf);
 
+/* Map a libjpeg color space to its oil equivalent, or OIL_CS_UNKNOWN. */
 enum oil_colorspace jpeg_cs_to_oil(J_COLOR_SPACE cs);
 
+/* Map an oil color space to its libjpeg equivalent, or JCS_UNKNOWN. */
 J_COLOR_SPACE oil_cs_to_jpeg(enum oil_colorspace cs);
 
 #endif
