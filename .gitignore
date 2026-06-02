@@ -1,4 +1,5 @@
 *.o
+*.d
 test
 test_libjpeg
 test_libpng

@@ -1,6 +1,14 @@
 CFLAGS ?= -O2
 CFLAGS += -Wall -pedantic
 -include local.mk
+
+# Header dependency tracking. -MMD -MP makes every compile emit a .d file
+# listing the headers it pulled in; -include feeds those back so editing a
+# header rebuilds the objects/binaries that use it. Without this the build
+# tracked no header deps, so a header change silently left stale .o files
+# (an ABI change in a struct could then corrupt callers at link time).
+CFLAGS += -MMD -MP
+-include $(wildcard *.d tests/*.d)
 # Resolve quoted includes from the root (headers) and tests/ (jxl_testutil.h)
 # regardless of how local.mk sets CFLAGS.
 CFLAGS += -I. -Itests
@@ -62,4 +70,4 @@ oilview: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oilview.c
 sdltest: $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oil_jxl.o oil_jxl_rowbuf.o oil_jxl_threads.o sdltest.c
 	$(CC) $(CFLAGS) -DHWY_SHARED_DEFINE $(OIL_OBJS) oil_libjpeg.o oil_libpng.o oil_jxl.o oil_jxl_rowbuf.o oil_jxl_threads.o sdltest.c -o $@ $(LDFLAGS) -lSDL3 -ljpeg -lpng -ljxl -ljxl_threads -lpthread -lm
 clean:
-	rm -rf test test.dSYM test_libjpeg test_libjpeg.dSYM test_libpng test_libpng.dSYM test_libjxl test_libjxl.dSYM oil_resample.o oil_resample_sse2.o oil_resample_avx2.o oil_resample_neon.o oil_libpng.o oil_libjpeg.o oil_jxl.o oil_jxl_rowbuf.o oil_jxl_threads.o tests/jxl_testutil.o imgscale oilview benchmark coeffbench sdltest jxlmembench jxlstarvebench jxlperfbench test_jxl_cancel test_jxl_regress test_jxl_rowbuf test_jxl_rowbuf.dSYM test_jxl_rowbuf_mt test_jxl_rowbuf_mt.dSYM test_jxl_runner test_jxl_runner.dSYM
+	rm -rf *.d tests/*.d test test.dSYM test_libjpeg test_libjpeg.dSYM test_libpng test_libpng.dSYM test_libjxl test_libjxl.dSYM oil_resample.o oil_resample_sse2.o oil_resample_avx2.o oil_resample_neon.o oil_libpng.o oil_libjpeg.o oil_jxl.o oil_jxl_rowbuf.o oil_jxl_threads.o tests/jxl_testutil.o imgscale oilview benchmark coeffbench sdltest jxlmembench jxlstarvebench jxlperfbench test_jxl_cancel test_jxl_regress test_jxl_rowbuf test_jxl_rowbuf.dSYM test_jxl_rowbuf_mt test_jxl_rowbuf_mt.dSYM test_jxl_runner test_jxl_runner.dSYM
